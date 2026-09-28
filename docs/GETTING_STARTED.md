@@ -22,24 +22,42 @@ cargo build          # every Rust crate except the backend server
 ## Simulator (fastest way to see the firmware run)
 
 ```sh
-npm run build -w @smokebomb/simulator-web-ui   # once, and after UI changes
+npm install
+npm run build -w @smokebomb/simulator-web-ui   # after every pull or branch switch
 cargo run --features=simulator                 # → http://localhost:3000
 ```
 
-Or run both with Nx: `npx nx run simulator-server:serve`.
+Or run both with Nx, which rebuilds the UI first: `npx nx run simulator-server:serve`.
+
+The built UI (`web-ui/dist`) isn't in git, so `cargo run` serves whatever you
+built last. If it's older than the server, the browser shows a banner saying
+the page is out of date, and the server logs a warning at startup and when an
+old page connects. Rebuild the UI and hard-reload the page.
+
+The screens are dark at rest for now: the boot animation and wake label arrive
+with the behaviour work. Throw the die to see a result.
 
 In the browser:
 
-- **Throw** plays a scripted pick-up, shake, throw and landing. The die rolls,
-  signs the roll, and shows the result on the up face. The roll appears in the
-  **Signed rolls** list with its digest and signature.
-- **Pick up** and **Shake** send partial gestures. A pick-up while in the menu
-  turns the page.
-- **Face up** and **Tilt** set the resting orientation, which becomes the
-  accelerometer reading.
-- **Press and hold a face** for 1.5 s to open the menu. A short tap changes the
-  value on the current page; hold again to save and leave.
-- **On charging nest** switches to the nest screen.
+- **Hold to shake, release to throw** works like the mockup's throw button.
+  Holding shakes the die in the hand; releasing throws it. The die tumbles and
+  lands, the firmware rolls and signs, and the result shows on every face
+  except the one facing down. The roll appears in the **Signed rolls** list
+  with its digest and signature.
+- **Tip to an adjacent screen:** the pad does a quick quarter-turn that brings
+  a neighbouring screen to the front. The arrow keys do the same, and while
+  the menu is open so does a swipe on the die. In the menu, ▲/▼ change the
+  value and ◀/▶ change the page (SIM_SPEC C3). The current placeholder
+  firmware doesn't recognise tips yet.
+- **Drag** on the die to turn it in your hand.
+- **Face up** sets the die down with that screen on top.
+- **Press and hold a screen** to touch it (for the menu).
+- **On charging nest** docks the die; it settles upright.
+- **Reduced motion** shortens the tumble and tips, as in the mockup.
+
+The server owns the die's position and orientation and generates the IMU
+readings the firmware sees from them; the browser only draws. See
+[ARCHITECTURE.md](ARCHITECTURE.md#simulator).
 
 To work on the UI with hot reload, keep the simulator running and in a second
 terminal run:
@@ -84,6 +102,17 @@ To add a peripheral:
 1. Add the trait to `packages/firmware/hal/src/lib.rs` and an associated type to `Platform`.
 2. Implement it in `hal/simulator` (with state in `SimState` if the UI should see it) and in `hal/nrf54l15`.
 3. Use it from `core` through `Peripherals<P>`.
+
+## Golden frames from the mockup
+
+```sh
+npm run capture -w @smokebomb/mockup-capture              # all nine scenarios, ~10 min
+npm run capture -w @smokebomb/mockup-capture -- menu      # one scenario
+```
+
+This regenerates `tools/mockup-capture/golden/`, the reference frames the
+firmware renderer is checked against. Only rerun it when the mockup or a
+scenario changes. See `tools/mockup-capture/README.md`.
 
 ## Server
 
@@ -153,7 +182,7 @@ commands. You can also open `packages/mobile` directly in Android Studio.
 ## Nx cheatsheet
 
 ```sh
-npx nx show projects                 # shared, firmware, simulator-server, simulator-web-ui, server, mobile
+npx nx show projects                 # shared, firmware, simulator-server, simulator-web-ui, mockup-capture, server, mobile
 npx nx run-many -t lint test         # every project that has these targets
 npx nx affected -t test              # only what changed since main
 npx nx graph                         # dependency graph in the browser

@@ -10,6 +10,7 @@
 //! <http://localhost:3000>.
 
 mod protocol;
+mod world;
 mod ws;
 
 use std::net::{IpAddr, SocketAddr};
@@ -31,6 +32,8 @@ use protocol::{Outbound, StatusSnapshot};
 #[derive(Clone)]
 pub struct AppState {
     pub sim: SimHandle,
+    /// The physical die. Locked briefly by the tick loop and by input.
+    pub world: Arc<std::sync::Mutex<world::World>>,
     pub out: broadcast::Sender<Outbound>,
     pub status: Arc<Mutex<StatusSnapshot>>,
 }
@@ -49,8 +52,16 @@ async fn main() -> anyhow::Result<()> {
     let (out, _) = broadcast::channel(64);
     let state = AppState {
         sim: sim.clone(),
+        world: Arc::new(std::sync::Mutex::new(world::World::new())),
         out: out.clone(),
-        status: Arc::new(Mutex::new(StatusSnapshot::default())),
+        // Seeded from the booted firmware, so a browser that connects before
+        // the first tick still gets the real mode in its hello.
+        status: Arc::new(Mutex::new(StatusSnapshot {
+            mode: format!("{:?}", firmware.mode()),
+            die: firmware.settings().die.wire_name(),
+            die_count: firmware.settings().count,
+            last_roll: None,
+        })),
     };
 
     tokio::spawn(run_firmware(firmware, state.clone()));
@@ -62,6 +73,13 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!(
             "web UI not built at {} — run `npm run build -w @smokebomb/simulator-web-ui`, \
              or use the Vite dev server on http://localhost:5173",
+            web_dir.display()
+        );
+    } else if web_ui_is_stale(&web_dir) {
+        tracing::warn!(
+            "the web UI build at {} is older than its sources, so the browser may run an old UI \
+             that this simulator doesn't understand. Rebuild it: \
+             `npm run build -w @smokebomb/simulator-web-ui` (or use `npx nx run simulator-server:serve`)",
             web_dir.display()
         );
     }
@@ -110,9 +128,28 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
     let mut last_seq = 0;
     let mut last_mode = String::new();
     let mut last_counter = None;
+    let mut last_pose = None;
+    let dt = period.as_secs_f64();
 
     loop {
         interval.tick().await;
+
+        // Move the die first, so the firmware reads this tick's IMU sample.
+        let (pose, imu, docked) = {
+            let mut w = state.world.lock().unwrap_or_else(|e| e.into_inner());
+            let imu = w.step(dt);
+            (w.pose(), imu, w.docked())
+        };
+        {
+            let mut s = state.sim.lock();
+            s.imu_resting = imu;
+            s.docked = docked;
+        }
+        if last_pose != Some(pose) {
+            last_pose = Some(pose);
+            let _ = state.out.send(Outbound::Binary(protocol::encode_pose(&pose)));
+        }
+
         if let Err(e) = fw.tick() {
             tracing::error!("firmware tick failed: {e:?}");
             continue;
@@ -128,7 +165,7 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
         };
         // Send errors only mean no browser is connected.
         if let Some(f) = frames {
-            let _ = state.out.send(Outbound::Frames(f));
+            let _ = state.out.send(Outbound::Binary(f));
         }
         for h in haptics {
             let _ = state.out.send(Outbound::event(protocol::Event::Haptic {
@@ -136,7 +173,12 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
             }));
         }
 
-        let mode = format!("{:?}", fw.mode());
+        // "Reveal { since_ms: 123 }" -> "Reveal"; keeps "Menu(DieType)" intact.
+        let mode = format!("{:?}", fw.mode())
+            .split(" {")
+            .next()
+            .unwrap_or_default()
+            .to_string();
         if mode != last_mode {
             last_mode.clone_from(&mode);
             let _ = state
@@ -158,12 +200,37 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
         let mut status = state.status.lock().await;
         status.mode = mode;
         let s = fw.settings();
-        status.die_sides = s.die.sides();
+        status.die = s.die.wire_name();
         status.die_count = s.count;
         if let Some(roll) = roll {
             status.last_roll = Some((&roll).into());
         }
     }
+}
+
+/// True when any web UI source file is newer than the built `index.html`.
+/// Only checks the usual layout (`web-ui/dist` next to `web-ui/src`).
+fn web_ui_is_stale(dist: &std::path::Path) -> bool {
+    fn newest(path: &std::path::Path) -> Option<std::time::SystemTime> {
+        let meta = std::fs::metadata(path).ok()?;
+        if meta.is_dir() {
+            std::fs::read_dir(path)
+                .ok()?
+                .filter_map(|e| newest(&e.ok()?.path()))
+                .max()
+        } else {
+            meta.modified().ok()
+        }
+    }
+    let Some(root) = dist.parent() else {
+        return false;
+    };
+    let built = std::fs::metadata(dist.join("index.html")).and_then(|m| m.modified());
+    let sources = ["src", "index.html", "package.json", "vite.config.ts"]
+        .iter()
+        .filter_map(|p| newest(&root.join(p)))
+        .max();
+    matches!((built, sources), (Ok(b), Some(s)) if s > b)
 }
 
 async fn get_state(State(state): State<AppState>) -> Json<StatusSnapshot> {

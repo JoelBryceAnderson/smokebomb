@@ -11,8 +11,9 @@ use sha2::{Digest, Sha256};
 
 use crate::types::{DeviceSerial, DieKind, SessionId, MAX_DICE};
 
-/// Format version, bumped whenever [`RollRecord::encode`] changes.
-pub const ROLL_FORMAT_VERSION: u8 = 1;
+/// Format version, bumped whenever [`RollRecord::encode`] or the meaning of
+/// its fields changes. v2: up to 10 dice and the Pass the Pot die kind.
+pub const ROLL_FORMAT_VERSION: u8 = 2;
 
 /// Upper bound on [`RollRecord::encode`] output.
 pub const ROLL_ENCODED_MAX: usize = 1 + 9 + 16 + 4 + 8 + 1 + 1 + MAX_DICE + 32;
@@ -30,6 +31,8 @@ pub struct RollRecord {
     /// phone/server, not trusted from the die.
     pub uptime_ms: u64,
     pub die: DieKind,
+    /// Raw values, each in `1..=die.sides()`. For Pass the Pot these are d6
+    /// values; the face shown is [`crate::PotFace::from_raw`].
     pub values: Vec<u8, MAX_DICE>,
     pub prev_hash: [u8; 32],
 }
@@ -136,6 +139,13 @@ mod tests {
         assert_eq!(enc.len(), 1 + 9 + 16 + 4 + 8 + 1 + 1 + 2 + 32);
         assert_eq!(enc[0], ROLL_FORMAT_VERSION);
         assert_eq!(r.total(), 20);
+    }
+
+    #[test]
+    fn ten_dice_fit() {
+        let mut r = record(0, GENESIS_HASH);
+        r.values = Vec::from_slice(&[1; MAX_DICE]).unwrap();
+        assert_eq!(r.encode().len(), ROLL_ENCODED_MAX);
     }
 
     #[test]

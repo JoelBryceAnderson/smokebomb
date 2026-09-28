@@ -1,104 +1,170 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
-import { DieView, DieViewHandle, FACE_NORMALS } from "./DieView";
-import { FACE_NAMES, Gesture } from "./protocol";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DieView, DieViewHandle } from "./DieView";
+import { FACE_NAMES, Pose, RollView, TipDirection } from "./protocol";
 import { useSimulator } from "./useSimulator";
 
-const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const POT_GLYPHS = ["←", "P", "→", "•", "•", "•"];
 
-/** Body -> world rotation for a given up face plus a small tilt (degrees). */
-function orientation(upFace: number, pitch: number, roll: number): THREE.Quaternion {
-  const base = new THREE.Quaternion().setFromUnitVectors(FACE_NORMALS[upFace], WORLD_UP);
-  const tilt = new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(THREE.MathUtils.degToRad(pitch), 0, THREE.MathUtils.degToRad(roll)),
-  );
-  return tilt.multiply(base);
+/** Setup label as the die shows it (SIM_SPEC C2): `d20`, `3d6`, `Pass the Pot ×2`. */
+function setupLabel(r: RollView): string {
+  const n = r.values.length;
+  if (r.die === "pass_the_pot") return n > 1 ? `Pass the Pot ×${n}` : "Pass the Pot";
+  return n > 1 ? `${n}${r.die}` : r.die;
 }
 
-/** What the accelerometer reads at rest: world up expressed in the body frame, in mg. */
-function gravityMg(q: THREE.Quaternion): [number, number, number] {
-  const g = WORLD_UP.clone().applyQuaternion(q.clone().invert()).multiplyScalar(1000);
-  return [Math.round(g.x), Math.round(g.y), Math.round(g.z)];
+function rollSummary(r: RollView): string {
+  return r.die === "pass_the_pot" ? r.values.map((v) => POT_GLYPHS[v - 1]).join(" ") : String(r.total);
 }
+
+/** Tip directions and what they do (SIM_SPEC C3, "Tips"). */
+const TIPS: { dir: TipDirection; arrow: string; brings: string; menu: string }[] = [
+  { dir: "up", arrow: "▲", brings: "bottom screen to front", menu: "next value" },
+  { dir: "left", arrow: "◀", brings: "right screen to front", menu: "next page" },
+  { dir: "right", arrow: "▶", brings: "left screen to front", menu: "previous page" },
+  { dir: "down", arrow: "▼", brings: "top screen to front", menu: "previous value" },
+];
+
+const KEY_TIPS: Record<string, TipDirection> = {
+  ArrowUp: "up",
+  ArrowDown: "down",
+  ArrowLeft: "left",
+  ArrowRight: "right",
+};
 
 export function App() {
   const die = useRef<DieViewHandle>(null);
   const onFrames = useCallback((faces: Uint8Array[]) => die.current?.drawFrames(faces), []);
-  const { state, send } = useSimulator(onFrames);
+  const onPose = useCallback((pose: Pose) => die.current?.setPose(pose), []);
+  const { state, send } = useSimulator({ onFrames, onPose });
 
-  const [upFace, setUpFace] = useState(4); // +Z
-  const [pitch, setPitch] = useState(0);
-  const [roll, setRoll] = useState(0);
   const [docked, setDocked] = useState(false);
   const [ble, setBle] = useState(false);
-  const tumbleNext = useRef(false);
+  const [reduced, setReduced] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const shaking = useRef(false);
 
-  const q = useMemo(() => orientation(upFace, pitch, roll), [upFace, pitch, roll]);
-
-  // Keep the 3D view and the simulated accelerometer in sync with orientation.
   useEffect(() => {
-    die.current?.setOrientation(q, tumbleNext.current);
-    tumbleNext.current = false;
-    send({ type: "imu", accel: gravityMg(q), gyro: [0, 0, 0] });
-  }, [q, send, state.connected]);
+    send({ type: "reduced_motion", on: reduced });
+  }, [reduced, send, state.connected]);
 
-  const gesture = (kind: Gesture) => {
-    if (kind !== "throw") {
-      send({ type: "gesture", kind });
-      return;
+  const tip = useCallback(
+    (dir: TipDirection) => send({ type: "tip", dir, right: die.current?.viewerRight() ?? [1, 0, 0] }),
+    [send],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const dir = KEY_TIPS[e.key];
+      if (dir && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        tip(dir);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tip]);
+
+  // The throw button, as in the mockup: hold to shake, let go to throw.
+  const shakeStart = () => {
+    if (docked) {
+      setDocked(false);
+      send({ type: "dock", docked: false });
     }
-    const land = Math.floor(Math.random() * 6);
-    send({ type: "gesture", kind, land });
-    tumbleNext.current = true;
-    setPitch(0);
-    setRoll(0);
-    setUpFace(land);
+    shaking.current = true;
+    send({ type: "shake_start" });
+  };
+  const shakeEnd = (thenThrow: boolean) => {
+    if (!shaking.current) return;
+    shaking.current = false;
+    send({ type: "shake_end", throw: thenThrow });
   };
 
+  const menuOpen = state.mode.startsWith("Menu");
   const hapticActive = state.lastHaptic && Date.now() - state.lastHaptic.at < 400;
 
   return (
     <div className="layout">
       <main className={hapticActive ? "stage buzz" : "stage"}>
-        <DieView ref={die} onTouch={(face, pressed) => send({ type: "touch", face, pressed })} />
+        <DieView
+          ref={die}
+          onTouch={(face, pressed) => send({ type: "touch", face, pressed })}
+          onRotate={(yaw, pitch) => send({ type: "rotate", yaw, pitch })}
+          swipeToTip={menuOpen}
+          onTip={tip}
+        />
+        {state.protocolMismatch && (
+          <div className="banner" role="alert">
+            This page is out of date for the running simulator (protocol {state.protocolMismatch.page}, server{" "}
+            {state.protocolMismatch.server}). Rebuild the UI with{" "}
+            <code>npm run build -w @smokebomb/simulator-web-ui</code> and reload.
+          </div>
+        )}
         <div className="hud">
           <span className={state.connected ? "dot on" : "dot"} />
           {state.connected ? "firmware running" : "connecting to simulator…"}
           <span className="mode">{state.mode}</span>
         </div>
-        <p className="hint">Drag to orbit · press and hold a face to touch it (hold 1.5 s for the menu)</p>
+        <p className="hint">
+          {menuOpen
+            ? "Menu: swipe or use the tip pad to turn to the next screen · hold to save"
+            : "Drag to turn the die · press and hold a face to touch it · arrow keys tip it"}
+        </p>
       </main>
 
       <aside className="panel">
         <section>
           <h2>Motion</h2>
-          <div className="row">
-            <button onClick={() => gesture("pick_up")}>Pick up</button>
-            <button onClick={() => gesture("shake")}>Shake</button>
-            <button className="primary" onClick={() => gesture("throw")}>
-              Throw
-            </button>
+          <button
+            className="primary throw"
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              shakeStart();
+            }}
+            onPointerUp={() => shakeEnd(true)}
+            onPointerCancel={() => shakeEnd(false)}
+            onKeyDown={(e) => {
+              if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                e.preventDefault();
+                shakeStart();
+              }
+            }}
+            onKeyUp={(e) => {
+              if (e.key === " " || e.key === "Enter") {
+                e.preventDefault();
+                shakeEnd(true);
+              }
+            }}
+          >
+            Hold to shake, release to throw
+          </button>
+        </section>
+
+        <section>
+          <h2>Tip to an adjacent screen</h2>
+          <p className="muted">
+            A quick quarter-turn that brings the neighbouring screen to the front, as when tipping through the menu.
+            Arrow keys work too.
+          </p>
+          <div className="tip-pad">
+            {TIPS.map(({ dir, arrow, brings, menu }) => (
+              <button key={dir} className={`tip-${dir}`} aria-label={`Tip ${dir}: ${brings}`} onClick={() => tip(dir)}>
+                <span className="arrow">{arrow}</span>
+                <span className="what">{brings}</span>
+                <span className="menu-effect">{menu}</span>
+              </button>
+            ))}
           </div>
         </section>
 
         <section>
-          <h2>Orientation</h2>
+          <h2>Set down</h2>
           <label>Face up</label>
           <div className="row faces">
             {FACE_NAMES.map((name, i) => (
-              <button key={name} className={i === upFace ? "selected" : ""} onClick={() => setUpFace(i)}>
+              <button key={name} onClick={() => send({ type: "place_face_up", face: i })}>
                 {name}
               </button>
             ))}
           </div>
-          <label>
-            Tilt X <output>{pitch}°</output>
-          </label>
-          <input type="range" min={-60} max={60} value={pitch} onChange={(e) => setPitch(+e.target.value)} />
-          <label>
-            Tilt Z <output>{roll}°</output>
-          </label>
-          <input type="range" min={-60} max={60} value={roll} onChange={(e) => setRoll(+e.target.value)} />
         </section>
 
         <section>
@@ -125,6 +191,10 @@ export function App() {
             />
             Phone connected (BLE)
           </label>
+          <label className="check">
+            <input type="checkbox" checked={reduced} onChange={(e) => setReduced(e.target.checked)} />
+            Reduced motion
+          </label>
           <p className="muted">Last haptic: {state.lastHaptic?.effect ?? "—"}</p>
         </section>
 
@@ -135,9 +205,9 @@ export function App() {
             {state.rolls.map((r) => (
               <li key={r.counter}>
                 <div className="roll-head">
-                  <strong>{r.total}</strong>
+                  <strong>{rollSummary(r)}</strong>
                   <span>
-                    {r.values.length}d{r.die_sides} [{r.values.join(", ")}]
+                    {setupLabel(r)} [{r.values.join(", ")}]
                   </span>
                   <span className="muted">#{r.counter}</span>
                 </div>

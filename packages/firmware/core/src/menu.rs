@@ -1,10 +1,10 @@
 //! On-die settings menu (hold a face to enter, tip to change page, tap to
 //! change the value, hold again to save).
 
-use smokebomb_shared::types::MAX_DICE;
 use smokebomb_shared::DieKind;
 
-use crate::display::Framebuffer;
+use crate::display::{Framebuffer, FG};
+use crate::orientation::Quarter;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuPage {
@@ -45,8 +45,9 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
+        // The mockup's default setup: a single d20.
         Self {
-            die: DieKind::D6,
+            die: DieKind::D20,
             count: 1,
             brightness: 200,
         }
@@ -57,7 +58,7 @@ impl Settings {
     pub fn apply(&mut self, input: MenuInput) {
         match input {
             MenuInput::Cycle(MenuPage::DieCount) => {
-                self.count = if self.count as usize >= MAX_DICE {
+                self.count = if self.count as usize >= self.die.max_count() {
                     1
                 } else {
                     self.count + 1
@@ -66,6 +67,8 @@ impl Settings {
             MenuInput::Cycle(MenuPage::DieType) => {
                 let i = DieKind::ALL.iter().position(|d| *d == self.die).unwrap_or(0);
                 self.die = DieKind::ALL[(i + 1) % DieKind::ALL.len()];
+                // Choosing Pass the Pot clamps the count to 3 (SIM_SPEC C3).
+                self.count = self.count.min(self.die.max_count() as u8);
             }
             MenuInput::Cycle(MenuPage::Brightness) => {
                 self.brightness = self.brightness.wrapping_add(64).max(32);
@@ -76,10 +79,10 @@ impl Settings {
 }
 
 /// Placeholder rendering: a page indicator bar across the top plus the value.
-pub fn render(fb: &mut Framebuffer, page: MenuPage, s: &Settings) {
+pub fn render(fb: &mut Framebuffer, page: MenuPage, s: &Settings, rot: Quarter) {
     let idx = page as usize;
     for i in 0..4 {
-        fb.fill_rect(12 + i * 20, 6, 12, 3, if i == idx { 15 } else { 3 });
+        fb.fill_rect(12 + i * 20, 6, 12, 3, if i == idx { FG } else { 48 }, rot);
     }
     let value = match page {
         MenuPage::DieCount => s.count as u16,
@@ -87,12 +90,13 @@ pub fn render(fb: &mut Framebuffer, page: MenuPage, s: &Settings) {
         MenuPage::Brightness => s.brightness as u16,
         MenuPage::About => 1, // firmware major version
     };
-    fb.draw_number(value, 5);
+    fb.draw_number(value, 5, FG, rot);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smokebomb_shared::types::MAX_DICE;
 
     #[test]
     fn die_count_wraps() {
@@ -102,5 +106,17 @@ mod tests {
         };
         s.apply(MenuInput::Cycle(MenuPage::DieCount));
         assert_eq!(s.count, 1);
+    }
+
+    #[test]
+    fn choosing_pass_the_pot_clamps_the_count() {
+        let mut s = Settings {
+            die: DieKind::D100,
+            count: 7,
+            ..Settings::default()
+        };
+        s.apply(MenuInput::Cycle(MenuPage::DieType));
+        assert_eq!(s.die, DieKind::PassThePot);
+        assert_eq!(s.count, 3);
     }
 }

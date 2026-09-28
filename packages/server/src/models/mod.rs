@@ -34,7 +34,9 @@ pub struct Roll {
     pub device_id: Uuid,
     pub session_id: Option<Uuid>,
     pub counter: i64,
-    pub die_sides: i16,
+    /// `DieKind::wire_name`.
+    pub die: String,
+    pub format_version: i16,
     pub dice: Vec<i16>,
     pub digest: Vec<u8>,
     pub prev_hash: Vec<u8>,

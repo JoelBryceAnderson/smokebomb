@@ -4,6 +4,7 @@
 # Node / Nx
 node_modules/
 dist/
+*.tsbuildinfo
 .nx/cache/
 .nx/workspace-data/
 

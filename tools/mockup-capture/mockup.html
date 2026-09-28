@@ -1,0 +1,1646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Smokebomb 3D mockup</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap">
+<style>
+  :root {
+    --stage-top: #E6E8EB;
+    --stage-bottom: #C7CBD0;
+    --ink: #1B1D20;
+    --ink-soft: #4F545B;
+    --chip: #F3F4F6;
+    --chip-line: #B5BAC0;
+    --chip-on: #1B1D20;
+    --chip-on-ink: #F3F4F6;
+    --button: #1B1D20;
+    --button-ink: #F3F4F6;
+    --crit: #8A5A12;
+    --dud: #9C3F22;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --stage-top: #262A30;
+      --stage-bottom: #0E1013;
+      --ink: #E9EBEE;
+      --ink-soft: #A0A6AD;
+      --chip: #1D2025;
+      --chip-line: #3B4047;
+      --chip-on: #D6DADF;
+      --chip-on-ink: #15171A;
+      --button: #D6DADF;
+      --button-ink: #15171A;
+      --crit: #F2C66B;
+      --dud: #E0876A;
+    }
+  }
+  :root.dark-room { --stage-top: #111214; --stage-bottom: #030304; }
+  :root[data-theme="dark"] {
+    --stage-top: #262A30;
+    --stage-bottom: #0E1013;
+    --ink: #E9EBEE;
+    --ink-soft: #A0A6AD;
+    --chip: #1D2025;
+    --chip-line: #3B4047;
+    --chip-on: #D6DADF;
+    --chip-on-ink: #15171A;
+    --button: #D6DADF;
+    --button-ink: #15171A;
+    --crit: #F2C66B;
+    --dud: #E0876A;
+  }
+  *, *::before, *::after { box-sizing: inherit; }
+  html { height: 100%; scroll-padding-top: env(safe-area-inset-top, 0px); }
+  body {
+    height: 100%;
+    margin: 0;
+    background: radial-gradient(120% 90% at 50% 30%, var(--stage-top), var(--stage-bottom));
+    color: var(--ink);
+    font-family: "Space Grotesk", "Trebuchet MS", Arial, sans-serif;
+    overflow: hidden;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  .stage { position: relative; height: 100%; display: flex; flex-direction: column; }
+  canvas#c { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  canvas#c:active { cursor: grabbing; }
+  .brand { position: relative; padding: 20px 24px 0; pointer-events: none; }
+  .brand h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+  .brand p { margin: 2px 0 0; font-size: 15px; color: var(--ink-soft); }
+  .controls {
+    position: relative; margin-top: auto; padding: 0 20px 20px;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    pointer-events: none;
+  }
+  .controls > * { pointer-events: auto; }
+  .result { min-height: 24px; font-size: 17px; font-weight: 500; text-align: center; }
+  .result.crit { color: var(--crit); }
+  .result.dud { color: var(--dud); }
+  .types { display: flex; flex-wrap: nowrap; justify-content: safe center; gap: 6px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .types::-webkit-scrollbar { display: none; }
+  .types button { flex: none; }
+  .actions { display: flex; gap: 8px; width: min(440px, 100%); }
+  /* chip rows: one line each, full width, swipe sideways when they don't fit */
+  .views {
+    display: flex; flex-wrap: nowrap; gap: 6px; pointer-events: auto;
+    margin: 0 -24px; padding: 4px 24px; scroll-padding: 0 24px;
+    overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 28px), transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 28px), transparent 100%);
+  }
+  .views::-webkit-scrollbar { display: none; }
+  .views::after { content: ""; flex: none; width: 1px; } /* keeps the end padding when scrolled fully */
+  .views button { flex: none; white-space: nowrap; }
+  #views { margin-top: 8px; }
+  .corner { position: absolute; top: 16px; right: 16px; z-index: 2; display: flex; gap: 8px; }
+  .round {
+    width: 44px; height: 44px; border-radius: 22px;
+    display: grid; place-items: center; padding: 0; cursor: pointer;
+    border: 1px solid var(--chip-line); background: var(--chip); color: var(--ink);
+  }
+  .round[aria-pressed="true"]:not(.lights) { background: var(--chip-on); color: var(--chip-on-ink); border-color: var(--chip-on); }
+  .round svg { width: 22px; height: 22px; }
+  .brand h1 { padding-right: 160px; } /* clear the corner buttons; chip rows use the full width */
+  .brand p { margin-top: 10px; }
+  .views button {
+    font: inherit; font-size: 14px; font-weight: 500; height: 34px; padding: 0 12px;
+    border-radius: 17px; border: 1px solid var(--chip-line); background: var(--chip); color: var(--ink); cursor: pointer;
+  }
+  .views button[aria-checked="true"] { background: var(--chip-on); color: var(--chip-on-ink); border-color: var(--chip-on); }
+  @media (max-height: 720px) { .hint, .brand p { display: none; } .controls { gap: 10px; } }
+  .types button {
+    font: inherit; font-size: 15px; font-weight: 500;
+    min-width: 48px; height: 40px; padding: 0 12px;
+    border-radius: 20px; border: 1px solid var(--chip-line);
+    background: var(--chip); color: var(--ink); cursor: pointer;
+  }
+  .types button[aria-checked="true"] { background: var(--chip-on); color: var(--chip-on-ink); border-color: var(--chip-on); }
+  .throw {
+    font: inherit; font-size: 18px; font-weight: 700;
+    flex: 1; min-width: 0; height: 56px; border: 0; border-radius: 14px;
+    background: var(--button); color: var(--button-ink); cursor: pointer;
+  }
+  .throw:disabled { opacity: 0.6; cursor: default; }
+  #throw { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .secondary {
+    font: inherit; font-size: 16px; font-weight: 500;
+    flex: none; padding: 0 16px; height: 56px; border-radius: 14px;
+    border: 1px solid var(--chip-line); background: transparent; color: var(--ink); cursor: pointer;
+  }
+  button:focus-visible { outline: 3px solid var(--crit); outline-offset: 3px; }
+  .hint { margin: 0; font-size: 14px; color: var(--ink-soft); text-align: center; }
+</style>
+</head>
+<body>
+<main class="stage">
+  <canvas id="c" aria-label="A 3D Smokebomb die: a soft rounded metal shell with six rounded black glass screens. Drag to turn it."></canvas>
+  <div class="corner">
+    <button class="round" id="pixelsBtn" type="button" aria-pressed="true" aria-label="True 96 by 96 display"></button>
+    <button class="round" id="zoomBtn" type="button" aria-pressed="false" aria-label="Close-up"></button>
+    <button class="round lights" id="lightsBtn" type="button" aria-pressed="false" aria-label="Turn the lights off"></button>
+  </div>
+  <header class="brand">
+    <h1>Smokebomb</h1>
+    <p>34mm mockup · true 96×96 4-bit screens</p>
+    <div class="views" role="radiogroup" aria-label="View" id="views"></div>
+    <div class="views" role="radiogroup" aria-label="Finish" id="finishes"></div>
+  </header>
+  <section class="controls">
+    <div class="result" id="result" aria-live="polite"></div>
+    <div class="types" role="radiogroup" aria-label="Die type" id="types"></div>
+    <div class="actions">
+      <button class="throw" id="throw">Throw a Smokebomb</button>
+      <button class="secondary" id="menu" type="button">Menu</button>
+    </div>
+    <p class="hint">Press and hold any screen for the menu.</p>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const canvas = document.getElementById("c");
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.8;
+  renderer.setClearColor(0x000000, 0);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+
+  // ---------- studio environment for the aluminum ----------
+  (function makeEnv() {
+    // a studio with strong, varied softboxes so polished metals throw moving glints as the die turns
+    const envScene = new THREE.Scene();
+    const gc = document.createElement("canvas"); gc.width = 16; gc.height = 256;
+    const g = gc.getContext("2d");
+    const grad = g.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, "#c9ced6"); grad.addColorStop(0.4, "#7a7f87");
+    grad.addColorStop(0.55, "#2a2d32"); grad.addColorStop(1, "#0c0d0f");
+    g.fillStyle = grad; g.fillRect(0, 0, 16, 256);
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(20, 32, 16),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(gc), side: THREE.BackSide }));
+    envScene.add(sky);
+    const panel = (w, h, pos, hex, power) => {
+      const m = new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(power) });
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m); p.position.set(pos[0], pos[1], pos[2]); p.lookAt(0, 0, 0); envScene.add(p);
+    };
+    panel(10, 4, [-8, 5, 6], 0xfff2e2, 3);       // warm key, front left
+    panel(1.6, 11, [9, 2, -3], 0xe4eeff, 4);     // cool vertical strip, back right
+    panel(8, 8, [0, 12, 0], 0xffffff, 1.4);      // soft overhead
+    panel(14, 0.7, [0, 1, 11], 0xffffff, 3);     // thin horizontal strip in front, for edge glints
+    panel(0.9, 0.9, [6, 7, 7], 0xffffff, 7);     // small bright spots
+    panel(0.9, 0.9, [-9, 3, -6], 0xffffff, 6);
+    panel(0.7, 0.7, [3, -2, -10], 0xfff0dc, 5);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(envScene, 0.02).texture;
+  })();
+  const key = new THREE.DirectionalLight(0xffffff, 0.6); key.position.set(3, 6, 4); scene.add(key);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.15); scene.add(ambient);
+
+  // ---------- the die ----------
+  const die = new THREE.Group();
+  scene.add(die);
+  // USM Haller-style frame: polished round tubes joined by larger ball connectors
+  // 30mm cube: 2.5mm tubes, 3.5mm balls (1 unit = 13.25mm)
+  const TUBE = 0.094, BALL = 0.11;
+  const alu = new THREE.MeshStandardMaterial({ color: 0xe1e4e8, metalness: 1, roughness: 0.14 });
+  function tube(axis) {
+    const geo = new THREE.CylinderGeometry(TUBE, TUBE, 2, 28, 1, true);
+    if (axis === 0) geo.rotateZ(Math.PI / 2);
+    if (axis === 2) geo.rotateX(Math.PI / 2);
+    return geo;
+  }
+  const tubeGeo = [tube(0), tube(1), tube(2)];
+  const usmFrame = new THREE.Group(); die.add(usmFrame);
+  [-1, 1].forEach(a => [-1, 1].forEach(b => {
+    const tx = new THREE.Mesh(tubeGeo[0], alu); tx.position.set(0, a, b); usmFrame.add(tx);
+    const ty = new THREE.Mesh(tubeGeo[1], alu); ty.position.set(a, 0, b); usmFrame.add(ty);
+    const tz = new THREE.Mesh(tubeGeo[2], alu); tz.position.set(a, b, 0); usmFrame.add(tz);
+  }));
+  const ballGeo = new THREE.SphereGeometry(BALL, 32, 20);
+  [-1, 1].forEach(x => [-1, 1].forEach(y => [-1, 1].forEach(z => {
+    const k = new THREE.Mesh(ballGeo, alu); k.position.set(x, y, z); usmFrame.add(k);
+  })));
+  // soft frame: 34mm body with 2.5mm edge radius, sized around the ER-OLED0.96-6W module
+  // (1 unit = 13.25mm, so the 24mm screen window stays at its real size while the body grows)
+  const DIE_MM = 34, EDGE_MM = 2.5; // edge radius matches the 2.5mm screen corners
+  const H = DIE_MM / 2 / 13.25, RE = EDGE_MM / 13.25, EC = H - RE;
+  const K = H / (1 + BALL); // growth over the old 29.4mm body, used to refit the case and Nest
+  const softFrame = new THREE.Group(); softFrame.visible = false; die.add(softFrame);
+  const softEdge = [0, 1, 2].map(ax => {
+    const g = new THREE.CylinderGeometry(RE, RE, EC * 2, 40, 1, true);
+    if (ax === 0) g.rotateZ(Math.PI / 2); if (ax === 2) g.rotateX(Math.PI / 2); return g;
+  });
+  [-EC, EC].forEach(a => [-EC, EC].forEach(b => {
+    const ex = new THREE.Mesh(softEdge[0], alu); ex.position.set(0, a, b); softFrame.add(ex);
+    const ey = new THREE.Mesh(softEdge[1], alu); ey.position.set(a, 0, b); softFrame.add(ey);
+    const ez = new THREE.Mesh(softEdge[2], alu); ez.position.set(a, b, 0); softFrame.add(ez);
+  }));
+  const softCorner = new THREE.SphereGeometry(RE, 32, 20);
+  [-EC, EC].forEach(x => [-EC, EC].forEach(y => [-EC, EC].forEach(z => {
+    const k = new THREE.Mesh(softCorner, alu); k.position.set(x, y, z); softFrame.add(k);
+  })));
+  // dark core behind the glass, visible in the rounded corner gaps
+  // kept inside the rounded edges and corners (a box corner pokes out once the edge radius grows)
+  const CORE = 2 * (EC + RE * 0.5);
+  die.add(new THREE.Mesh(new THREE.BoxGeometry(CORE, CORE, CORE),
+    new THREE.MeshStandardMaterial({ color: 0x151618, metalness: 0.4, roughness: 0.6 })));
+  // rounded-corner glass panel, UVs mapped to the full 2x2 face canvas
+  const panelShape = new THREE.Shape();
+  (function (s, h, r) {
+    s.moveTo(-h + r, -h); s.lineTo(h - r, -h); s.quadraticCurveTo(h, -h, h, -h + r);
+    s.lineTo(h, h - r); s.quadraticCurveTo(h, h, h - r, h); s.lineTo(-h + r, h);
+    s.quadraticCurveTo(-h, h, -h, h - r); s.lineTo(-h, -h + r); s.quadraticCurveTo(-h, -h, -h + r, -h);
+  })(panelShape, 0.906, 0.19);
+  const panelGeo = new THREE.ShapeGeometry(panelShape, 12);
+  // satin metal face plate with a rounded window for the screen
+  const plateShape = new THREE.Shape();
+  const windowHole = new THREE.Path();
+  function rr(s, h, r) {
+    s.moveTo(-h + r, -h); s.lineTo(h - r, -h); s.quadraticCurveTo(h, -h, h, -h + r);
+    s.lineTo(h, h - r); s.quadraticCurveTo(h, h, h - r, h); s.lineTo(-h + r, h);
+    s.quadraticCurveTo(-h, h, -h, h - r); s.lineTo(-h, -h + r); s.quadraticCurveTo(-h, -h, -h + r, -h);
+  }
+  // metal fills the corners between the square frame and the rounded glass, flush with the glass
+  plateShape.moveTo(-0.95, -0.95); plateShape.lineTo(0.95, -0.95); plateShape.lineTo(0.95, 0.95); plateShape.lineTo(-0.95, 0.95); plateShape.lineTo(-0.95, -0.95);
+  rr(windowHole, 0.906, 0.19); plateShape.holes.push(windowHole);
+  const plateGeo = new THREE.ExtrudeGeometry(plateShape, { depth: 0.02, bevelEnabled: false, curveSegments: 12 });
+  const plateMat = alu;
+  const panelShapeSoft = new THREE.Shape(); rr(panelShapeSoft, 0.906, 0.19);
+  const panelGeoSoft = new THREE.ShapeGeometry(panelShapeSoft, 16);
+  const plateShapeSoft = new THREE.Shape();
+  plateShapeSoft.moveTo(-EC, -EC); plateShapeSoft.lineTo(EC, -EC); plateShapeSoft.lineTo(EC, EC); plateShapeSoft.lineTo(-EC, EC); plateShapeSoft.lineTo(-EC, -EC);
+  const holeSoft = new THREE.Path(); rr(holeSoft, 0.906, 0.19); plateShapeSoft.holes.push(holeSoft);
+  const plateGeoSoft = new THREE.ExtrudeGeometry(plateShapeSoft, { depth: 0.02, bevelEnabled: false, curveSegments: 16 });
+  [panelGeo, panelGeoSoft].forEach(geo => {
+    const pos = geo.attributes.position, uv = geo.attributes.uv;
+    for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + 1) / 2, (pos.getY(i) + 1) / 2);
+    uv.needsUpdate = true;
+  });
+
+  // six black glass faces, each an OLED canvas
+  const S = 256;
+  const OUT_T = 444, OUT_PX = 3, OUT_OFF = (OUT_T - 96 * OUT_PX) / 2; // 288px lit area = the real 17.26mm square
+  const FACE_DEFS = [
+    { n: [1, 0, 0], rot: [0, Math.PI / 2, 0] },
+    { n: [-1, 0, 0], rot: [0, -Math.PI / 2, 0] },
+    { n: [0, 1, 0], rot: [-Math.PI / 2, 0, 0] },
+    { n: [0, -1, 0], rot: [Math.PI / 2, 0, 0] },
+    { n: [0, 0, 1], rot: [0, 0, 0] },
+    { n: [0, 0, -1], rot: [0, Math.PI, 0] },
+  ];
+  const faces = FACE_DEFS.map((d, i) => {
+    const cv = document.createElement("canvas"); cv.width = S; cv.height = S;
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, S, S);
+    // the texture shows a separate output canvas where each of the panel's 96x96 pixels is exactly 3x3 texels
+    const out = document.createElement("canvas"); out.width = out.height = OUT_T;
+    const outCtx = out.getContext("2d"); outCtx.fillStyle = "#000"; outCtx.fillRect(0, 0, OUT_T, OUT_T);
+    const tex = new THREE.CanvasTexture(out); tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const mat = new THREE.MeshPhysicalMaterial({
+      color: 0x030304, roughness: 0.05, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03,
+      emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 1.7,
+    });
+    const mesh = new THREE.Mesh(panelGeo, mat);
+    mesh.rotation.set(d.rot[0], d.rot[1], d.rot[2]);
+    mesh.position.set(d.n[0], d.n[1], d.n[2]);
+    die.add(mesh); mesh.updateMatrix();
+    const plate = new THREE.Mesh(plateGeo, plateMat);
+    plate.rotation.set(d.rot[0], d.rot[1], d.rot[2]);
+    plate.position.set(d.n[0] * 0.98, d.n[1] * 0.98, d.n[2] * 0.98);
+    die.add(plate);
+    const axis = d.n[0] ? 0 : d.n[1] ? 1 : 2;
+    return { i, cv, ctx, out, outCtx, tex, mesh, plate, axis, sign: d.n[axis], normal: new THREE.Vector3(d.n[0], d.n[1], d.n[2]),
+             inv: mesh.matrix.clone().invert() };
+  });
+  const faceIndex = (axis, sign) => axis * 2 + (sign > 0 ? 0 : 1);
+
+  // contact shadow
+  const sc = document.createElement("canvas"); sc.width = sc.height = 128;
+  const sg = sc.getContext("2d"); const rg = sg.createRadialGradient(64, 64, 4, 64, 64, 64);
+  rg.addColorStop(0, "rgba(0,0,0,0.55)"); rg.addColorStop(1, "rgba(0,0,0,0)");
+  sg.fillStyle = rg; sg.fillRect(0, 0, 128, 128);
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.6 * K, 3.6 * K),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(sc), transparent: true, depthWrite: false }));
+  shadow.rotation.x = -Math.PI / 2; shadow.position.y = -H - 0.003; scene.add(shadow);
+
+  // ---------- size comparison: real dice and a coin, to scale ----------
+  const MM = 1 / 13.25, GROUND = -H;
+  const compare = new THREE.Group(); compare.visible = false; scene.add(compare);
+  const blobMat = shadow.material.clone();
+  function blob(r) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(r * 3.4, r * 3.4), blobMat);
+    m.rotation.x = -Math.PI / 2; m.position.y = GROUND - 0.003; return m;
+  }
+  function label(text) {
+    const c = document.createElement("canvas"); c.width = 512; c.height = 128;
+    const x = c.getContext("2d");
+    x.fillStyle = "rgba(20,22,26,0.82)"; x.beginPath();
+    const w = 40 + text.length * 22, x0 = 256 - w / 2;
+    x.moveTo(x0 + 36, 24); x.lineTo(x0 + w - 36, 24); x.arc(x0 + w - 36, 64, 40, -Math.PI / 2, Math.PI / 2);
+    x.lineTo(x0 + 36, 104); x.arc(x0 + 36, 64, 40, Math.PI / 2, Math.PI * 1.5); x.fill();
+    x.fillStyle = "#F4F5F7"; x.font = '500 40px "Space Grotesk", Arial, sans-serif';
+    x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(text, 256, 66);
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false }));
+    sp.scale.set(1.8, 0.45, 1); return sp;
+  }
+  function pipDie(mm, body, pip, opacity) {
+    const sz = mm * MM, g = new THREE.Group(), d = sz * 0.26;
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(sz, sz, sz), new THREE.MeshPhysicalMaterial({
+      color: body, roughness: 0.3, clearcoat: 0.7, transparent: opacity < 1, opacity })));
+    const pipGeo = new THREE.CircleGeometry(sz * 0.085, 20), pipMat = new THREE.MeshStandardMaterial({ color: pip, roughness: 0.5 });
+    const put = (pts, place) => pts.forEach(([u, v]) => { const m = new THREE.Mesh(pipGeo, pipMat); place(m, u, v); g.add(m); });
+    const o = sz / 2 + 0.003;
+    put([[-d, -d], [d, -d], [0, 0], [-d, d], [d, d]], (m, u, v) => { m.rotation.x = -Math.PI / 2; m.position.set(u, o, v); });
+    put([[-d, d], [0, 0], [d, -d]], (m, u, v) => { m.position.set(u, v, o); });
+    put([[-d, d], [d, -d]], (m, u, v) => { m.rotation.y = Math.PI / 2; m.position.set(o, v, u); });
+    g.rotation.y = -0.35;
+    return { obj: g, half: sz / 2, y: GROUND + sz / 2, top: GROUND + sz };
+  }
+  function d20() {
+    const r = 12.6 * MM, geo = new THREE.IcosahedronGeometry(r, 0);
+    const p = geo.attributes.position, a = new THREE.Vector3().fromBufferAttribute(p, 0),
+      b = new THREE.Vector3().fromBufferAttribute(p, 1), c = new THREE.Vector3().fromBufferAttribute(p, 2);
+    const n = b.clone().sub(a).cross(c.clone().sub(a)).normalize();
+    if (n.dot(a.clone().add(b).add(c)) < 0) n.negate();
+    geo.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(n, new THREE.Vector3(0, -1, 0))));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({ color: 0x3b2f73, roughness: 0.25, clearcoat: 1, flatShading: true }));
+    const inr = r * 0.7947;
+    return { obj: m, half: r, y: GROUND + inr, top: GROUND + inr + r };
+  }
+  function quarter() {
+    const r = 12.13 * MM, h = 1.75 * MM;
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 64), new THREE.MeshStandardMaterial({ color: 0xc8ccd1, metalness: 1, roughness: 0.35 }));
+    return { obj: m, half: r, y: GROUND + h / 2, top: GROUND + h };
+  }
+  const items = [
+    [pipDie(16, 0xf1efe8, 0x17181b, 1), "Standard d6, 16mm"],
+    [pipDie(19, 0xb3122b, 0xf4f4f4, 0.88), "Casino die, 19mm"],
+    [d20(), "d20, about 20mm"],
+    [quarter(), "US quarter"],
+  ];
+  const GAP = 0.45, DIE_HALF = H;
+  let cursor = 0; const centers = [];
+  items.forEach(([it]) => { centers.push(cursor + it.half); cursor += it.half * 2 + GAP; });
+  const dieCenterRaw = cursor + DIE_HALF, totalW = cursor + DIE_HALF * 2;
+  const COMPARE_HALF = totalW / 2, compareDieX = dieCenterRaw - COMPARE_HALF;
+  items.forEach(([it, text], i) => {
+    const x = centers[i] - COMPARE_HALF;
+    it.obj.position.set(x, it.y, 0); compare.add(it.obj);
+    const sh = blob(it.half); sh.position.x = x; compare.add(sh);
+    const lb = label(text); lb.position.set(x, it.top + (i % 2 ? 1.0 : 0.42), 0); compare.add(lb);
+  });
+  const dieLabel = label("Smokebomb, " + DIE_MM + "mm"); dieLabel.position.set(compareDieX, DIE_HALF + 0.55, 0); compare.add(dieLabel);
+  let viewMode = "die", orbitYaw = 0;
+  const docked = () => viewMode === "egg" || viewMode === "nest";
+
+  // case: a soft, rounded slab for two dice in pebbled leatherette, with a satin metal band at the seam
+  let die2 = die.clone(); die2.visible = false; scene.add(die2);
+  const egg = new THREE.Group(); egg.visible = false; scene.add(egg);
+  // all case proportions grow with the die (about 92 x 50mm for two 34mm dice)
+  const EX = 3.0 * K, EZ = 1.62 * K, YB = -1.35 * K, YR = 0.45 * K, LH = 1.0 * K, SLOT = 1.38 * K;
+  const grainTex = (function () {
+    const c = document.createElement("canvas"); c.width = c.height = 256;
+    const x = c.getContext("2d"); x.fillStyle = "#151515"; x.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 7000; i++) {
+      const v = 10 + Math.floor(Math.random() * 22);
+      x.fillStyle = `rgb(${v},${v},${v})`;
+      x.beginPath(); x.ellipse(Math.random() * 256, Math.random() * 256, 0.8 + Math.random() * 2.2, 0.8 + Math.random() * 2.2, Math.random() * 3, 0, Math.PI * 2); x.fill();
+    }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(0.6, 0.6); t.encoding = THREE.sRGBEncoding;
+    return t;
+  })();
+  const leather = new THREE.MeshStandardMaterial({ map: grainTex, bumpMap: grainTex, bumpScale: 0.02, roughness: 0.88, metalness: 0 });
+  const satin = new THREE.MeshStandardMaterial({ color: 0xc6cad0, metalness: 1, roughness: 0.4 });
+  const pocketMat = new THREE.MeshStandardMaterial({ color: 0x0d0e10, roughness: 0.95 });
+  function roundRectShape(hx, hz, r) {
+    const sh = new THREE.Shape(); rr2(sh, hx, hz, r); return sh;
+  }
+  function rr2(p, hx, hz, r) {
+    p.moveTo(-hx + r, -hz); p.lineTo(hx - r, -hz); p.quadraticCurveTo(hx, -hz, hx, -hz + r);
+    p.lineTo(hx, hz - r); p.quadraticCurveTo(hx, hz, hx - r, hz); p.lineTo(-hx + r, hz);
+    p.quadraticCurveTo(-hx, hz, -hx, hz - r); p.lineTo(-hx, -hz + r); p.quadraticCurveTo(-hx, -hz, -hx + r, -hz);
+  }
+  // a soft slab: rounded in plan, with rounded top and bottom edges
+  function offsetPath(p, dx) {
+    const q = new THREE.Path(); const pts = p.getPoints(12);
+    q.moveTo(pts[0].x + dx, pts[0].y); for (let i = 1; i < pts.length; i++) q.lineTo(pts[i].x + dx, pts[i].y);
+    return q;
+  }
+  function softSlab(hx, hz, r, height, bev) {
+    const g = new THREE.ExtrudeGeometry(roundRectShape(hx - bev, hz - bev, Math.max(0.05, r - bev)),
+      { depth: height - 2 * bev, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 8, curveSegments: 24 });
+    g.rotateX(-Math.PI / 2); g.translate(0, bev, 0);
+    return g;
+  }
+  function band(hx, hz, r, inset, height) {
+    const sh = roundRectShape(hx, hz, r); const hole = new THREE.Path(); rr2(hole, hx - inset, hz - inset, Math.max(0.05, r - inset));
+    sh.holes.push(hole);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: height, bevelEnabled: false, curveSegments: 24 });
+    g.rotateX(-Math.PI / 2); return g;
+  }
+  const CR = 0.95 * K;
+  const body = new THREE.Mesh(softSlab(EX, EZ, CR, YR - YB, 0.22), leather); body.position.y = YB; egg.add(body);
+  const seam = new THREE.Mesh(band(EX + 0.012, EZ + 0.012, CR + 0.012, 0.08, 0.13), satin); seam.position.y = YR - 0.42; egg.add(seam);
+  // dark deck with two pockets
+  const deckShape = roundRectShape(EX - 0.28, EZ - 0.28, CR - 0.28);
+  const pocket = DIE_HALF + 0.06;
+  [-SLOT, SLOT].forEach(cx => {
+    const h = new THREE.Path(); h.moveTo(cx - pocket, -pocket); h.lineTo(cx + pocket, -pocket);
+    h.lineTo(cx + pocket, pocket); h.lineTo(cx - pocket, pocket); h.lineTo(cx - pocket, -pocket); deckShape.holes.push(h);
+  });
+  const deck = new THREE.Mesh(new THREE.ShapeGeometry(deckShape, 24), pocketMat);
+  deck.rotation.x = -Math.PI / 2; deck.position.y = YR + 0.002; egg.add(deck);
+  // lid, hinged along the back and swung open
+  const hinge = new THREE.Group(); hinge.position.set(0, YR, -EZ); hinge.rotation.x = -1.9; egg.add(hinge);
+  // the lid has two recesses so it closes over the tops of the dice (they stand ~9mm proud of the deck)
+  const RD = 0.72 * K, LP = DIE_HALF + 0.08, LPR = 0.28;
+  const lidTop = new THREE.Mesh(softSlab(EX, EZ, CR, LH - RD, 0.22), leather); lidTop.position.set(0, RD, EZ); hinge.add(lidTop);
+  const rimShape = roundRectShape(EX, EZ, CR);
+  [-SLOT, SLOT].forEach(cx => { const h = new THREE.Path(); rr2(h, LP, LP, LPR); rimShape.holes.push(offsetPath(h, cx)); });
+  const rimGeo = new THREE.ExtrudeGeometry(rimShape, { depth: RD, bevelEnabled: false, curveSegments: 24 });
+  rimGeo.rotateX(-Math.PI / 2);
+  const lidRim = new THREE.Mesh(rimGeo, leather); lidRim.position.z = EZ; hinge.add(lidRim);
+  [-SLOT, SLOT].forEach(cx => {
+    const ceil = new THREE.Mesh(new THREE.ShapeGeometry(roundRectShape(LP, LP, LPR), 24), pocketMat);
+    ceil.rotation.x = Math.PI / 2; ceil.position.set(cx, RD - 0.004, EZ); hinge.add(ceil);
+  });
+  const lidDeckShape = roundRectShape(EX - 0.28, EZ - 0.28, CR - 0.28);
+  [-SLOT, SLOT].forEach(cx => { const h = new THREE.Path(); rr2(h, LP, LP, LPR); lidDeckShape.holes.push(offsetPath(h, cx)); });
+  const lidDeck = new THREE.Mesh(new THREE.ShapeGeometry(lidDeckShape, 24), pocketMat);
+  lidDeck.rotation.x = Math.PI / 2; lidDeck.position.set(0, -0.002, EZ); hinge.add(lidDeck);
+  const lidSeam = new THREE.Mesh(band(EX + 0.012, EZ + 0.012, CR + 0.012, 0.08, 0.13), satin); lidSeam.position.set(0, RD - 0.065, EZ); hinge.add(lidSeam);
+  const eggShadow = blob(EX * 0.62); eggShadow.position.y = YB - 0.003; egg.add(eggShadow);
+
+  // Nest: a soft square block in the die's finish, with a leatherette top and a pocket the die settles into
+  const nest = new THREE.Group(); nest.visible = false; scene.add(nest);
+  const NS = 1.8 * K, NDEPTH = 0.35 * K, NTOP = -DIE_HALF + NDEPTH, NBOT = -1.95 * K, NCR = 0.55 * K;
+  // every dock is black plastic; its band matches the finish of the die it ships with
+  const dockMetal = new THREE.MeshStandardMaterial({ color: 0x070708, metalness: 0, roughness: 0.5, envMapIntensity: 0.35 });
+  const nestBody = new THREE.Mesh(softSlab(NS, NS, NCR, NTOP - NBOT, 0.2), dockMetal); nestBody.position.y = NBOT; nest.add(nestBody);
+  const P = DIE_HALF + 0.06, PR = 0.26;
+  const inlayShape = roundRectShape(NS - 0.26, NS - 0.26, NCR - 0.26);
+  const inlayHole = new THREE.Path(); rr2(inlayHole, P, P, PR); inlayShape.holes.push(inlayHole);
+  const inlay = new THREE.Mesh(new THREE.ShapeGeometry(inlayShape, 24), leather);
+  inlay.rotation.x = -Math.PI / 2; inlay.position.y = NTOP + 0.002; nest.add(inlay);
+  const pocketFloor = new THREE.Mesh(new THREE.ShapeGeometry(roundRectShape(P, P, PR), 24), pocketMat);
+  pocketFloor.rotation.x = -Math.PI / 2; pocketFloor.position.y = NTOP + 0.001; nest.add(pocketFloor);
+  const nestSeam = new THREE.Mesh(band(NS + 0.012, NS + 0.012, NCR + 0.012, 0.08, 0.11), satin); nestSeam.position.y = NBOT + 0.45; nest.add(nestSeam);
+  const nestShadow = blob(NS * 0.7); nestShadow.position.y = NBOT - 0.003; nest.add(nestShadow);
+  const IDENTITY_Q = new THREE.Quaternion();
+  const tintX = new THREE.Vector3(), tintZ = new THREE.Vector3();
+  const frontTmp = new THREE.Vector3();
+
+  // ---------- sprites ----------
+  function sprite(r, g, b) {
+    const c = document.createElement("canvas"); c.width = c.height = 64;
+    const x = c.getContext("2d"); const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, `rgba(${r},${g},${b},1)`); gr.addColorStop(0.45, `rgba(${r},${g},${b},0.45)`);
+    gr.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    x.fillStyle = gr; x.fillRect(0, 0, 64, 64); return c;
+  }
+  const SPR = { smoke: sprite(214, 219, 226), ember: sprite(246, 247, 249), gold: sprite(255, 255, 255), fizzle: sprite(120, 122, 126) };
+
+  // ---------- particles on the cube surface ----------
+  let particles = [];
+  const upL = new THREE.Vector3(0, 1, 0);
+  const qInv = new THREE.Quaternion();
+  const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
+  function surfaceFace(p) {
+    const ax = Math.abs(p.x), ay = Math.abs(p.y), az = Math.abs(p.z);
+    if (ax >= ay && ax >= az) return faceIndex(0, Math.sign(p.x) || 1);
+    if (ay >= az) return faceIndex(1, Math.sign(p.y) || 1);
+    return faceIndex(2, Math.sign(p.z) || 1);
+  }
+  function project(p) { const m = Math.max(Math.abs(p.x), Math.abs(p.y), Math.abs(p.z)); p.divideScalar(m); }
+  function upFace() {
+    const a = [Math.abs(upL.x), Math.abs(upL.y), Math.abs(upL.z)];
+    const axis = a[0] >= a[1] && a[0] >= a[2] ? 0 : a[1] >= a[2] ? 1 : 2;
+    return faceIndex(axis, Math.sign(upL.getComponent(axis)) || 1);
+  }
+  function spawn(kind, n, where) {
+    const uf = faces[upFace()];
+    const sides = faces.filter(f => f.axis !== uf.axis);
+    const downIdx = faceIndex(uf.axis, -uf.sign), notDown = faces.filter(g => g.i !== downIdx);
+    for (let k = 0; k < n; k++) {
+      if (where === "all") {
+        const f = notDown[(Math.random() * notDown.length) | 0];
+        const a1 = (f.axis + 1) % 3, a2 = (f.axis + 2) % 3;
+        const p = new THREE.Vector3(); p.setComponent(f.axis, f.sign);
+        const cg = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5; // bunched toward the middle
+        p.setComponent(a1, cg() * 0.85); p.setComponent(a2, cg() * 0.85);
+        const v = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.5);
+        particles.push({ p, v, f: surfaceFace(p), kind, life: 0,
+          max: kind === "ember" ? 0.7 + Math.random() * 0.6 : 2.2 + Math.random() * 1.4,
+          size: kind === "ember" ? 7 + Math.random() * 7 : 26 + Math.random() * 20, seed: Math.random() * 10 });
+        continue;
+      }
+      if (where === "top") {
+        const a1 = (uf.axis + 1) % 3, a2 = (uf.axis + 2) % 3;
+        const g = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
+        const p = new THREE.Vector3(); p.setComponent(uf.axis, uf.sign);
+        p.setComponent(a1, g() * 0.95); p.setComponent(a2, g() * 0.95);
+        const v = p.clone().addScaledVector(uf.normal, -p.dot(uf.normal));
+        if (v.lengthSq() < 1e-4) v.setComponent(a1, 0.1);
+        v.normalize().multiplyScalar(kind === "ember" ? 0.6 + Math.random() * 0.8 : 0.15 + Math.random() * 0.45);
+        particles.push({ p, v, f: surfaceFace(p), kind, life: 0,
+          max: kind === "ember" ? 0.7 + Math.random() * 0.6 : 2.4 + Math.random() * 1.4,
+          size: kind === "ember" ? 7 + Math.random() * 7 : 26 + Math.random() * 20,
+          seed: Math.random() * 10 });
+        continue;
+      }
+      const f = sides[(Math.random() * sides.length) | 0];
+      const other = 3 - f.axis - uf.axis;
+      const p = new THREE.Vector3();
+      p.setComponent(f.axis, f.sign);
+      const h = where === "ring" ? (Math.random() - 0.5) * 0.35 : -uf.sign * (0.45 + Math.random() * 0.5);
+      p.setComponent(uf.axis, h);
+      p.setComponent(other, (Math.random() * 2 - 1) * 0.95);
+      const v = new THREE.Vector3();
+      if (kind === "gold") {
+        v.copy(upL).cross(p).normalize().multiplyScalar(1.6);
+      } else {
+        v.copy(upL).multiplyScalar(kind === "ember" ? 0.9 + Math.random() : 0.35 + Math.random() * 0.5);
+        v.setComponent(other, v.getComponent(other) + (Math.random() - 0.5) * 0.9);
+      }
+      particles.push({ p, v, f: surfaceFace(p), kind, life: 0,
+        max: kind === "ember" ? 0.9 + Math.random() * 0.7 : kind === "gold" ? 2.0 + Math.random() * 0.8 : 2.2 + Math.random() * 1.3,
+        size: kind === "ember" ? 8 + Math.random() * 8 : kind === "gold" ? 12 + Math.random() * 10 : 20 + Math.random() * 18,
+        seed: Math.random() * 10 });
+    }
+  }
+  let topIdx = 2, agitate = 0;
+  const sloshL = new THREE.Vector3();
+  function stepParticles(dt, t) {
+    topIdx = upFace();
+    const out = [];
+    for (const q of particles) {
+      q.life += dt;
+      if (q.hold) q.life = Math.min(q.life, q.max * 0.2);
+      if (q.life > q.max) continue;
+      const n = faces[q.f].normal;
+      const lingering = q.linger && t < q.linger;
+      const buoy = q.hold ? -0.35 : lingering ? -0.25 : q.kind === "fizzle" ? 0 : q.kind === "gold" ? 0 : q.kind === "ember" ? -0.8 : -1.3;
+      if ((q.hold || lingering) && q.kind === "smoke") {
+        // keep the smoke banked up over the center of each screen, where the number will appear
+        tmp.copy(q.p).addScaledVector(n, -q.p.dot(n));
+        q.v.addScaledVector(tmp, -2.4 * dt);
+      }
+      if (q.hold && agitate > 0) {
+        q.v.x += (Math.random() - 0.5) * agitate * dt * 6; q.v.y += (Math.random() - 0.5) * agitate * dt * 6; q.v.z += (Math.random() - 0.5) * agitate * dt * 6;
+        q.v.addScaledVector(sloshL, agitate * dt);
+      }
+      q.v.addScaledVector(upL, buoy * dt);
+      if (!q.hold && q.f === topIdx && q.kind !== "gold" && q.kind !== "fizzle") {
+        // on the top face, the cloud spreads outward toward the edges, then pours over them
+        tmp.copy(q.p).addScaledVector(n, -q.p.dot(n));
+        if (tmp.lengthSq() > 1e-6) q.v.addScaledVector(tmp.normalize(), 0.9 * dt);
+      }
+      if (q.kind === "gold") {
+        tmp.copy(upL).cross(q.p).normalize().multiplyScalar(1.6);
+        q.v.lerp(tmp, Math.min(1, 2.5 * dt));
+      } else {
+        const s = q.seed;
+        q.v.x += Math.sin(3.3 * q.p.y + 1.7 * t + s) * 0.9 * dt;
+        q.v.y += Math.sin(3.1 * q.p.z + 1.9 * t + s * 1.3) * 0.9 * dt;
+        q.v.z += Math.sin(2.9 * q.p.x + 1.5 * t + s * 0.7) * 0.9 * dt;
+        q.v.multiplyScalar(1 - (q.kind === "fizzle" ? 3 : q.hold ? 1.6 : 0.7) * dt);
+      }
+      q.v.addScaledVector(n, -q.v.dot(n));
+      q.p.addScaledVector(q.v, dt); project(q.p);
+      const nf = surfaceFace(q.p);
+      if (nf !== q.f) {
+        const nn = faces[nf].normal; const c = q.v.dot(nn);
+        q.v.addScaledVector(nn, -c).addScaledVector(n, -c);
+        q.f = nf;
+      }
+      out.push(q);
+    }
+    particles = out;
+  }
+
+  // ---------- drawing faces ----------
+  function toCanvas(face, p) {
+    tmp2.copy(p).applyMatrix4(face.inv);
+    return [(tmp2.x + 1) * 0.5 * S, (1 - (tmp2.y + 1) * 0.5) * S];
+  }
+  const camLocal = new THREE.Vector3();
+  function textAngle(face, uf) {
+    // side faces: text stands upright toward the sky (the die knows gravity).
+    // top/bottom: the die can't know where you are, so they keep a locked orientation
+    // (whatever they had when they last faced sideways)
+    let raw;
+    if (face.axis === faces[uf].axis) {
+      if (face.stableAngle === undefined) face.stableAngle = 0;
+      return face.stableAngle;
+    }
+    tmp.copy(upL).addScaledVector(face.normal, -upL.dot(face.normal)).negate(); // text "down" is opposite of sky
+    if (tmp.lengthSq() < 1e-4) return face.stableAngle || 0; // no clear direction: keep what's there
+    tmp.transformDirection(face.inv);
+    raw = Math.atan2(-tmp.x, -tmp.y);
+    const snapped = Math.round(raw / (Math.PI / 2)) * (Math.PI / 2);
+    if (face.stableAngle === undefined) face.stableAngle = snapped;
+    let diff = raw - face.stableAngle;
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    if (Math.abs(diff) > Math.PI / 4 + 0.3) face.stableAngle = snapped;
+    return face.stableAngle;
+  }
+  function drawText(ctx, angle, big, small, color, alpha, glow, bigPx, smallPx) {
+    ctx.save(); ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = alpha;
+    ctx.translate(S / 2, S / 2); ctx.rotate(angle);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = color;
+    ctx.shadowColor = glow; ctx.shadowBlur = 18;
+    if (big) {
+      ctx.font = `700 ${bigPx || (big.length > 2 ? 66 : 94)}px "Space Grotesk", Arial, sans-serif`;
+      ctx.fillText(big, 0, small ? -12 : 0);
+    }
+    if (small) {
+      ctx.shadowBlur = 8;
+      ctx.font = `600 ${smallPx || (big ? 22 : 50)}px "Space Grotesk", Arial, sans-serif`;
+      ctx.fillText(small, 0, big ? 54 : 0);
+    }
+    ctx.restore();
+  }
+
+  // Pass the Pot symbols: left and right arrows, a dot to keep, and a drawn pot glyph
+  function drawPotTokens(ctx, tokens, color) {
+    const n = tokens.length, sz = n === 1 ? 64 : n === 2 ? 50 : 40, gap = sz * 1.15, y = -12;
+    ctx.save(); ctx.fillStyle = color; ctx.strokeStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 14;
+    tokens.forEach((t, i) => {
+      const x = (i - (n - 1) / 2) * gap;
+      if (t === "•") { ctx.beginPath(); ctx.arc(x, y, sz * 0.13, 0, Math.PI * 2); ctx.fill(); }
+      else if (t === "P") {
+        const w = sz * 0.8; ctx.lineWidth = sz * 0.09; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(x - w * 0.55, y - sz * 0.05); ctx.lineTo(x + w * 0.55, y - sz * 0.05); ctx.stroke();
+        ctx.beginPath(); ctx.arc(x, y - sz * 0.05, w * 0.45, 0, Math.PI); ctx.stroke();
+        ctx.beginPath(); ctx.arc(x, y - sz * 0.32, sz * 0.11, 0, Math.PI * 2); ctx.fill();
+      } else {
+        const d = t === "→" ? 1 : -1, L = sz * 0.36, H = sz * 0.2; ctx.lineWidth = sz * 0.1; ctx.lineCap = "round"; ctx.lineJoin = "round";
+        ctx.beginPath(); ctx.moveTo(x - d * L, y); ctx.lineTo(x + d * L, y);
+        ctx.moveTo(x + d * (L - H), y - H); ctx.lineTo(x + d * L, y); ctx.lineTo(x + d * (L - H), y + H); ctx.stroke();
+      }
+    });
+    ctx.restore();
+  }
+  function drawResult(ctx, angle, r, label, color, alpha) {
+    ctx.save(); ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = alpha;
+    ctx.translate(S / 2, S / 2); ctx.rotate(angle);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = color; ctx.shadowColor = color;
+    if (r.tokens) {
+      drawPotTokens(ctx, r.tokens, color);
+    } else {
+      const px = Math.round(bigSize(r.big) * (r.parts ? 0.85 : 1));
+      ctx.shadowBlur = 18; ctx.font = `700 ${px}px "Space Grotesk", Arial, sans-serif`;
+      ctx.fillText(r.big, 0, r.parts ? 0 : -12);
+    }
+    ctx.shadowBlur = 8; ctx.font = `600 ${fitPx(label, 22)}px "Space Grotesk", Arial, sans-serif`;
+    ctx.fillText(label, 0, r.parts ? 56 : 54);
+    if (r.parts) {
+      ctx.globalAlpha = alpha * 0.7; ctx.font = `600 ${r.parts.length > 10 ? 14 : 17}px "Space Grotesk", Arial, sans-serif`;
+      ctx.fillText(r.parts, 0, -60);
+    }
+    ctx.restore();
+  }
+
+  // 0.96" 96x96 white OLED: 17.26mm lit square behind a 24mm window on a 34mm die
+  const ACTIVE = 83, OLED_PX = 96;
+  const lowres = document.createElement("canvas"); lowres.width = lowres.height = OLED_PX;
+  const lowCtx = lowres.getContext("2d", { willReadFrequently: true });
+  let trueDisplay = true, lastPanel = -1e9;
+  const DITHER = new Float32Array(OLED_PX * OLED_PX);
+  for (let y = 0; y < OLED_PX; y++) for (let x = 0; x < OLED_PX; x++) {
+    const v = (0.7548776662 * (x + 1) + 0.5698402910 * (y + 1)) % 1;
+    DITHER[y * OLED_PX + x] = 0.02 + v * 0.96;
+  }
+  const LIN = new Float32Array(256); for (let v = 0; v < 256; v++) LIN[v] = Math.pow(v / 255, 2.2); // share of pixels lit = light output
+  function roundRectPath(c, x, y, w, h, r) {
+    c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r);
+    c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h); c.lineTo(x + r, y + h);
+    c.quadraticCurveTo(x, y + h, x, y + h - r); c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y); c.closePath();
+  }
+
+  // analog clock for the side faces while the die rests in the Nest
+  function drawClock(ctx, angle) {
+    const d = new Date(), R = ACTIVE - 12;
+    const sec = d.getSeconds() + d.getMilliseconds() / 1000, min = d.getMinutes() + sec / 60, hr = (d.getHours() % 12) + min / 60;
+    ctx.save(); ctx.globalCompositeOperation = "source-over"; ctx.translate(S / 2, S / 2); ctx.rotate(angle);
+    ctx.strokeStyle = "#F4F5F7"; ctx.fillStyle = "#F4F5F7"; ctx.lineCap = "round";
+    for (let i = 0; i < 12; i++) {
+      const a = i / 12 * Math.PI * 2, major = i % 3 === 0, r0 = major ? R - 12 : R - 7;
+      ctx.globalAlpha = major ? 0.9 : 0.5; ctx.lineWidth = major ? 4 : 2.5;
+      ctx.beginPath(); ctx.moveTo(Math.sin(a) * r0, -Math.cos(a) * r0); ctx.lineTo(Math.sin(a) * R, -Math.cos(a) * R); ctx.stroke();
+    }
+    const hand = (frac, len, w, alpha) => {
+      const a = frac * Math.PI * 2; ctx.globalAlpha = alpha; ctx.lineWidth = w;
+      ctx.beginPath(); ctx.moveTo(-Math.sin(a) * 6, Math.cos(a) * 6); ctx.lineTo(Math.sin(a) * len, -Math.cos(a) * len); ctx.stroke();
+    };
+    ctx.shadowColor = "#F4F5F7"; ctx.shadowBlur = 6;
+    hand(hr / 12, R * 0.52, 6, 1);
+    hand(min / 60, R * 0.8, 4, 1);
+    hand(sec / 60, R * 0.86, 1.8, 0.7);
+    ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(0, 0, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  function drawCharge(ctx, angle) {
+    const lvl = batteryKnown ? BATTERY : 0.25 + ((now * 0.04) % 0.75), H = ACTIVE;
+    ctx.save(); ctx.globalCompositeOperation = "source-over"; ctx.translate(S / 2, S / 2); ctx.rotate(angle);
+    const top = H - lvl * 2 * H;
+    ctx.globalAlpha = 0.28; ctx.fillStyle = "#F4F5F7"; ctx.beginPath(); ctx.moveTo(-H, H);
+    for (let x = -H; x <= H; x += 4) ctx.lineTo(x, top + Math.sin(x * 0.09 + now * 2.2) * 4);
+    ctx.lineTo(H, H); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#F4F5F7";
+    ctx.shadowColor = "#F4F5F7"; ctx.shadowBlur = 10;
+    ctx.font = '700 52px "Space Grotesk", Arial, sans-serif'; ctx.fillText(Math.round(lvl * 100) + "%", 0, -8);
+    ctx.shadowBlur = 0; ctx.font = '600 20px "Space Grotesk", Arial, sans-serif'; ctx.fillText(!batteryKnown || batteryCharging ? "charging" : "battery", 0, 38);
+    ctx.restore();
+  }
+
+  // ---------- state ----------
+  const TYPES = [4, 6, 8, 10, 12, 20, 100, "lcr"];
+  let dieType = 20, diceCount = 1;
+  // "lcr" is the internal key for Pass the Pot: arrows pass left or right, the pot glyph ("P") feeds the pot, a dot keeps
+  const typeName = t => t === "lcr" ? "Pass the Pot" : "d" + t;
+  const setupLabel = (n = diceCount, t = dieType) => t === "lcr" ? (n > 1 ? `Pass the Pot ×${n}` : "Pass the Pot") : (n > 1 ? `${n}d${t}` : `d${t}`);
+  const shortLabel = (n = diceCount, t = dieType) => t === "lcr" ? `Pot ×${n}` : setupLabel(n, t);
+  const fitPx = (str, max, width = 150) => Math.min(max, Math.floor(width / (Math.max(1, str.length) * 0.58)));
+  const POT_WORD = { "←": "left", "→": "right", "P": "pot", "•": "keep" };
+  const bigSize = str => str.length <= 2 ? 94 : str.length === 3 ? 66 : str.length === 4 ? 52 : str.length <= 6 ? 40 : 32;
+  const lcrFace = () => { const r = (Math.random() * 6) | 0; return r === 0 ? "←" : r === 1 ? "P" : r === 2 ? "→" : "•"; };
+  const DEFAULT_HINT = "Press and hold any screen for the menu.";
+  let phase = "idle";
+  let roll = null;            // {value, type, start, startQ, targetQ, axis}
+  let revealAt = -1, dimAt = -1, wakeUntil = -1, wakeStart = 0, flashAt = -1, lastInteract = 0;
+  function wake(seconds) { if (now >= wakeUntil) wakeStart = now; wakeUntil = now + seconds; }
+  let resultShown = null;     // last result for wake display
+  const trail = [];
+  let pendingSpecial = null;
+  function setResultText(kind) {
+    const r = resultShown;
+    resultEl.className = "result" + kind;
+    resultEl.textContent = (kind === " crit" ? "Max roll! " : kind === " dud" ? "Dud. " : "") +
+      r.desc + (trail.length > 1 ? `. Before: ${trail.slice(1).join("; ")}` : "");
+  }
+  function showSetup() { resultEl.className = "result"; resultEl.textContent = `Set to ${setupLabel()}`; }
+  const clock = new THREE.Clock();
+  let now = 0;
+
+  const typesEl = document.getElementById("types");
+  function syncChips() { [...typesEl.children].forEach((c, i) => c.setAttribute("aria-checked", TYPES[i] === dieType ? "true" : "false")); }
+  TYPES.forEach(n => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = typeName(n); b.setAttribute("role", "radio");
+    b.addEventListener("click", () => {
+      dieType = n; if (n === "lcr" && diceCount > 3) diceCount = 3; syncChips();
+      wake(2.2); resultShown = null; lastInteract = now; showSetup();
+    });
+    typesEl.appendChild(b);
+  });
+  const resultEl = document.getElementById("result");
+  syncChips();
+  showSetup();
+  const throwBtn = document.getElementById("throw");
+
+  function randomOrientation() {
+    const k = () => ((Math.random() * 4) | 0) * Math.PI / 2;
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(k(), k(), k()));
+    const yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 0.7);
+    return q.premultiply(yaw);
+  }
+  let shaking = false, charge = 0;
+  function startShake() {
+    if (phase === "tumble" || pendingBoot) return;
+    if (viewMode !== "die") setView("die");
+    if (menuOpen) closeMenu(false); // only a hold saves: a throw or view change leaves the setup as it was
+    if (!shaking) { particles = particles.filter(q => q.hold); charge = 0; }
+    shaking = true; resultShown = null; pendingSpecial = null; revealAt = dimAt = -1; wakeUntil = -1; confirmAt = -1;
+    resultEl.className = "result"; resultEl.textContent = "";
+  }
+  function stopShake(thenThrow) { if (!shaking) return; shaking = false; die.position.y = 0; if (thenThrow) doThrow(); else showSetup(); }
+  // the throw button: hold to shake, let go to throw (a quick tap just throws)
+  throwBtn.addEventListener("pointerdown", e => { if (e.button > 0) return; e.preventDefault(); throwBtn.setPointerCapture(e.pointerId); startShake(); });
+  throwBtn.addEventListener("pointerup", () => stopShake(true));
+  throwBtn.addEventListener("pointercancel", () => stopShake(false));
+  throwBtn.addEventListener("keydown", e => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); startShake(); } });
+  throwBtn.addEventListener("keyup", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); stopShake(true); } });
+  function doThrow() {
+    if (phase === "tumble") return;
+    if (docked()) setView("die");
+    if (menuOpen) closeMenu(false); // only a hold saves: a throw or view change leaves the setup as it was
+    // smoke from a pre-roll shake rides along with the toss; without a shake, the throw fills it
+    particles = particles.filter(q => q.hold);
+    const full = reduced ? 150 : 380, held = particles.length;
+    if (held < full) {
+      const before = particles.length;
+      spawn("smoke", full - held, "all");
+      for (let i = before; i < particles.length; i++) { particles[i].hold = true; particles[i].life = 0; }
+    }
+    charge = 1;
+    const values = Array.from({ length: diceCount }, () => dieType === "lcr" ? lcrFace() : 1 + ((Math.random() * dieType) | 0));
+    roll = { values, type: dieType, count: diceCount, start: now,
+      dur: reduced ? 0.45 : 1.25, startQ: die.quaternion.clone(), targetQ: randomOrientation(),
+      axis: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize() };
+    phase = "tumble"; throwBtn.disabled = true; resultEl.textContent = ""; resultEl.className = "result";
+    revealAt = dimAt = -1; wakeUntil = -1; resultShown = null; pendingSpecial = null; spin.set(0, 0);
+    shaking = false;
+  }
+
+  // ---------- dragging ----------
+  let dragging = false, px = 0, py = 0;
+  const spin = new THREE.Vector2();
+  const Y = new THREE.Vector3(0, 1, 0), X = new THREE.Vector3(1, 0, 0), qd = new THREE.Quaternion();
+  let swipeStart = null, swiped = false, lastTapAt = -1, holding = false, holdStart = 0;
+  const HOLD = 0.8, HOLD_SHOW = 0.22; // the ring only appears once a touch is clearly a hold, not a tap
+  const raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function hitsDie(e) {
+    const rect = canvas.getBoundingClientRect();
+    ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    const hits = raycaster.intersectObject(die, true);
+    return hits.length ? die.worldToLocal(hits[0].point.clone()) : null;
+  }
+  let holdFace = 0;
+  // haptics: real vibration where the browser supports it (Android Chrome), a visual pulse everywhere
+  function buzz(pattern) { try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) {} }
+  let pulseAt = -1;
+  canvas.addEventListener("pointerdown", e => {
+    if (phase === "tumble") return;
+    dragging = true; px = e.clientX; py = e.clientY; canvas.setPointerCapture(e.pointerId);
+    swipeStart = { x: e.clientX, y: e.clientY }; swiped = false;
+    lastInteract = now;
+    if (menuOpen) { holding = true; holdStart = now; return; }
+    if (viewMode !== "die") return;
+    // press and hold any screen on the die to open the menu there
+    const hit = hitsDie(e);
+    if (hit) { holding = true; holdStart = now; holdFace = faceFromVec(hit); }
+    if (resultShown && dimAt > 0 && now > dimAt) { dimAt = now + 4; }
+  });
+  canvas.addEventListener("pointermove", e => {
+    if (!dragging) return;
+    const dx = e.clientX - px, dy = e.clientY - py; px = e.clientX; py = e.clientY;
+    const tx = e.clientX - swipeStart.x, ty = e.clientY - swipeStart.y;
+    if (Math.hypot(tx, ty) > 8) holding = false;
+    if (viewMode !== "die") { orbitYaw -= dx * 0.008; updateCameraTargets(); lastInteract = now; return; }
+    if (menuOpen) {
+      if (!swiped && Math.hypot(tx, ty) > 36) {
+        swiped = true;
+        if (Math.abs(tx) > Math.abs(ty)) tipDie(tx > 0 ? "right" : "left"); else tipDie(ty < 0 ? "up" : "down");
+      }
+      return;
+    }
+    if (holding) return; // a steady press is a hold, not a spin
+    rotateBy(dx * 0.008, dy * 0.008); spin.set(dx * 0.008, dy * 0.008);
+    lastInteract = now;
+  });
+  const endDrag = () => { dragging = false; };
+  canvas.addEventListener("pointerup", e => {
+    endDrag(); holding = false;
+    if (menuOpen) return;
+    if (viewMode !== "die" || !swipeStart || Math.hypot(e.clientX - swipeStart.x, e.clientY - swipeStart.y) > 8) return;
+    spin.set(0, 0);
+    if (hitsDie(e)) wake(3); // a tap shows the current setup
+  });
+  canvas.addEventListener("pointercancel", () => { endDrag(); holding = false; });
+  function rotateBy(yaw, pitch) {
+    qd.setFromAxisAngle(Y, yaw); die.quaternion.premultiply(qd);
+    qd.setFromAxisAngle(X, pitch); die.quaternion.premultiply(qd);
+  }
+
+  // ---------- phone-free menu: tip the die to navigate ----------
+  // settings are display-only in the mockup: turning up and down moves through them
+  const SETTINGS = [
+    { name: "Brightness", value: "70%" },
+    { name: "Haptics", value: "Strong" },
+    { name: "Smoke", value: "Full" },
+    { name: "Large text", value: "Off" },
+    { name: "Sleep after", value: "2 min" },
+    { name: "Night mode", value: "Auto" },
+    { name: "Bluetooth", value: "On" },
+    { name: "Verified rolls", value: "Off" },
+    { name: "Owner", value: "Joel" },
+    { name: "Restart", value: "Hold to restart" },
+    { name: "About", value: "v0.1.0 · SB-0042" },
+  ];
+  const PAGES = [
+    // Pass the Pot uses at most three dice, like the table game
+    { title: "How many dice", key: "count", values: m => m.type === "lcr" ? [1, 2, 3] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], fmt: v => String(v) },
+    { title: "Which die", key: "type", values: TYPES, fmt: typeName },
+    { title: "Settings", key: "setting", values: SETTINGS.map((_, i) => i), fmt: i => SETTINGS[i].name },
+  ];
+  // battery: borrow the phone's or laptop's real battery where the browser allows it, otherwise a stand-in value
+  let BATTERY = 0.78, batteryKnown = false, batteryCharging = true;
+  try {
+    if (navigator.getBattery) navigator.getBattery().then(b => {
+      const sync = () => { BATTERY = b.level; batteryCharging = b.charging; batteryKnown = true; };
+      sync(); b.addEventListener("levelchange", sync); b.addEventListener("chargingchange", sync);
+    }).catch(() => {});
+  } catch (e) {}
+  let confirmAt = -1, confirmLabel = "";
+  // success screen after a confirmed setup: a check draws itself, then the setup and a nudge to roll
+  function drawSuccess(ctx, angle, label, t) {
+    const a = Math.min(1, t / 0.15) * (t < 0.9 ? 1 : Math.max(0, 1 - (t - 0.9) / 0.35));
+    if (a <= 0) return;
+    ctx.save(); ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = a;
+    ctx.translate(S / 2, S / 2); ctx.rotate(angle);
+    ctx.strokeStyle = "#F4F5F7"; ctx.fillStyle = "#F4F5F7"; ctx.shadowColor = "#F4F5F7";
+    ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.shadowBlur = 8;
+    const p = Math.min(1, Math.max(0, (t - 0.05) / 0.3));
+    const pts = [[-14, -40], [-4, -30], [16, -52]];
+    const l1 = Math.hypot(10, 10), l2 = Math.hypot(20, 22), d = p * (l1 + l2);
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    if (d <= l1) ctx.lineTo(pts[0][0] + 10 * d / l1, pts[0][1] + 10 * d / l1);
+    else { ctx.lineTo(pts[1][0], pts[1][1]); const k = (d - l1) / l2; ctx.lineTo(pts[1][0] + 20 * k, pts[1][1] - 22 * k); }
+    ctx.stroke();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.shadowBlur = 14;
+    ctx.font = `700 ${fitPx(label, 50)}px "Space Grotesk", Arial, sans-serif`;
+    ctx.fillText(label, 0, 6);
+    ctx.shadowBlur = 0; ctx.globalAlpha = a * 0.75; ctx.font = '600 15px "Space Grotesk", Arial, sans-serif';
+    ctx.fillText("Ready to roll", 0, 48);
+    ctx.restore();
+  }
+  const valuesFor = (pg, m) => typeof pg.values === "function" ? pg.values(m) : pg.values;
+  let menuOpen = false, menu = null, tip = null, snap = null, menuLastInput = 0, menuOpenAt = 0, menuFade = null, lastPf = 0;
+  const menuBtn = document.getElementById("menu");
+  const hintEl = document.querySelector(".hint");
+  function camFrame() {
+    const fh = new THREE.Vector3().subVectors(camLook, camera.position); fh.y = 0; fh.normalize();
+    const r = new THREE.Vector3().crossVectors(fh, Y).normalize();
+    return { fh, r };
+  }
+  function faceFromVec(v) {
+    const a = [Math.abs(v.x), Math.abs(v.y), Math.abs(v.z)];
+    const axis = a[0] >= a[1] && a[0] >= a[2] ? 0 : a[1] >= a[2] ? 1 : 2;
+    return faceIndex(axis, Math.sign(v.getComponent(axis)) || 1);
+  }
+  function alignedQuat() {
+    const { r } = camFrame();
+    const back = new THREE.Vector3().crossVectors(r, Y);
+    const basis = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(r, Y, back));
+    const local = basis.clone().invert().multiply(die.quaternion);
+    const ax = new THREE.Vector3(), ay = new THREE.Vector3(), az = new THREE.Vector3();
+    new THREE.Matrix4().makeRotationFromQuaternion(local).extractBasis(ax, ay, az);
+    const snapV = v => {
+      const a = [Math.abs(v.x), Math.abs(v.y), Math.abs(v.z)];
+      const i = a[0] >= a[1] && a[0] >= a[2] ? 0 : a[1] >= a[2] ? 1 : 2;
+      const o = new THREE.Vector3(); o.setComponent(i, Math.sign(v.getComponent(i)) || 1); return o;
+    };
+    const sx = snapV(ax); let sy = snapV(ay);
+    if (Math.abs(sx.dot(sy)) > 0.5) sy = snapV(new THREE.Vector3().crossVectors(az, ax));
+    const sz = new THREE.Vector3().crossVectors(sx, sy);
+    const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(sx, sy, sz));
+    return basis.multiply(q);
+  }
+  let menuPf = 0, successPf = 0;
+  function openMenu(tapFace) {
+    if (menuOpen || phase === "tumble" || viewMode !== "die") return;
+    menuOpen = true; menu = { page: 0, count: diceCount, type: dieType, setting: 0 };
+    particles = []; resultShown = null; pendingSpecial = null; wakeUntil = -1; spin.set(0, 0);
+    const aligned = alignedQuat(), { fh, r } = camFrame(), front = fh.clone().negate();
+    if (tapFace === undefined) tapFace = faceFromVec(front.clone().applyQuaternion(aligned.clone().invert()));
+    const n = faces[tapFace].normal.clone().applyQuaternion(aligned);
+    let fix = null;
+    if (n.dot(front) < 0.9) {
+      if (Math.abs(n.y) > 0.9) fix = new THREE.Quaternion().setFromAxisAngle(r, n.y > 0 ? Math.PI / 2 : -Math.PI / 2);
+      else if (n.dot(r) > 0.9) fix = new THREE.Quaternion().setFromAxisAngle(Y, -Math.PI / 2);
+      else if (n.dot(r) < -0.9) fix = new THREE.Quaternion().setFromAxisAngle(Y, Math.PI / 2);
+      else fix = new THREE.Quaternion().setFromAxisAngle(Y, Math.PI);
+    }
+    const targetQ = fix ? fix.multiply(aligned) : aligned;
+    menuPf = tapFace;
+    snap = { start: now, dur: 0.35, startQ: die.quaternion.clone(), targetQ };
+    menuLastInput = now; menuOpenAt = now; menuFade = null; menuBtn.textContent = "Done"; lastTapAt = -1;
+    hintEl.textContent = "Swipe to turn the die through the menu. Press and hold to finish.";
+    resultEl.className = "result"; resultEl.textContent = "Menu";
+  }
+  let rebootUntil = -1, pendingBoot = false;
+  function closeMenu(commit) {
+    if (!menuOpen) return;
+    const restart = commit && PAGES[menu.page].key === "setting" && SETTINGS[menu.setting].name === "Restart";
+    menuOpen = false; tip = null;
+    if (restart) {
+      // holding on Restart: the screens go dark for a moment, then the die powers back on
+      particles = []; resultShown = null; pendingSpecial = null; confirmAt = -1; wakeUntil = -1; menuFade = null;
+      rebootUntil = now + 0.8; pendingBoot = true;
+      resultEl.className = "result"; resultEl.textContent = "Restarting";
+      menuBtn.textContent = "Menu"; hintEl.textContent = DEFAULT_HINT; lastInteract = now;
+      return;
+    }
+    menuFade = { m: Object.assign({}, menu), pf: menuPf, q: die.quaternion.clone(), start: now };
+    successPf = menuPf;
+    if (commit) { diceCount = menu.count; dieType = menu.type; syncChips(); confirmAt = now; confirmLabel = setupLabel(); }
+    wake(2.2);
+    showSetup();
+    menuBtn.textContent = "Menu"; hintEl.textContent = DEFAULT_HINT; lastInteract = now;
+  }
+  function tipDie(dir) {
+    if (!menuOpen || tip || snap) return;
+    const { fh, r } = camFrame();
+    const horizontal = dir === "left" || dir === "right";
+    const axis = horizontal ? Y.clone() : r.clone();
+    const ang = dir === "right" || dir === "down" ? Math.PI / 2 : -Math.PI / 2;
+    const targetQ = new THREE.Quaternion().setFromAxisAngle(axis, ang).multiply(die.quaternion);
+    const next = Object.assign({}, menu);
+    if (horizontal) next.page = (menu.page + (dir === "left" ? 1 : PAGES.length - 1)) % PAGES.length;
+    else {
+      const pg = PAGES[menu.page], list = valuesFor(pg, menu), i = list.indexOf(menu[pg.key]);
+      next[pg.key] = list[(i + (dir === "up" ? 1 : list.length - 1)) % list.length];
+      if (next.type === "lcr" && next.count > 3) next.count = 3;
+    }
+    const front = fh.clone().negate();
+    const from = menuPf;
+    const to = faceFromVec(front.clone().applyQuaternion(targetQ.clone().invert()));
+    buzz(10);
+    tip = { start: now, dur: reduced ? 0.15 : 0.42, startQ: die.quaternion.clone(), targetQ, from, to, next, axis, sign: Math.sign(ang) };
+    menuLastInput = now;
+  }
+  // direction, in a face's canvas pixels, from its center toward the edge it shares with another face
+  function edgeDir(face, otherNormal) {
+    const v = otherNormal.clone().transformDirection(face.inv);
+    const len = Math.hypot(v.x, v.y) || 1;
+    return [v.x / len, -v.y / len];
+  }
+  function drawMenu(ctx, angle, m, ox = 0, oy = 0, alpha = 1, scale = 1) {
+    const pg = PAGES[m.page], val = pg.fmt(m[pg.key]);
+    ctx.save(); ctx.globalCompositeOperation = "source-over"; ctx.translate(S / 2 + ox, S / 2 + oy); ctx.rotate(angle); ctx.scale(scale, scale);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#F4F5F7"; ctx.shadowColor = "#F4F5F7";
+    // status bar: the setup being chosen on the left, battery on the right
+    ctx.globalAlpha = 0.85 * alpha; ctx.textAlign = "left"; ctx.font = '700 14px "Space Grotesk", Arial, sans-serif';
+    ctx.fillText(shortLabel(m.count, m.type), -66, -66);
+    const bx = 44, by = -71, bw = 20, bh = 10;
+    ctx.strokeStyle = "#F4F5F7"; ctx.lineWidth = 1.5; ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillRect(bx + bw, by + 3, 2, 4); ctx.fillRect(bx + 2, by + 2, (bw - 4) * BATTERY, bh - 4);
+    ctx.textAlign = "center";
+    ctx.globalAlpha = 0.75 * alpha; ctx.font = '600 15px "Space Grotesk", Arial, sans-serif'; ctx.fillText(pg.title, 0, -40);
+    ctx.globalAlpha = 0.55 * alpha; ctx.font = '700 13px "Space Grotesk", Arial, sans-serif'; ctx.fillText("▲", 0, -22); ctx.fillText("▼", 0, 46);
+    if (pg.key === "setting") {
+      const item = SETTINGS[m.setting];
+      ctx.globalAlpha = alpha; ctx.shadowBlur = 10; ctx.font = `700 ${fitPx(item.name, 26)}px "Space Grotesk", Arial, sans-serif`;
+      ctx.fillText(item.name, 0, 2);
+      ctx.shadowBlur = 0; ctx.globalAlpha = 0.72 * alpha; ctx.font = `600 ${fitPx(item.value, 18)}px "Space Grotesk", Arial, sans-serif`;
+      ctx.fillText(item.value, 0, 27);
+    } else {
+      ctx.globalAlpha = alpha; ctx.shadowBlur = 14; ctx.font = `700 ${fitPx(val, 52)}px "Space Grotesk", Arial, sans-serif`; ctx.fillText(val, 0, 12);
+    }
+    ctx.shadowBlur = 0;
+    PAGES.forEach((_, i) => { ctx.beginPath(); ctx.arc((i - (PAGES.length - 1) / 2) * 14, 66, 3.5, 0, Math.PI * 2); ctx.globalAlpha = (i === m.page ? 1 : 0.35) * alpha; ctx.fill(); });
+    ctx.restore();
+  }
+  function previewText(f, m, q, pfIdx) {
+    if (f.i === pfIdx || f.axis === faces[pfIdx].axis) return null;
+    const { r } = camFrame();
+    const wn = f.normal.clone().applyQuaternion(q);
+    const pg = PAGES[m.page], list = valuesFor(pg, m), i = list.indexOf(m[pg.key]);
+    if (wn.dot(r) > 0.7) return PAGES[(m.page + 1) % PAGES.length].title;
+    if (wn.dot(r) < -0.7) return PAGES[(m.page + PAGES.length - 1) % PAGES.length].title;
+    if (wn.y < -0.7) return pg.fmt(list[(i + 1) % list.length]);
+    if (wn.y > 0.7) return pg.fmt(list[(i + list.length - 1) % list.length]);
+    return null;
+  }
+  function drawPreview(ctx, ang, text, alpha, ox = 0, oy = 0) {
+    if (!text || alpha <= 0.001) return;
+    ctx.save(); ctx.translate(ox, oy);
+    drawText(ctx, ang, null, text, "#F4F5F7", 0.35 * alpha, "#F4F5F7", null, Math.min(40, Math.floor(150 / (text.length * 0.56))));
+    ctx.restore();
+  }
+  // which way a face's surface is moving during a turn, in that face's canvas pixels
+  function faceMotionDir(f) {
+    const wn = f.normal.clone().applyQuaternion(tip.startQ);
+    const v = new THREE.Vector3().crossVectors(tip.axis, wn).multiplyScalar(tip.sign);
+    if (v.lengthSq() < 0.01) return [0, 0];
+    v.applyQuaternion(tip.startQ.clone().invert());
+    return edgeDir(f, v);
+  }
+  // ---------- start-up animation: pips appear and tween between values on every face ----------
+  // pips are listed in a fixed slot order so each step slides existing pips and grows or shrinks the rest
+  const PIP = { tl: [-1, -1], br: [1, 1], tr: [1, -1], bl: [-1, 1], c: [0, 0], ml: [-1, 0], mr: [1, 0] };
+  const PIPS = { 1: ["c"], 2: ["tl", "br"], 3: ["tl", "br", "c"], 4: ["tl", "br", "tr", "bl"], 5: ["tl", "br", "tr", "bl", "c"], 6: ["tl", "br", "tr", "bl", "ml", "mr"] };
+  const FACE_START = [3, 4, 1, 6, 2, 5]; // opposite faces add to 7, like a real die
+  const BOOT_STEP = 0.34, BOOT_STEPS = 5, BOOT_FADE = 0.4, LOOP_END = 0.25 + BOOT_STEP * BOOT_STEPS;
+  const BOOT_DUR = LOOP_END + 4.25; // loop, then the top face's finale
+  const BURST_AT = 0.75; // the lone center pip waits this long before it bursts
+  let bootStart = -1, bootDone = true, bootTop = 2, bootBurst = false;
+  function startBoot() { bootStart = now; bootDone = false; bootBurst = false; wakeUntil = -1; bootTop = upFace(); }
+  // the center pip of the top face bursts into smoke
+  function spawnBurst(fi) {
+    const f = faces[fi], a1 = (f.axis + 1) % 3, a2 = (f.axis + 2) % 3;
+    for (let k = 0; k < (reduced ? 60 : 170); k++) {
+      const th = Math.random() * Math.PI * 2, dir = new THREE.Vector3();
+      dir.setComponent(a1, Math.cos(th)); dir.setComponent(a2, Math.sin(th));
+      const p = new THREE.Vector3(); p.setComponent(f.axis, f.sign); p.addScaledVector(dir, 0.03 + Math.random() * 0.35);
+      // a thick cloud that hangs over the middle of the screen for a moment, then rolls off the edges
+      particles.push({ p, v: dir.clone().multiplyScalar(0.3 + Math.random() * 0.6), f: fi, kind: "smoke", life: 0,
+        max: 1.9 + Math.random() * 0.9, size: 22 + Math.random() * 18, seed: Math.random() * 10, linger: now + 0.75 });
+    }
+  }
+  function drawPips(ctx, angle, from, to, t, alpha, scale) {
+    const A = PIPS[from], B = PIPS[to], n = Math.max(A.length, B.length), g = ACTIVE * 0.46, r = ACTIVE * 0.15;
+    const e = t * t * (3 - 2 * t);
+    ctx.save(); ctx.globalCompositeOperation = "source-over"; ctx.translate(S / 2, S / 2); ctx.rotate(angle);
+    ctx.fillStyle = "#F4F5F7"; ctx.shadowColor = "#F4F5F7"; ctx.shadowBlur = 10;
+    for (let i = 0; i < n; i++) {
+      const pa = A[i] ? PIP[A[i]] : [0, 0], pb = B[i] ? PIP[B[i]] : [0, 0];
+      const sa = A[i] ? 1 : 0, sb = B[i] ? 1 : 0, sc = (sa + (sb - sa) * e) * scale;
+      if (sc <= 0.01) continue;
+      ctx.globalAlpha = alpha * Math.min(1, sc * 1.5);
+      ctx.beginPath(); ctx.arc((pa[0] + (pb[0] - pa[0]) * e) * g, (pa[1] + (pb[1] - pa[1]) * e) * g, r * sc, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+  function drawBootFace(f, ctx, ang) {
+    const top = f.i === bootTop;
+    const t = now - bootStart - (top ? 0 : f.i * 0.05); // a slight stagger around the cube
+    if (t < 0) return;
+    if (top && t >= LOOP_END) { drawBootFinale(ctx, ang, t - LOOP_END); return; }
+    // the top face starts on 6 so the loop lands it on 5
+    const v0 = top ? 6 : FACE_START[f.i], val = k => ((v0 - 1 + k) % 6) + 1;
+    const appear = Math.min(1, t / 0.25), stepsT = t - 0.25;
+    const fade = Math.max(0, Math.min(1, (stepsT - BOOT_STEP * BOOT_STEPS) / BOOT_FADE));
+    if (stepsT < 0) { drawPips(ctx, ang, v0, v0, 0, appear, appear); return; }
+    const k = Math.min(BOOT_STEPS, Math.floor(stepsT / BOOT_STEP));
+    const local = k >= BOOT_STEPS ? 1 : Math.min(1, (stepsT - k * BOOT_STEP) / 0.22);
+    const from = val(Math.min(k, BOOT_STEPS - 1)), to = val(Math.min(k + 1, BOOT_STEPS));
+    drawPips(ctx, ang, k >= BOOT_STEPS ? to : from, to, k >= BOOT_STEPS ? 1 : local, 1 - fade, 1 - 0.6 * fade);
+  }
+  // finale on the top face: corner pips shoot outward, the center pip bursts, and the name emerges from the smoke
+  function drawBootFinale(ctx, angle, u) {
+    const g = ACTIVE * 0.46, r = ACTIVE * 0.15;
+    ctx.save(); ctx.globalCompositeOperation = "source-over"; ctx.translate(S / 2, S / 2); ctx.rotate(angle);
+    ctx.fillStyle = "#F4F5F7"; ctx.shadowColor = "#F4F5F7"; ctx.shadowBlur = 10;
+    if (u < 0.35) {
+      const e = Math.pow(u / 0.35, 2), d = g * (1 + 1.4 * e);
+      ctx.globalAlpha = 1 - e;
+      [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([x, y]) => { ctx.beginPath(); ctx.arc(x * d, y * d, r * (1 - 0.4 * e), 0, Math.PI * 2); ctx.fill(); });
+    }
+    if (u < BURST_AT + 0.15) {
+      // the center pip sits alone for a beat, breathing slightly, then swells and bursts
+      const b = Math.max(0, (u - BURST_AT) / 0.15), sc = u < BURST_AT ? 1 + 0.07 * Math.sin(u * Math.PI * 4) : 1 + b * 1.2;
+      ctx.globalAlpha = 1 - b; ctx.beginPath(); ctx.arc(0, 0, r * sc, 0, Math.PI * 2); ctx.fill();
+    }
+    const la = Math.max(0, Math.min(1, (u - 1.65) / 0.6)) * (u < 3.8 ? 1 : Math.max(0, 1 - (u - 3.8) / 0.4));
+    if (la > 0) {
+      ctx.globalAlpha = la; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.shadowBlur = 14;
+      ctx.font = `700 ${fitPx("SMOKEBOMB", 28, 142)}px "Space Grotesk", Arial, sans-serif`;
+      ctx.fillText("SMOKEBOMB", 0, 2);
+    }
+    ctx.restore();
+  }
+  function drawHoldRing(ctx, ang, p, alpha = 1, grow = 0) {
+    const inset = 3 - grow, x0 = S / 2 - ACTIVE + inset, x1 = S / 2 + ACTIVE - inset, y0 = x0, y1 = x1, rr = 24 - inset, cx = S / 2;
+    const L = 4 * (x1 - x0 - 2 * rr) + 2 * Math.PI * rr;
+    ctx.save(); ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = alpha; ctx.strokeStyle = "#F4F5F7"; ctx.lineWidth = 4;
+    ctx.translate(S / 2, S / 2); ctx.rotate(ang); ctx.translate(-S / 2, -S / 2);
+    ctx.lineCap = "round"; ctx.shadowColor = "#F4F5F7"; ctx.shadowBlur = 4;
+    ctx.setLineDash([Math.max(0.01, p * L), L]);
+    ctx.beginPath(); ctx.moveTo(cx, y0);
+    ctx.lineTo(x1 - rr, y0); ctx.quadraticCurveTo(x1, y0, x1, y0 + rr);
+    ctx.lineTo(x1, y1 - rr); ctx.quadraticCurveTo(x1, y1, x1 - rr, y1);
+    ctx.lineTo(x0 + rr, y1); ctx.quadraticCurveTo(x0, y1, x0, y1 - rr);
+    ctx.lineTo(x0, y0 + rr); ctx.quadraticCurveTo(x0, y0, x0 + rr, y0);
+    ctx.lineTo(cx, y0); ctx.stroke(); ctx.restore();
+  }
+  function drawMenuFace(f, ctx, ang, pf) {
+    const openA = Math.min(1, (now - menuOpenAt) / 0.3);
+    if (tip) {
+      // every face: the old content slides back against the turn and fades out,
+      // the new content slides in from the leading edge and fades up
+      const u = ease(Math.min(1, (now - tip.start) / tip.dur)), D = 120, [mx, my] = faceMotionDir(f);
+      const ox = -mx * u * D, oy = -my * u * D, nx = mx * (1 - u) * D, ny = my * (1 - u) * D;
+      if (f.i === tip.from) drawMenu(ctx, ang, menu, ox, oy, 1 - u);
+      if (f.i === tip.to) drawMenu(ctx, ang, tip.next, nx, ny, u);
+      return;
+    }
+    if (f.i === pf) {
+      // entering: the ring that filled on the way in flashes, and the menu grows into place
+      const e = Math.min(1, (now - menuOpenAt) / 0.35), grow = 1 - Math.pow(1 - e, 3);
+      if (e < 1) drawHoldRing(ctx, ang, 1, 1 - e, e * 3);
+      drawMenu(ctx, ang, menu, 0, 0, openA, 0.86 + 0.14 * grow);
+      if (holding && !swiped && !snap && now - holdStart > HOLD_SHOW)
+        drawHoldRing(ctx, ang, Math.min(1, (now - holdStart - HOLD_SHOW) / (HOLD - HOLD_SHOW)));
+      return;
+    }
+  }
+  function drawMenuFade(f, ctx, ang) {
+    const u = (now - menuFade.start) / 0.3;
+    if (u >= 1) return;
+    if (f.i === menuFade.pf) { drawMenu(ctx, ang, menuFade.m, 0, 0, 1 - u, 1 + 0.12 * u); drawHoldRing(ctx, ang, 1, 1 - u, u * 3); }
+  }
+  menuBtn.addEventListener("click", () => {
+    if (menuOpen) { closeMenu(true); pulseAt = now; buzz(28); return; }
+    if (viewMode !== "die") setView("die");
+    openMenu();
+  });
+  document.addEventListener("keydown", e => {
+    if (!menuOpen) return;
+    const map = { ArrowRight: "right", ArrowLeft: "left", ArrowUp: "up", ArrowDown: "down" };
+    if (map[e.key]) { tipDie(map[e.key]); e.preventDefault(); }
+    else if (e.key === "Enter") { closeMenu(true); e.preventDefault(); }
+    else if (e.key === "Escape") { closeMenu(false); e.preventDefault(); }
+  });
+
+  // ---------- layout ----------
+  const camTargetPos = new THREE.Vector3(), camTargetLook = new THREE.Vector3(), camLook = new THREE.Vector3();
+  let camInit = false, closeUp = false;
+  function updateCameraTargets() {
+    const a = camera.aspect, tanV = Math.tan(THREE.MathUtils.degToRad(16));
+    let dir, dist, lookY;
+    if (viewMode === "sizes") {
+      dist = Math.max((COMPARE_HALF * 1.08) / (tanV * a), 2.4 / tanV); dir = [0, 0.42, 1];
+      lookY = -(a < 0.75 ? 0.05 : 0.12) * dist * tanV;
+    } else if (viewMode === "egg") {
+      dist = Math.max(3.6 * K / (tanV * a), 3.2 * K / tanV); dir = [0.3, 0.75, 1];
+      lookY = -0.5 * K - (a < 0.75 ? 0.05 : 0.1) * dist * tanV;
+    } else if (viewMode === "nest") {
+      dist = Math.max(2.5 * K / (tanV * a), 3.0 * K / tanV); dir = [0.55, 0.5, 1];
+      lookY = -0.9 * K - (a < 0.75 ? 0.05 : 0.1) * dist * tanV;
+    } else {
+      dist = (a < 0.75 ? 12.5 : 9.5) * K; dir = [0.55, 0.62, 1]; lookY = (a < 0.75 ? -0.1 : -0.35) * K;
+      if (closeUp) { dist *= 0.4; lookY = 0; }
+    }
+    camTargetPos.set(dir[0], dir[1], dir[2]).normalize().multiplyScalar(dist).applyAxisAngle(Y, orbitYaw);
+    camTargetLook.set(0, lookY, 0);
+    if (!camInit) { camera.position.copy(camTargetPos); camLook.copy(camTargetLook); camInit = true; }
+  }
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    updateCameraTargets();
+  }
+  // heat-tinted titanium: soft bands of blue, violet, bronze, gold and teal, like anodized or flamed metal
+  const rainbowTex = (function () {
+    const c = document.createElement("canvas"); c.width = 512; c.height = 8;
+    const x = c.getContext("2d"), g = x.createLinearGradient(0, 0, 512, 0);
+    // a narrow heat-tint range (straw, bronze, violet, steel blue) rather than a full rainbow
+    [["#bda66e", 0], ["#a8783f", 0.22], ["#7d5886", 0.44], ["#55689f", 0.64], ["#6f90a8", 0.82], ["#bda66e", 1]]
+      .forEach(([col, t]) => g.addColorStop(t, col));
+    x.fillStyle = g; x.fillRect(0, 0, 512, 8);
+    x.fillStyle = "rgba(150,154,160,0.22)"; x.fillRect(0, 0, 512, 8);
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1.5, 1.5); t.encoding = THREE.sRGBEncoding;
+    return t;
+  })();
+  const iri = { on: { value: 0 }, shift: { value: 0 } };
+  function addIridescence(mat) {
+    mat.onBeforeCompile = sh => {
+      sh.uniforms.iriOn = iri.on; sh.uniforms.iriShift = iri.shift;
+      sh.vertexShader = sh.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 vIriPos;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvIriPos = (modelMatrix * vec4(transformed, 1.0)).xyz;");
+      sh.fragmentShader = sh.fragmentShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 vIriPos;\nuniform float iriOn;\nuniform float iriShift;")
+        .replace("#include <normal_fragment_maps>", `#include <normal_fragment_maps>
+          if (iriOn > 0.5) {
+            // heat-tinted titanium: straw, bronze, violet, steel blue, teal, blended smoothly by viewing angle
+            float ndv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
+            float t = fract(ndv * 0.9 + iriShift + dot(vIriPos, vec3(0.05, 0.035, 0.045))) * 5.0;
+            vec3 c0 = vec3(0.86, 0.72, 0.40), c1 = vec3(0.74, 0.46, 0.24), c2 = vec3(0.48, 0.32, 0.66);
+            vec3 c3 = vec3(0.28, 0.44, 0.82), c4 = vec3(0.30, 0.64, 0.66);
+            vec3 heat = t < 1.0 ? mix(c0, c1, smoothstep(0.0, 1.0, t))
+                      : t < 2.0 ? mix(c1, c2, smoothstep(0.0, 1.0, t - 1.0))
+                      : t < 3.0 ? mix(c2, c3, smoothstep(0.0, 1.0, t - 2.0))
+                      : t < 4.0 ? mix(c3, c4, smoothstep(0.0, 1.0, t - 3.0))
+                      : mix(c4, c0, smoothstep(0.0, 1.0, t - 4.0));
+            diffuseColor.rgb *= mix(vec3(0.78), heat, 0.8) * 1.3;
+          }`);
+    };
+    mat.needsUpdate = true;
+  }
+  addIridescence(alu); addIridescence(satin);
+  const FINISHES = {
+    stealth: { label: "Stealth black", metal: [0x232428, 0.9, 0.38], trim: [0x3b3d42, 1, 0.5] },
+    chrome: { label: "Polished chrome", metal: [0x9aa0a8, 1, 0.04], trim: [0xc6cad0, 1, 0.35] },
+    ceramic: { label: "White ceramic", metal: [0xf1efea, 0, 0.22], trim: [0xc6cad0, 1, 0.35] },
+    glow: { label: "Glow ceramic", metal: [0xe6eee6, 0, 0.3], trim: [0xc6cad0, 1, 0.35], glow: 0x7dffc4 },
+    gold: { label: "Gold", metal: [0xd6a847, 1, 0.16], trim: [0xe6c476, 1, 0.34] },
+    rainbow: { label: "Heat-tinted titanium", metal: [0xdcdcdf, 1, 0.22], trim: [0xdcdcdf, 1, 0.3], iri: true },
+  };
+  const finishesEl = document.getElementById("finishes");
+  let lightsOut = false, currentFinish = "stealth", savedTheme = null;
+  const SUN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+  const MOON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>';
+  // "lights out" dims the room so glow-in-the-dark ceramic (and the screens) can be seen properly
+  function applyLights() {
+    const fin = FINISHES[currentFinish];
+    renderer.toneMappingExposure = lightsOut ? 0.32 : 0.8; // day: a softer room so the metal isn't blown out
+    key.intensity = lightsOut ? 0.05 : 0.45; ambient.intensity = lightsOut ? 0.02 : 0.12;
+    alu.emissiveIntensity = fin && fin.glow ? (lightsOut ? 1.1 : 0.05) : 0;
+    satin.emissiveIntensity = alu.emissiveIntensity;
+    faces.forEach(f => { f.mesh.material.emissiveIntensity = lightsOut ? 4.8 : 2.2; });
+    const b = document.getElementById("lightsBtn");
+    if (b) {
+      // sun while the room is lit, moon while it's dark
+      b.innerHTML = lightsOut ? MOON_SVG : SUN_SVG;
+      b.setAttribute("aria-pressed", lightsOut ? "true" : "false");
+      b.setAttribute("aria-label", lightsOut ? "Turn the lights on" : "Turn the lights off");
+    }
+  }
+  function setLights(off) {
+    lightsOut = off;
+    const root = document.documentElement;
+    if (off) { savedTheme = root.getAttribute("data-theme"); root.setAttribute("data-theme", "dark"); root.classList.add("dark-room"); }
+    else { root.classList.remove("dark-room"); if (savedTheme) root.setAttribute("data-theme", savedTheme); else root.removeAttribute("data-theme"); }
+    applyLights();
+  }
+  function setFinish(key) {
+    const fin = FINISHES[key];
+    alu.color.setHex(fin.metal[0]); alu.metalness = fin.metal[1]; alu.roughness = fin.metal[2];
+    alu.map = null; iri.on.value = fin.iri ? 1 : 0;
+    currentFinish = key;
+    alu.emissive.setHex(fin.glow || 0x000000);
+    satin.emissive.setHex(fin.glow || 0x000000);
+    if (fin.glow && !lightsOut) setLights(true); else applyLights();
+    satin.color.setHex(fin.metal[0]); satin.metalness = fin.metal[1]; satin.roughness = fin.metal[2];
+    [...finishesEl.children].forEach(c => c.setAttribute("aria-checked", c.dataset.f === key ? "true" : "false"));
+  }
+  Object.entries(FINISHES).forEach(([key, fin]) => {
+    const b = document.createElement("button"); b.type = "button"; b.dataset.f = key; b.textContent = fin.label;
+    b.setAttribute("role", "radio"); b.addEventListener("click", () => setFinish(key)); finishesEl.appendChild(b);
+  });
+  document.getElementById("lightsBtn").addEventListener("click", () => setLights(!lightsOut));
+  const pixelsBtn = document.getElementById("pixelsBtn"), zoomBtn = document.getElementById("zoomBtn");
+  pixelsBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="4" height="4"/><rect x="10" y="4" width="4" height="4"/><rect x="16" y="4" width="4" height="4" opacity=".35"/><rect x="4" y="10" width="4" height="4"/><rect x="10" y="10" width="4" height="4" opacity=".35"/><rect x="16" y="10" width="4" height="4"/><rect x="4" y="16" width="4" height="4" opacity=".35"/><rect x="10" y="16" width="4" height="4"/><rect x="16" y="16" width="4" height="4"/></svg>';
+  zoomBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M10.5 8v5M8 10.5h5"/></svg>';
+  pixelsBtn.addEventListener("click", () => {
+    trueDisplay = !trueDisplay;
+    pixelsBtn.setAttribute("aria-pressed", trueDisplay ? "true" : "false");
+    pixelsBtn.setAttribute("aria-label", trueDisplay ? "True 96 by 96 display, on" : "True 96 by 96 display, off");
+  });
+  zoomBtn.addEventListener("click", () => {
+    closeUp = !closeUp; zoomBtn.setAttribute("aria-pressed", closeUp ? "true" : "false");
+    if (closeUp && viewMode !== "die") setView("die");
+    updateCameraTargets(); lastInteract = now;
+  });
+  setFinish("stealth");
+  function setFrame(mode) {
+    const soft = mode === "soft";
+    usmFrame.visible = !soft; softFrame.visible = soft;
+    faces.forEach(f => {
+      const n = f.normal;
+      f.mesh.geometry = soft ? panelGeoSoft : panelGeo;
+      f.mesh.position.copy(n).multiplyScalar(soft ? H - 0.012 : 1); f.mesh.updateMatrix();
+      f.inv = f.mesh.matrix.clone().invert();
+      f.plate.geometry = soft ? plateGeoSoft : plateGeo;
+      f.plate.position.copy(n).multiplyScalar(soft ? H - 0.02 : 0.98);
+    });
+    scene.remove(die2); die2 = die.clone(); die2.visible = viewMode === "egg"; scene.add(die2);
+  }
+  setFrame("soft");
+  const VIEWS = [["die", "Die"], ["sizes", "Sizes"], ["egg", "Case"], ["nest", "Nest"]];
+  const viewsEl = document.getElementById("views");
+  function setView(v) {
+    if (menuOpen) closeMenu(false); // only a hold saves: a throw or view change leaves the setup as it was
+    viewMode = v;
+    compare.visible = v === "sizes"; egg.visible = v === "egg"; nest.visible = v === "nest"; die2.visible = v === "egg";
+    [...viewsEl.children].forEach(c => c.setAttribute("aria-checked", c.dataset.v === v ? "true" : "false"));
+    if (docked()) { particles = []; resultShown = null; pendingSpecial = null; wakeUntil = -1; spin.set(0, 0); }
+    orbitYaw = 0; updateCameraTargets(); lastInteract = now;
+  }
+  VIEWS.forEach(([v, t]) => {
+    const b = document.createElement("button"); b.type = "button"; b.dataset.v = v; b.textContent = t;
+    b.setAttribute("role", "radio"); b.setAttribute("aria-checked", v === "die" ? "true" : "false");
+    b.addEventListener("click", () => setView(v)); viewsEl.appendChild(b);
+  });
+  window.addEventListener("resize", resize);
+
+  // ---------- loop ----------
+  const ease = x => 1 - Math.pow(1 - x, 3);
+  const spinQ = new THREE.Quaternion();
+  function frame() {
+    const dt = Math.min(clock.getDelta(), 0.05); now += dt;
+
+    // pre-roll shake: the die jitters in the hand while smoke fills every screen and sloshes around
+    agitate = 0;
+    if (shaking && phase !== "tumble") {
+      charge = Math.min(1, charge + dt / 1.6);
+      agitate = 3 + charge * 3;
+      if (!reduced) {
+        rotateBy((Math.random() - 0.5) * 0.12, (Math.random() - 0.5) * 0.12);
+        die.position.x += (Math.random() - 0.5) * 0.06; die.position.y = Math.abs(Math.sin(now * 23)) * 0.08;
+      }
+      sloshL.set(Math.sin(now * 17), Math.cos(now * 13), Math.sin(now * 11 + 1)).multiplyScalar(2.5).applyQuaternion(qInv);
+      const target = Math.round((reduced ? 150 : 380) * charge);
+      const held = particles.reduce((a, q) => a + (q.hold ? 1 : 0), 0);
+      if (held < target) {
+        const before = particles.length;
+        spawn("smoke", Math.min(14, target - held), "all");
+        for (let i = before; i < particles.length; i++) particles[i].hold = true;
+      }
+      lastInteract = now;
+    } else if (!shaking && phase !== "tumble" && particles.some(q => q.hold)) {
+      // put down without throwing: the smoke settles and fades
+      particles.forEach(q => { if (q.hold) { q.hold = false; q.life = q.max * 0.35; } });
+      charge = 0;
+    }
+    if (phase === "tumble") {
+      agitate = 5; sloshL.set(0, 0, 0);
+      const u = Math.min(1, (now - roll.start) / roll.dur), e = ease(u);
+      die.quaternion.copy(roll.startQ).slerp(roll.targetQ, e);
+      if (!reduced) { spinQ.setFromAxisAngle(roll.axis, (1 - e) * Math.PI * 4); die.quaternion.premultiply(spinQ); }
+      die.position.y = reduced ? 0 : Math.abs(Math.sin(Math.PI * 2.5 * u)) * Math.pow(1 - u, 2) * 1.6;
+      if (u >= 1) {
+        die.position.y = 0; phase = "reveal"; flashAt = now;
+        die.updateMatrixWorld(); qInv.copy(die.quaternion).invert(); upL.set(0, 1, 0).applyQuaternion(qInv);
+        // held smoke from the shake now drains away; top up only what the shake didn't already fill
+        particles.forEach(q => { if (q.hold) { q.hold = false; q.life = 0; q.max = 2.0 + Math.random() * 1.4; q.linger = now + 0.6; } });
+        const before = particles.length;
+        spawn("smoke", Math.round((reduced ? 150 : 380) * (1 - 0.8 * charge)), "all");
+        for (let i = before; i < particles.length; i++) particles[i].linger = now + 0.6;
+        spawn("ember", reduced ? 10 : 36, "all");
+        charge = 0;
+        revealAt = now + 0.35; dimAt = revealAt + 7;
+      }
+    } else if (!dragging && !docked() && !menuOpen && !snap) {
+      if (spin.lengthSq() > 1e-7) { rotateBy(spin.x, spin.y); spin.multiplyScalar(0.92); }
+      else if (!reduced && now - lastInteract > 4) { qd.setFromAxisAngle(Y, dt * 0.18); die.quaternion.premultiply(qd); }
+    }
+
+    if (snap) {
+      const u = Math.min(1, (now - snap.start) / snap.dur);
+      die.quaternion.copy(snap.startQ).slerp(snap.targetQ, ease(u));
+      if (u >= 1) { die.quaternion.copy(snap.targetQ); snap = null; }
+    }
+    if (tip) {
+      const u = Math.min(1, (now - tip.start) / tip.dur);
+      die.quaternion.copy(tip.startQ).slerp(tip.targetQ, ease(u));
+      die.position.y = Math.sin(Math.PI * u) * 0.12;
+      if (u >= 1) { die.quaternion.copy(tip.targetQ); die.position.y = 0; menu = tip.next; menuPf = tip.to; tip = null; }
+    }
+    if (menuOpen && holding && !swiped && !tip && !snap && now - holdStart >= HOLD) {
+      holding = false; closeMenu(true); flashAt = now; pulseAt = now; buzz(28);
+    }
+    if (!menuOpen && holding && viewMode === "die" && phase !== "tumble" && !pendingBoot && now - holdStart >= HOLD) {
+      holding = false; openMenu(holdFace); pulseAt = now; buzz([18, 40, 26]);
+    }
+    const pu = pulseAt > 0 ? (now - pulseAt) / 0.28 : 1;
+    die.scale.setScalar(pu < 1 ? 1 + 0.035 * Math.sin(Math.PI * pu) : 1);
+    if (menuOpen && !tip && now - menuLastInput > 25) closeMenu(false);
+
+    if (phase === "reveal" && now >= revealAt && roll) {
+      phase = "idle"; throwBtn.disabled = false;
+      const t = roll.type, v = roll.values, numeric = t !== "lcr";
+      const total = numeric ? v.reduce((a, b) => a + b, 0) : 0;
+      const max = numeric && t > 2 && v.every(x => x === t), dud = numeric && v.every(x => x === 1);
+      const lab = setupLabel(roll.count, t);
+      const big = numeric ? String(total) : v.join(" ");
+      const desc = !numeric ? `Pass the Pot: ${v.map(x => POT_WORD[x]).join(", ")}` : v.length > 1 ? `Rolled ${lab}: ${v.join(" + ")} = ${total}` : `Rolled ${total} on a d${t}`;
+      const parts = numeric && v.length > 1 && v.join("+").length <= 18 ? v.join("+") : "";
+      resultShown = { big, label: lab, parts, max, dud, special: false, desc, tokens: numeric ? null : v };
+      pendingSpecial = max ? "max" : dud ? "dud" : null;
+      trail.unshift(numeric ? `${total} on ${lab}` : v.map(x => POT_WORD[x]).join("/")); trail.length = Math.min(trail.length, 4);
+      setResultText("");
+    }
+
+    // max and dud effects wait until the smoke has fully cleared
+    if (pendingSpecial && resultShown && phase === "idle" && !particles.some(q => q.kind === "smoke" || q.kind === "ember")) {
+      if (pendingSpecial === "max") spawn("gold", reduced ? 40 : 120, "ring");
+      else spawn("fizzle", reduced ? 12 : 36, "top");
+      resultShown.special = true; dimAt = Math.max(dimAt, now + 5);
+      setResultText(pendingSpecial === "max" ? " crit" : " dud");
+      pendingSpecial = null;
+    }
+
+    die.updateMatrixWorld();
+    qInv.copy(die.quaternion).invert();
+    upL.set(0, 1, 0).applyQuaternion(qInv);
+    camLocal.copy(camera.position).sub(die.position).applyQuaternion(qInv);
+    stepParticles(dt, now);
+
+    const k = 1 - Math.exp(-6 * dt);
+    if (iri.on.value > 0.5) {
+      // a gentle extra drift tied to the die's orientation (its axes in the world, which never jump)
+      tintX.set(1, 0, 0).applyQuaternion(die.quaternion); tintZ.set(0, 0, 1).applyQuaternion(die.quaternion);
+      iri.shift.value = tintX.z * 0.12 + tintZ.y * 0.1;
+    }
+    const tx = viewMode === "sizes" ? compareDieX : viewMode === "egg" ? -SLOT : 0;
+    die.position.x += (tx - die.position.x) * k; die.position.z += (0 - die.position.z) * k;
+    if (docked() && phase !== "tumble") die.quaternion.slerp(IDENTITY_Q, k);
+    die2.position.set(SLOT, die.position.y, 0); die2.quaternion.copy(die.quaternion);
+    shadow.visible = !docked();
+    camera.position.lerp(camTargetPos, k); camLook.lerp(camTargetLook, k); camera.lookAt(camLook);
+    shadow.position.x = die.position.x;
+    shadow.scale.setScalar(1 - Math.min(0.35, die.position.y * 0.25));
+    shadow.material.opacity = 1 - Math.min(0.6, die.position.y * 0.4);
+
+    // draw every face; the face turned most toward the viewer is the primary screen
+    const uf = upFace();
+    let pf = 0, pd = -2;
+    frontTmp.copy(camLocal).normalize();
+    faces.forEach(g => { const d = g.normal.dot(frontTmp); if (d > pd) { pd = d; pf = g.i; } });
+    if (pf !== lastPf && faces[lastPf].normal.dot(frontTmp) > pd - 0.15) pf = lastPf;
+    if (menuOpen) pf = tip ? tip.to : menuPf;
+    lastPf = pf;
+    const resA = resultShown && revealAt > 0
+      ? Math.min(1, (now - revealAt) / 0.9) * (now < dimAt ? 1 : Math.max(0, 1 - (now - dimAt) / 1.2)) : 0;
+    const wakeA = now < wakeUntil ? Math.min(1, (now - wakeStart) / 0.35, (wakeUntil - now) / 0.6) : 0;
+    const flashA = flashAt > 0 ? Math.max(0, 1 - (now - flashAt) / 0.25) : 0;
+    if (!bootDone && !bootBurst && now - bootStart >= LOOP_END + BURST_AT) { bootBurst = true; spawnBurst(bootTop); }
+    if (pendingBoot && now >= rebootUntil) { pendingBoot = false; startBoot(); }
+    if (!bootDone && (now - bootStart >= BOOT_DUR || phase === "tumble" || menuOpen)) { bootDone = true; if (!menuOpen && phase !== "tumble") { wake(2.2); showSetup(); } }
+
+    for (const f of faces) {
+      const ctx = f.ctx;
+      ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+      ctx.fillStyle = "#000"; ctx.fillRect(0, 0, S, S);
+      if (pendingBoot) continue; // powered off during a restart
+      if (flashA > 0) { ctx.globalAlpha = flashA * 0.35; ctx.fillStyle = "#e8ecf2"; ctx.fillRect(0, 0, S, S); }
+      const ang = textAngle(f, uf);
+      if (!menuOpen && menuFade && !docked()) drawMenuFade(f, ctx, ang);
+      if (!menuOpen && holding && viewMode === "die" && f.i === holdFace && now - holdStart > HOLD_SHOW)
+        drawHoldRing(ctx, ang, Math.min(1, (now - holdStart - HOLD_SHOW) / (HOLD - HOLD_SHOW)));
+      const booting = !bootDone && !docked() && !menuOpen && phase !== "tumble";
+      if (booting) {
+        drawBootFace(f, ctx, ang);
+      } else if (docked()) {
+        if (f.i === uf) drawCharge(ctx, ang);
+        else if (viewMode === "nest" && f.axis !== faces[uf].axis) drawClock(ctx, ang);
+      } else if (menuOpen) {
+        drawMenuFace(f, ctx, ang, pf);
+      } else if (resA > 0 && f.i !== faceIndex(faces[uf].axis, -faces[uf].sign)) {
+        const r = resultShown, fx = r.special;
+        const color = fx && r.dud ? "#8A8C90" : "#F4F5F7";
+        const label = fx && r.max ? `max ${r.label}` : fx && r.dud ? "dud" : r.label;
+        drawResult(ctx, ang, r, label, color, resA);
+      } else if (confirmAt > 0 && now - confirmAt < 1.3 && f.i === successPf && phase !== "tumble") {
+        drawSuccess(ctx, ang, confirmLabel, now - confirmAt);
+      } else if (wakeA > 0 && phase !== "tumble") {
+        const lab = setupLabel();
+        drawText(ctx, ang, null, lab, "#F4F5F7", wakeA * 0.85, "#F4F5F7", null, fitPx(lab, 50));
+      }
+    }
+    // smoke over the faces, wrapping across edges
+    for (const f of faces) { f.ctx.globalCompositeOperation = "lighter"; }
+    for (const q of particles) {
+      const lifeT = q.life / q.max;
+      const fadeIn = Math.min(1, q.life / 0.12);
+      const alpha = (q.kind === "gold" ? Math.pow(Math.sin(Math.PI * lifeT), 0.8) : fadeIn * Math.pow(1 - lifeT, 0.8)) *
+        (q.kind === "smoke" ? 0.55 : q.kind === "fizzle" ? 0.3 : 0.9);
+      const size = q.size * (1 + (q.kind === "smoke" || q.kind === "fizzle" ? lifeT * 1.4 : 0));
+      const spr = SPR[q.kind];
+      const own = faces[q.f];
+      const draw = (face, pt) => {
+        const [x, y] = toCanvas(face, pt);
+        face.ctx.globalAlpha = alpha; face.ctx.drawImage(spr, x - size, y - size, size * 2, size * 2);
+      };
+      draw(own, q.p);
+      const ru = size / (S / 2);
+      for (const g of faces) {
+        if (g.axis === own.axis) continue;
+        const d = 1 - g.sign * q.p.getComponent(g.axis);
+        if (d < ru) {
+          tmp.copy(q.p); tmp.setComponent(own.axis, own.sign * (1 + d)); tmp.setComponent(g.axis, g.sign);
+          draw(g, tmp);
+        }
+      }
+    }
+    // only the OLED active area lights up; the rest of the glass is bezel.
+    // Output exactly what the panel can show: 96x96 pixels. In true-display mode each pixel is simply
+    // one of 16 gray levels (SSD1317 4-bit grayscale).
+    // The rounded corners come from a black ink mask on the cover glass.
+    // Panels refresh at most 100 Hz, so on faster screens (120 Hz phones) frames are held.
+    const panelNow = performance.now(), panelDue = panelNow - lastPanel >= 9.5;
+    if (panelDue) lastPanel = panelNow;
+    for (const f of faces) {
+      if (!panelDue) break;
+      lowCtx.imageSmoothingEnabled = true; lowCtx.clearRect(0, 0, OLED_PX, OLED_PX);
+      lowCtx.drawImage(f.cv, S / 2 - ACTIVE, S / 2 - ACTIVE, ACTIVE * 2, ACTIVE * 2, 0, 0, OLED_PX, OLED_PX);
+      if (trueDisplay) {
+        const img = lowCtx.getImageData(0, 0, OLED_PX, OLED_PX), d = img.data;
+        for (let p = 0, i = 0; p < OLED_PX * OLED_PX; p++, i += 4) {
+          // 16 gray levels (4-bit), light ordered dither between neighbouring steps to hide banding
+          const lvl = Math.min(15, Math.floor(Math.max(d[i], d[i + 1], d[i + 2]) / 255 * 15 + DITHER[p]));
+          d[i] = d[i + 1] = d[i + 2] = lvl * 17; d[i + 3] = 255;
+        }
+        lowCtx.putImageData(img, 0, 0);
+      }
+      const o = f.outCtx;
+      o.globalCompositeOperation = "source-over"; o.fillStyle = "#000"; o.fillRect(0, 0, OUT_T, OUT_T);
+      o.imageSmoothingEnabled = false;
+      o.drawImage(lowres, 0, 0, OLED_PX, OLED_PX, OUT_OFF, OUT_OFF, OLED_PX * OUT_PX, OLED_PX * OUT_PX);
+      o.globalCompositeOperation = "destination-in";
+      o.fillStyle = "#fff"; o.beginPath(); roundRectPath(o, OUT_OFF, OUT_OFF, OLED_PX * OUT_PX, OLED_PX * OUT_PX, 42); o.fill();
+      o.globalCompositeOperation = "source-over";
+      f.tex.needsUpdate = true;
+    }
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  die.quaternion.setFromEuler(new THREE.Euler(0, 0.35, 0));
+  (document.fonts && document.fonts.load ? document.fonts.load('700 40px "Space Grotesk"') : Promise.resolve())
+    .catch(() => {}).then(() => { startBoot(); requestAnimationFrame(frame); });
+})();
+</script>
+</body>
+</html>

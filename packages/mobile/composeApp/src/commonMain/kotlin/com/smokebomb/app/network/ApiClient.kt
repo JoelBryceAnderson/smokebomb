@@ -26,7 +26,7 @@ class StubApiClient : ApiClient {
             sessionId = null,
             counter = 8L - i,
             uptimeMs = 60_000L * (8 - i),
-            dieSides = 20,
+            die = "d20",
             values = listOf((i * 7) % 20 + 1),
             prevHash = "00".repeat(32),
             signature = "00".repeat(64),

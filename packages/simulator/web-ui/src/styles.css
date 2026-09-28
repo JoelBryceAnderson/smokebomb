@@ -90,6 +90,23 @@ body {
   background: #3b3;
 }
 
+.banner {
+  position: absolute;
+  top: 56px;
+  left: 16px;
+  right: 16px;
+  z-index: 1;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #5a2a14;
+  border: 1px solid var(--accent);
+  color: var(--text);
+}
+
+.banner code {
+  color: var(--text);
+}
+
 .hint {
   position: absolute;
   bottom: 12px;
@@ -128,9 +145,66 @@ label.check {
   gap: 8px;
 }
 
-input[type="range"] {
+button.throw {
   width: 100%;
-  accent-color: var(--accent);
+  padding: 14px;
+  font-weight: 600;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.tip-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-areas:
+    ". up ."
+    "left . right"
+    ". down .";
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tip-pad button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 64px;
+  padding: 6px 4px;
+  touch-action: manipulation;
+}
+
+.tip-pad .tip-up {
+  grid-area: up;
+}
+
+.tip-pad .tip-left {
+  grid-area: left;
+}
+
+.tip-pad .tip-right {
+  grid-area: right;
+}
+
+.tip-pad .tip-down {
+  grid-area: down;
+}
+
+.tip-pad .arrow {
+  font-size: 18px;
+}
+
+.tip-pad .what,
+.tip-pad .menu-effect {
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.tip-pad .menu-effect {
+  color: var(--muted);
 }
 
 .row {
