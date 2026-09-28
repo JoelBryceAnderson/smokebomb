@@ -90,6 +90,23 @@ body {
   background: #3b3;
 }
 
+.banner {
+  position: absolute;
+  top: 56px;
+  left: 16px;
+  right: 16px;
+  z-index: 1;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #5a2a14;
+  border: 1px solid var(--accent);
+  color: var(--text);
+}
+
+.banner code {
+  color: var(--text);
+}
+
 .hint {
   position: absolute;
   bottom: 12px;

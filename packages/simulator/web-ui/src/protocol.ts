@@ -1,5 +1,8 @@
 // Mirror of packages/simulator/server/src/protocol.rs.
 
+/** Must match `PROTOCOL_VERSION` in the server's protocol.rs. */
+export const PROTOCOL_VERSION = 2;
+
 export const FACE_COUNT = 6;
 export const PANEL_SIZE = 96;
 export const FRAME_BYTES = (PANEL_SIZE * PANEL_SIZE) / 2; // 4bpp
@@ -23,6 +26,7 @@ export interface RollView {
 }
 
 export type ServerEvent =
+  | { type: "hello"; protocol: number; mode: string }
   | { type: "mode"; mode: string }
   | { type: "haptic"; effect: string }
   | ({ type: "roll" } & RollView);

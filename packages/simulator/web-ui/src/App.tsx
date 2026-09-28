@@ -91,6 +91,13 @@ export function App() {
           swipeToTip={menuOpen}
           onTip={tip}
         />
+        {state.protocolMismatch && (
+          <div className="banner" role="alert">
+            This page is out of date for the running simulator (protocol {state.protocolMismatch.page}, server{" "}
+            {state.protocolMismatch.server}). Rebuild the UI with{" "}
+            <code>npm run build -w @smokebomb/simulator-web-ui</code> and reload.
+          </div>
+        )}
         <div className="hud">
           <span className={state.connected ? "dot on" : "dot"} />
           {state.connected ? "firmware running" : "connecting to simulator…"}

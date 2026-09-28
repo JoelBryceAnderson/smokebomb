@@ -5,12 +5,15 @@ import {
   decodePosePacket,
   FRAME_PACKET_TAG,
   Pose,
+  PROTOCOL_VERSION,
   RollView,
   ServerEvent,
 } from "./protocol";
 
 export interface SimulatorState {
   connected: boolean;
+  /** The server speaks a different protocol version than this page. */
+  protocolMismatch: { server: number; page: number } | null;
   mode: string;
   rolls: RollView[];
   lastHaptic: { effect: string; at: number } | null;
@@ -30,6 +33,7 @@ export interface Streams {
 export function useSimulator(streams: Streams) {
   const [state, setState] = useState<SimulatorState>({
     connected: false,
+    protocolMismatch: null,
     mode: "—",
     rolls: [],
     lastHaptic: null,
@@ -68,6 +72,13 @@ export function useSimulator(streams: Streams) {
         const ev = JSON.parse(msg.data as string) as ServerEvent;
         setState((s) => {
           switch (ev.type) {
+            case "hello":
+              return {
+                ...s,
+                mode: ev.mode || s.mode,
+                protocolMismatch:
+                  ev.protocol === PROTOCOL_VERSION ? null : { server: ev.protocol, page: PROTOCOL_VERSION },
+              };
             case "mode":
               return { ...s, mode: ev.mode };
             case "haptic":

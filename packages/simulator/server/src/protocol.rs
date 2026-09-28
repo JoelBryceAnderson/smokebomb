@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 use smokebomb_hal::FRAME_BYTES;
 use smokebomb_shared::SignedRoll;
 
+/// Bumped whenever a message changes shape. The browser compares it with its
+/// own copy (`web-ui/src/protocol.ts`) and shows a banner when they differ,
+/// which usually means the web UI build is out of date.
+pub const PROTOCOL_VERSION: u32 = 2;
+
 /// First byte of a binary frame packet; followed by six 4bpp panel frames in
 /// `Face` order.
 pub const FRAME_PACKET_TAG: u8 = 0x01;
@@ -49,8 +54,17 @@ pub fn encode_frames(faces: &[[u8; FRAME_BYTES]; 6]) -> std::sync::Arc<Vec<u8>> 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    Mode { mode: String },
-    Haptic { effect: String },
+    /// First message on every connection.
+    Hello {
+        protocol: u32,
+        mode: String,
+    },
+    Mode {
+        mode: String,
+    },
+    Haptic {
+        effect: String,
+    },
     Roll(RollView),
 }
 

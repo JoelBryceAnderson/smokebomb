@@ -54,7 +54,14 @@ async fn main() -> anyhow::Result<()> {
         sim: sim.clone(),
         world: Arc::new(std::sync::Mutex::new(world::World::new())),
         out: out.clone(),
-        status: Arc::new(Mutex::new(StatusSnapshot::default())),
+        // Seeded from the booted firmware, so a browser that connects before
+        // the first tick still gets the real mode in its hello.
+        status: Arc::new(Mutex::new(StatusSnapshot {
+            mode: format!("{:?}", firmware.mode()),
+            die: firmware.settings().die.wire_name(),
+            die_count: firmware.settings().count,
+            last_roll: None,
+        })),
     };
 
     tokio::spawn(run_firmware(firmware, state.clone()));
@@ -66,6 +73,13 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!(
             "web UI not built at {} — run `npm run build -w @smokebomb/simulator-web-ui`, \
              or use the Vite dev server on http://localhost:5173",
+            web_dir.display()
+        );
+    } else if web_ui_is_stale(&web_dir) {
+        tracing::warn!(
+            "the web UI build at {} is older than its sources, so the browser may run an old UI \
+             that this simulator doesn't understand. Rebuild it: \
+             `npm run build -w @smokebomb/simulator-web-ui` (or use `npx nx run simulator-server:serve`)",
             web_dir.display()
         );
     }
@@ -192,6 +206,31 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
             status.last_roll = Some((&roll).into());
         }
     }
+}
+
+/// True when any web UI source file is newer than the built `index.html`.
+/// Only checks the usual layout (`web-ui/dist` next to `web-ui/src`).
+fn web_ui_is_stale(dist: &std::path::Path) -> bool {
+    fn newest(path: &std::path::Path) -> Option<std::time::SystemTime> {
+        let meta = std::fs::metadata(path).ok()?;
+        if meta.is_dir() {
+            std::fs::read_dir(path)
+                .ok()?
+                .filter_map(|e| newest(&e.ok()?.path()))
+                .max()
+        } else {
+            meta.modified().ok()
+        }
+    }
+    let Some(root) = dist.parent() else {
+        return false;
+    };
+    let built = std::fs::metadata(dist.join("index.html")).and_then(|m| m.modified());
+    let sources = ["src", "index.html", "package.json", "vite.config.ts"]
+        .iter()
+        .filter_map(|p| newest(&root.join(p)))
+        .max();
+    matches!((built, sources), (Ok(b), Some(s)) if s > b)
 }
 
 async fn get_state(State(state): State<AppState>) -> Json<StatusSnapshot> {

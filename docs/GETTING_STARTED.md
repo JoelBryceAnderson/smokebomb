@@ -22,11 +22,20 @@ cargo build          # every Rust crate except the backend server
 ## Simulator (fastest way to see the firmware run)
 
 ```sh
-npm run build -w @smokebomb/simulator-web-ui   # once, and after UI changes
+npm install
+npm run build -w @smokebomb/simulator-web-ui   # after every pull or branch switch
 cargo run --features=simulator                 # → http://localhost:3000
 ```
 
-Or run both with Nx: `npx nx run simulator-server:serve`.
+Or run both with Nx, which rebuilds the UI first: `npx nx run simulator-server:serve`.
+
+The built UI (`web-ui/dist`) isn't in git, so `cargo run` serves whatever you
+built last. If it's older than the server, the browser shows a banner saying
+the page is out of date, and the server logs a warning at startup and when an
+old page connects. Rebuild the UI and hard-reload the page.
+
+The screens are dark at rest for now: the boot animation and wake label arrive
+with the behaviour work. Throw the die to see a result.
 
 In the browser:
 
