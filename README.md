@@ -25,5 +25,6 @@ cargo run --features=simulator     # → http://localhost:3000, click "Throw"
 - [Architecture](docs/ARCHITECTURE.md): how the pieces fit, the roll signing format, the animation pack layout
 - [Getting started](docs/GETTING_STARTED.md): building and running each piece
 - [API](docs/API.md): REST endpoints
+- [Simulator spec](docs/SIM_SPEC.md): how the die must look and behave, 1:1 with the interactive mockup
 
 This is a scaffold. Anything not built yet is listed at the end of the architecture doc.

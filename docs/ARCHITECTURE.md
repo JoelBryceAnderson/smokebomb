@@ -200,6 +200,11 @@ submitted key.
 
 ### Pre-rendered animation
 
+> **Under review.** The simulator spec ([SIM_SPEC.md](SIM_SPEC.md), Part D)
+> describes smoke as a live particle system that reacts to gravity, shaking and
+> the landing face, which full-frame clips can't reproduce. See decision H1
+> there. This section describes the scaffold as built.
+
 Smoke is rendered offline and stored in QSPI flash as an **SMKB asset pack**
 (`smokebomb_shared::assets`):
 
