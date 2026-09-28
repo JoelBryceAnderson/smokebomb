@@ -288,6 +288,10 @@ code.
   label, and results (numeric layout and Pass the Pot glyphs).
 - **Timing** (`ui.rs`): decides what each face shows and when: boot, fades,
   dimming, and the precedence order from SIM_SPEC Part C.
+- **Orientation after a roll:** the text orientation and the dark face are
+  frozen when a result is revealed and stay that way while it lasts, like a
+  printed die (SIM_SPEC H9). `Firmware::display_quarter` and `display_up`
+  are what the screens use.
 
 **Checking against the mockup:** `packages/firmware/core/tests/golden.rs`
 drives the firmware through the timelines of `tools/mockup-capture` (boot,

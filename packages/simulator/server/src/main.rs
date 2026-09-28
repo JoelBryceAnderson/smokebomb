@@ -410,6 +410,56 @@ mod tests {
         assert_eq!(ticks.len(), 3, "one per face passed: {ticks:?}");
     }
 
+    /// After a roll the screens stay as they were at the reveal, like a
+    /// printed die: turning the die over to read it doesn't turn the text or
+    /// move the dark face. A new shake lets them go (decision H9).
+    #[test]
+    fn a_result_keeps_its_orientation_until_the_next_throw() {
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.world.set_next_landing(Face::PosZ);
+        rig.world.start_shake();
+        rig.run(0.5);
+        rig.world.end_shake(true);
+        rig.run(3.0);
+        assert!(matches!(
+            rig.fw.mode(),
+            smokebomb_firmware::smokebomb_core::state::Mode::Reveal { .. }
+        ));
+        assert_eq!(rig.fw.display_up(), Face::PosZ);
+        let frozen: Vec<_> = Face::ALL.iter().map(|&f| rig.fw.display_quarter(f)).collect();
+
+        // Pick it up and set it down with +X on top.
+        rig.world.place_face_up(Face::PosX);
+        rig.run(1.5);
+        let live: Vec<_> = Face::ALL
+            .iter()
+            .map(|&f| rig.fw.orientation().quarter(f))
+            .collect();
+        assert_ne!(live, frozen, "the die really did turn");
+        assert_eq!(rig.fw.display_up(), Face::PosZ, "the dark face stays put");
+        let shown: Vec<_> = Face::ALL.iter().map(|&f| rig.fw.display_quarter(f)).collect();
+        assert_eq!(shown, frozen);
+
+        // A new shake clears the result; shaken and set down, the die rolls
+        // again, and the new result is frozen as the die now lies.
+        rig.world.start_shake();
+        rig.run(0.3);
+        rig.world.end_shake(false);
+        rig.run(2.0);
+        assert!(matches!(
+            rig.fw.mode(),
+            smokebomb_firmware::smokebomb_core::state::Mode::Reveal { .. }
+        ));
+        assert_eq!(rig.fw.display_up(), Face::PosX);
+        let shown: Vec<_> = Face::ALL.iter().map(|&f| rig.fw.display_quarter(f)).collect();
+        let live: Vec<_> = Face::ALL
+            .iter()
+            .map(|&f| rig.fw.orientation().quarter(f))
+            .collect();
+        assert_eq!(shown, live);
+    }
+
     /// Tips in quick succession, each starting the moment the last one
     /// ends (and the first straight after the menu turns to the viewer):
     /// every one counts, and the page is always on the face in front.
