@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::State;
+use axum::http::{header, HeaderValue};
 use axum::routing::get;
 use axum::{Json, Router};
 use smokebomb_firmware::board::{self, SimHandle};
@@ -25,6 +26,7 @@ use smokebomb_hal::SecureElement;
 use smokebomb_hal_simulator::SimSecureElement;
 use tokio::sync::{broadcast, Mutex};
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeader;
 
 use protocol::{Outbound, StatusSnapshot};
 use smokebomb_hal_simulator::world;
@@ -83,7 +85,13 @@ async fn main() -> anyhow::Result<()> {
             web_dir.display()
         );
     }
-    let static_files = ServeDir::new(&web_dir).fallback(ServeFile::new(web_dir.join("index.html")));
+    // Always revalidate: the UI is rebuilt often, and a browser that keeps a
+    // cached index.html (Safari does, without this) runs an old bundle.
+    let static_files = SetResponseHeader::overriding(
+        ServeDir::new(&web_dir).fallback(ServeFile::new(web_dir.join("index.html"))),
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache"),
+    );
 
     let app = Router::new()
         .route("/ws", get(ws::handler))

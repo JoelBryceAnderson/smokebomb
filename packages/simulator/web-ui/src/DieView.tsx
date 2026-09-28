@@ -56,6 +56,8 @@ interface Props {
   /** Radians since the spin began: positive yaw is a right tip, negative pitch an up tip. */
   onSpin(axis: SpinAxis, angle: number): void;
   onSpinEnd(): void;
+  /** The multi-turn key (F) went down or up. */
+  onMultiKey(held: boolean): void;
 }
 
 /** Swipe distance that counts as a tip (SIM_SPEC C3). */
@@ -76,13 +78,13 @@ function roundRectPath(c: CanvasRenderingContext2D | THREE.Path, x: number, y: n
 }
 
 export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
-  { onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd },
+  { onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey },
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const api = useRef<DieViewHandle | null>(null);
-  const cbs = useRef({ onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd });
-  cbs.current = { onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd };
+  const cbs = useRef({ onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey });
+  cbs.current = { onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey };
 
   useImperativeHandle(ref, () => ({
     drawFrames: (f) => api.current?.drawFrames(f),
@@ -223,16 +225,27 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     // Holding F makes a menu drag a multi-turn (see `multiTurn`). A plain
     // key rather than a modifier: Ctrl-click is a right-click on a Mac.
     let fHeld = false;
-    const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+    const setF = (held: boolean) => {
+      if (held !== fHeld) {
+        fHeld = held;
+        cbs.current.onMultiKey(held);
+      }
+    };
+    // Match the physical key, so it works whatever the keyboard layout or
+    // modifiers; ignore it only while typing into a text field.
+    const isF = (e: KeyboardEvent) => e.code === "KeyF" || e.key === "f" || e.key === "F";
+    const typing = (e: KeyboardEvent) => {
+      const t = e.target;
+      if (t instanceof HTMLTextAreaElement || (t instanceof HTMLElement && t.isContentEditable)) return true;
+      return t instanceof HTMLInputElement && !["checkbox", "radio", "button", "range"].includes(t.type);
+    };
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === "f" || e.key === "F") && !typing(e)) fHeld = true;
+      if (isF(e) && !typing(e)) setF(true);
     };
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "f" || e.key === "F") fHeld = false;
+      if (isF(e)) setF(false);
     };
-    const onBlur = () => {
-      fHeld = false;
-    };
+    const onBlur = () => setF(false);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", onBlur);

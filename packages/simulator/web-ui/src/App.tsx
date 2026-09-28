@@ -41,6 +41,7 @@ export function App() {
   const [ble, setBle] = useState(false);
   const [reduced, setReduced] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [multiTurn, setMultiTurn] = useState(false);
+  const [multiKey, setMultiKey] = useState(false);
   const shaking = useRef(false);
 
   useEffect(() => {
@@ -96,6 +97,7 @@ export function App() {
             send({ type: "spin", axis, angle, right: die.current?.viewerRight() ?? [1, 0, 0] })
           }
           onSpinEnd={() => send({ type: "spin_end" })}
+          onMultiKey={setMultiKey}
         />
         {state.protocolMismatch && (
           <div className="banner" role="alert">
@@ -108,6 +110,7 @@ export function App() {
           <span className={state.connected ? "dot on" : "dot"} />
           {state.connected ? "firmware running" : "connecting to simulator…"}
           <span className="mode">{state.mode}</span>
+          {(multiKey || multiTurn) && <span className="mode multi">Multi-turn</span>}
         </div>
         <p className="hint">
           {menuOpen

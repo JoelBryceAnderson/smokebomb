@@ -79,6 +79,12 @@ body {
   font-family: ui-monospace, Menlo, monospace;
 }
 
+.hud .mode.multi {
+  margin-left: 0;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .dot {
   width: 8px;
   height: 8px;
