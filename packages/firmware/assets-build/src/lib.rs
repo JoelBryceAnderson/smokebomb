@@ -13,8 +13,7 @@ use std::io::Read;
 
 use smokebomb_shared::assets::*;
 
-/// Space Grotesk Bold, the fontsource build the golden frames were captured
-/// with (SIL Open Font License, see `assets/fonts/OFL.txt`).
+/// Space Grotesk Bold, the fontsource build the mockup used (SIL Open Font License, see `assets/fonts/OFL.txt`).
 pub const SPACE_GROTESK_BOLD_WOFF: &[u8] =
     include_bytes!("../../assets/fonts/space-grotesk-latin-700-normal.woff");
 

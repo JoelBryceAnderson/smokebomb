@@ -95,7 +95,7 @@ simulator`. Set `PORT` to use a port other than 3000.
 ## Firmware
 
 ```sh
-cargo test -p smokebomb-core                 # state machine, motion, rolls, menu, rendering, golden frames
+cargo test -p smokebomb-core                 # state machine, motion, rolls, menu, rendering, screen snapshots
 npx nx run firmware:test                     # core + HAL crates
 npx nx run firmware:lint                     # clippy for host, simulator board and nRF board
 cargo fw                                     # no_std build for the nRF54L15 (thumbv8m.main-none-eabihf)
@@ -111,27 +111,19 @@ To add a peripheral:
 2. Implement it in `hal/simulator` (with state in `SimState` if the UI should see it) and in `hal/nrf54l15`.
 3. Use it from `core` through `Peripherals<P>`.
 
-## Golden frames from the mockup
+## Screen snapshots
 
 ```sh
-npm run capture -w @smokebomb/mockup-capture              # all nine scenarios, ~10 min
-npm run capture -w @smokebomb/mockup-capture -- menu      # one scenario
+cargo test -p smokebomb-core --test snapshots                      # compare
+UPDATE_SNAPSHOTS=1 cargo test -p smokebomb-core --test snapshots   # regenerate
 ```
 
-This regenerates `tools/mockup-capture/golden/`, the reference frames the
-firmware renderer is checked against. Only rerun it when the mockup or a
-scenario changes. See `tools/mockup-capture/README.md`.
-
-The comparison itself is an ordinary test. To see golden, firmware and
-difference images side by side:
-
-```sh
-SMOKEBOMB_GOLDEN_SHEETS=target/golden-sheets cargo test -p smokebomb-core --test golden -- --nocapture
-```
-
-It prints each face's score (mean difference in panel levels after a slight
-blur; up to 0.25 passes). CI uploads the sheets as the `golden-sheets`
-artifact.
+Every face at chosen moments of a scripted run (boot, tap, throw, menu, ...)
+is compared with a PNG sheet in `packages/firmware/core/tests/snapshots/`.
+After a change to the screens you meant to make, regenerate the sheets, look
+at them, and commit them with the change. A failing run prints each face's
+difference and writes expected, actual and difference images to
+`target/snapshot-diffs/`; CI uploads those as the `snapshot-diffs` artifact.
 
 To rebuild the asset pack (fonts + placeholder clips) as a file for flashing:
 `cargo run -p smokebomb-assets-build -- smokebomb.smkb`.
@@ -204,7 +196,7 @@ commands. You can also open `packages/mobile` directly in Android Studio.
 ## Nx cheatsheet
 
 ```sh
-npx nx show projects                 # shared, firmware, simulator-server, simulator-web-ui, mockup-capture, server, mobile
+npx nx show projects                 # shared, firmware, simulator-server, simulator-web-ui, server, mobile
 npx nx run-many -t lint test         # every project that has these targets
 npx nx affected -t test              # only what changed since main
 npx nx graph                         # dependency graph in the browser
