@@ -4,7 +4,7 @@
 
 **Source.** Every number here comes from the mockup's code. **If this document and the mockup disagree, the mockup wins.** Flag the difference so this document gets fixed.
 
-**Status.** Checked line by line against the mockup source (artifact version `1790415968-5231`) on 2026-09-28. The differences found are folded into the text below and listed in [Part G](#part-g-corrections-log). Choices still open are in [Part H](#part-h-open-decisions); where one is open, the text describes what the mockup does today.
+**Status.** Checked line by line against the mockup source (artifact version `1790415968-5231`) on 2026-09-28. The differences found are folded into the text below and listed in [Part G](#part-g-corrections-log). Design decisions made on 2026-09-28 are in [Part H](#part-h-decisions); where a decision departs from the mockup, the text follows the decision and says so.
 
 **Conventions**
 - **Units:** mm for hardware.
@@ -160,7 +160,7 @@ Glow: the mockup draws text with a soft glow (shadow blur of 18 canvas units for
 The face touching the table is dark:
 - no result,
 - no smoke spawned on it (particles can still drift onto it and are drawn there),
-- **wake label: see decision H2.** Intended: none. The mockup currently draws the wake label on every face, including face-down.
+- no wake label (decision H2; the mockup still draws it there and should be updated to match).
 
 ---
 
@@ -285,7 +285,7 @@ Mockup input: a swipe of more than 36 px (by dominant direction), or the arrow k
   - bottom face: next value
   - top face: previous value
   - style: 35% alpha, 600, ≤40 canvas
-- The product film does show them. **Decision needed:** match the mockup (off) or turn them on in both.
+- The product film does show them. **Decided (H3): off**, matching the mockup.
 
 **Leaving**
 - **Save:** hold again for **0.8 s** with no swipe (same ring), or press Enter or the Done button in the mockup.
@@ -373,7 +373,7 @@ Mockup input: a swipe of more than 36 px (by dominant direction), or the arrow k
   - Text gray `#8A8C90`, label `dud`.
   - **36 fizzle** particles on the top face.
 - Pass the Pot has no max or dud.
-- **Timing rule:** the max and dud effects start **only after every smoke and ember particle is gone**, and then keep the result lit for at least 5 more seconds. This rule covers the max and dud *effects* only: the normal result fades in from 0.35 s after landing, while the landing smoke is still draining. (See decision H5.)
+- **Timing rule:** the max and dud effects start **only after every smoke and ember particle is gone**, and then keep the result lit for at least 5 more seconds. This rule covers the max and dud *effects* only: the normal result fades in from 0.35 s after landing, while the landing smoke is still draining. This is intended (decision H5).
 
 ### C7. Docked (Nest, and the case in the mockup)
 - **Orientation:** the die sits upright (identity orientation). Particles, results and wake labels are cleared.
@@ -513,7 +513,7 @@ The mockup also has "side-face" variants for smoke (life 2.2–3.5, size 20–38
 | Reduced motion | tumble 0.45 s (no spin, no bounce), tip 0.15 s, fewer particles (D3), no shake jitter, no idle spin |
 
 ## Part F: Known gaps between the mockup and hardware intent
-- **Neighbour previews:** implemented but unused in the mockup, shown in the film. See decision H3.
+- **Neighbour previews:** implemented but unused in the mockup, shown in the film. Decided off (H3); the film should be updated.
 - **Snap to the viewer on menu open:** exists only because the mockup's viewer is a fixed camera. On hardware, the menu frame is taken from the held face and gravity.
 - **Haptics:** the mockup has none for shaking or landing; they are planned.
 - **Low and Ultra low power modes:** proposed, not in the mockup.
@@ -531,13 +531,13 @@ Differences found when this document was checked against the mockup source (2026
 
 | # | Section | Before | Mockup (now in the text) |
 |---|---|---|---|
-| G1 | B3 | No wake label on the face-down screen | The wake label is drawn on every face, including face-down (decision H2) |
+| G1 | B3 | No wake label on the face-down screen | The mockup draws it on every face, including face-down. Decision H2 keeps the spec (dark), so here the mockup is the one to fix |
 | G2 | C3 | Old content slides *along* the surface motion; new enters from −120 × (1 − p) | Signs reversed: old −m·D·p, new +m·D·(1 − p) |
 | G3 | C5 | Landing top-up 380 × (1 − 0.8 × charge) varies with the shake | The throw sets charge to 1, so it is always 76 (30 reduced) |
 | G4 | C5 | Agitation only described while shaking | During the tumble, agitation = 5 and slosh = 0 |
 | G5 | C2, C3 | Wake label after a save | Also after any discard |
 | G6 | C3 | Restart: blackout, then boot | Restart also drops unsaved count/die changes |
-| G7 | C6 | "Nothing readable should appear through smoke" | Applies to max/dud effects only; normal results fade in while smoke drains (decision H5) |
+| G7 | C6 | "Nothing readable should appear through smoke" | Applies to max/dud effects only; normal results fade in while smoke drains (kept, decision H5) |
 | G8 | D3 | Smoke and ember "sides" sizes and lives | Unused; top-spawned smoke lives 2.4–3.8 s |
 | G9 | D3, E | Reduced motion: 150 smoke | Full reduced-motion counts added |
 | G10 | B1 | Rounded-corner mask is a pipeline step | It is the glass's ink mask; the simulator's glass renderer applies it, not the firmware |
@@ -547,14 +547,16 @@ Differences found when this document was checked against the mockup source (2026
 
 Everything else was checked and matches: all canvas → panel-px conversions, timings, the boot sequence (the top face's start value of 6 is an explicit override of the per-face table), the menu layout, the particle formulas, and every die, Nest and case dimension.
 
-## Part H: Open decisions
+## Part H: Decisions
 
-| # | Question | Options | Recommendation |
-|---|---|---|---|
-| H1 | **Smoke rendering.** Part D is a live, gravity-reactive particle system, which can't be baked into frame sequences. This conflicts with the locked "pre-rendered smoke in 64 MB QSPI" decision. | (a) Live particle simulation in firmware, with pre-rendered *assets* (smoke sprite stamps, Space Grotesk bitmaps) in QSPI; a theme = sprites + parameters. (b) Keep full-frame clips and drop the gravity/orientation behaviour. | (a). On hardware, draw the smoke layer at half resolution (48×48) to fit the frame budget: late-life sprites reach ~60 px radius, so 380 at full resolution is ~1M pixel blends per frame. |
-| H2 | **Face-down wake label** | Dark (hardware intent) or lit (mockup today) | Dark: it saves power and no one can see it. |
-| H3 | **Neighbour previews** in the menu | Off (mockup) or on (product film), in both | Off for now; it's a small toggle later. |
-| H4 | **Fidelity target** for firmware rendering | Pixel-identical to the mockup, or native 96×96 rendering compared against captured mockup frames within a tolerance | Tolerance. The firmware can't afford the mockup's 256×256 canvas-and-downsample pipeline. |
-| H5 | **Normal results through smoke** | Keep the mockup (result fades in while smoke drains) or hold it back until the smoke clears | Keep the mockup; it reads well in practice. |
-| H6 | **Pass the Pot in the signed roll** | Sign the raw d6 value (1 → ←, 2 → P, 3 → →, 4–6 → •), exactly as the mockup draws it | Raw d6. Needs roll format v2 and the 10-dice limit (the scaffold caps at 6). |
-| H7 | **Menu frame on hardware when the held face points up.** "Front" and "up" coincide, so right/up are undefined. The mockup avoids it by rotating the die toward the viewer. | Use the last side-facing orientation, require a side face, or define the frame at pickup | Hardware question; doesn't block the simulator, where the snap becomes a camera move. |
+Decided 2026-09-28.
+
+| # | Question | Decision |
+|---|---|---|
+| H1 | **Smoke rendering.** Part D is a live, gravity-reactive particle system, which can't be baked into frame sequences. It conflicted with the earlier "pre-rendered smoke in 64 MB QSPI" decision. | **Live particle simulation in firmware.** "Pre-rendered" now means *assets* in QSPI: smoke sprite stamps and Space Grotesk bitmaps. A theme is a sprite set plus parameters, not a video. On hardware the smoke layer is drawn at half resolution (48×48) to fit the frame budget (late-life sprites reach ~60 px radius; 380 of them at full resolution is ~1M pixel blends per frame). The simulator may draw it at full resolution. |
+| H2 | **Face-down wake label** | **Dark.** Departs from the mockup (G1); the mockup should be updated. |
+| H3 | **Neighbour previews** in the menu | **Off**, as in the mockup. The product film should be updated. |
+| H4 | **Fidelity target** for firmware rendering | **Native 96×96 rendering, compared against captured mockup frames within a tolerance.** Pixel-identical output isn't a goal: the firmware can't afford the mockup's 256×256 canvas-and-downsample pipeline. |
+| H5 | **Normal results through smoke** | **Keep the mockup:** the result fades in from 0.35 s after landing while smoke drains. Only max/dud effects wait for clear air. |
+| H6 | **Pass the Pot in the signed roll** | **Sign the raw d6 value** (1 → ←, 2 → P, 3 → →, 4–6 → •), exactly as the mockup draws it. Requires roll format v2 and a 10-dice limit. |
+| H7 | **Menu frame on hardware when the held face points up.** "Front" and "up" coincide, so right/up are undefined. | **Hardware question, still open.** Doesn't block the simulator, where the mockup's snap becomes a camera move instead of a die rotation. |

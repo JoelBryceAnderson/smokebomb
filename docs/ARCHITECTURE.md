@@ -13,7 +13,7 @@ These decisions are fixed. Change them only on purpose.
 | Decision | Choice | Consequence |
 |---|---|---|
 | Firmware language | **Rust core + HAL traits**; Zephyr only as a thin C shell | The same application code runs on the nRF54L15 and in the desktop simulator |
-| Smoke animation | **Pre-rendered frames in 64 MB QSPI flash** | No particle maths on the MCU; effects are authored offline and shipped as asset packs (the theme store sells these) |
+| Smoke animation | **Live particle simulation in firmware; sprites and fonts pre-rendered into 64 MB QSPI flash** (was: pre-rendered frames; changed by SIM_SPEC decision H1) | Smoke reacts to gravity, shaking and the landing face; theme packs ship sprite sets and parameters |
 | Repo layout | **One monorepo, orchestrated by Nx** | Firmware, server and app change together; the signed roll format has one definition |
 | Server | **Rust (Axum) + PostgreSQL (SQLx)** | Shares the roll/crypto crate with the firmware |
 | Mobile | **Compose Multiplatform, iOS first** | One Kotlin UI; BLE/NFC go through expect/actual |
@@ -200,10 +200,10 @@ submitted key.
 
 ### Pre-rendered animation
 
-> **Under review.** The simulator spec ([SIM_SPEC.md](SIM_SPEC.md), Part D)
-> describes smoke as a live particle system that reacts to gravity, shaking and
-> the landing face, which full-frame clips can't reproduce. See decision H1
-> there. This section describes the scaffold as built.
+> **Superseded.** Smoke is a live particle system in the firmware
+> ([SIM_SPEC.md](SIM_SPEC.md), Part D and decision H1). QSPI holds pre-rendered
+> *assets* (smoke sprites, font bitmaps), not full-frame clips. This section
+> still describes the scaffold as built and will be rewritten with that work.
 
 Smoke is rendered offline and stored in QSPI flash as an **SMKB asset pack**
 (`smokebomb_shared::assets`):
