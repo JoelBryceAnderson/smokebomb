@@ -45,6 +45,9 @@ pub struct SimState {
     pub qspi: Vec<u8>,
     /// When set, the clock reports this instead of wall time (for tests).
     pub manual_time_ms: Option<u64>,
+    /// Tests: with manual time, advance it this much on every clock read,
+    /// the way a real clock moves on during a tick.
+    pub clock_drift_per_read_ms: u64,
     /// Values the RNG returns (as little-endian u32s) before falling back to
     /// OS entropy, so tests can make the die roll a chosen number.
     pub rng_script: VecDeque<u32>,
@@ -71,6 +74,7 @@ impl Default for SimState {
             nfc_payload: Vec::new(),
             qspi: assets::standard_pack(),
             manual_time_ms: None,
+            clock_drift_per_read_ms: 0,
             rng_script: VecDeque::new(),
         }
     }
@@ -340,9 +344,14 @@ pub struct SimClock {
 
 impl Clock for SimClock {
     fn now_ms(&self) -> u64 {
-        self.handle
-            .lock()
-            .manual_time_ms
-            .unwrap_or_else(|| self.start.elapsed().as_millis() as u64)
+        let mut s = self.handle.lock();
+        let drift = s.clock_drift_per_read_ms;
+        match &mut s.manual_time_ms {
+            Some(t) => {
+                *t += drift;
+                *t
+            }
+            None => self.start.elapsed().as_millis() as u64,
+        }
     }
 }

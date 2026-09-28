@@ -179,8 +179,17 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   quick turn. Left and right tips turn about gravity, which the
   accelerometer can't see. The tracker classifies the turn against the frame
   once it passes 8°, reports progress (angle ÷ 90°) while it turns, and
-  counts it as done if it stops past 60°. A finished tip updates the draft
-  and turns the frame analytically.
+  settles it once the die has rested for 200 ms near a face (within 30°, or
+  at the nearest face after a second's rest between faces). One turn can pass
+  several faces: it counts one step per face, backwards steps included, and
+  whatever it leaves over carries into the next turn, so the count follows
+  the die's real orientation through slow turns with stops. Settled steps
+  update the draft and turn the frame analytically. Rates are integrated
+  over the IMU's sample period, not the wall clock.
+- **Haptics.** A tick each time the nearest face changes (45° into each
+  face passed): one for a quick tip, which feels like the mockup's buzz at
+  the start of its tip, and one per face on a long turn however many stops
+  it makes.
 - **Drawing.** Progress drives the content slide, so the page moves with
   the die, as in the mockup where both follow the same ease-out.
   `ui.rs` times the grow-in, the fade-out, the save flash, the success
@@ -310,7 +319,7 @@ result (placeholder digits until the renderer lands).
  │ drawn from server pose    │◀──────────│ 0x02 + pose (quaternion, position)      │
  │                           │◀──────────│ JSON: mode / haptic / roll events       │
  │ throw, tip pad, drag,     │──────────▶│ JSON: touch / shake / tip / rotate /    │
- │ face touch, dock          │           │       place_face_up / dock / ble        │
+ │ face touch, dock          │           │       spin / place_face_up / dock / ble │
  └───────────────────────────┘           │                                         │
                                          │  World: die pose + motions              │
                                          │     │ IMU sample each tick              │
@@ -334,7 +343,10 @@ result (placeholder digits until the renderer lands).
   - setting a face up;
   - settling upright in the Nest;
   - the mockup's snap on menu open: when the firmware reports an open menu,
-    the server turns the held face squarely toward the viewer (0.35 s).
+    the server turns the held face squarely toward the viewer (0.35 s);
+  - multi-turn spins (simulator only): with F held, the die follows a drag
+    about a tip axis across any number of faces, then settles on the
+    nearest.
 
   Each tick produces the pose the browser draws and the IMU sample the
   firmware reads, so what the firmware senses always matches what you see.

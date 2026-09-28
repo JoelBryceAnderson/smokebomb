@@ -51,6 +51,12 @@ pub const TICK_HZ: u32 = 60;
 /// Low-pass factor for the gravity estimate, per tick.
 const UP_FILTER: f32 = 0.25;
 
+/// The IMU delivers one sample per tick at its output data rate (the
+/// simulator likewise produces one per tick). Gyro rates are integrated over
+/// this sample period rather than the wall clock, so a late or bunched tick
+/// doesn't lose rotation.
+const IMU_SAMPLE_S: f32 = 1.0 / TICK_HZ as f32;
+
 /// How long a screen must be held to open the menu (SIM_SPEC C3).
 pub const MENU_HOLD_MS: u64 = 800;
 /// The hold ring appears once a touch is clearly a hold, not a tap.
@@ -66,6 +72,8 @@ struct MenuSession {
     tips: TipTracker,
     last_input: u64,
     turning: Option<(TipDir, f32)>,
+    /// The face the turn last passed (nearest whole progress), for haptics.
+    detent: i32,
 }
 
 pub struct Firmware<P: Platform> {
@@ -90,7 +98,6 @@ pub struct Firmware<P: Platform> {
     touch_face: Face,
     menu_hold_fired: bool,
     menu: Option<MenuSession>,
-    last_imu_ms: Option<u64>,
     up_face: Face,
     last_roll: Option<SignedRoll>,
     docked: bool,
@@ -121,7 +128,6 @@ impl<P: Platform> Firmware<P> {
             touch_face: Face::PosZ,
             menu_hold_fired: false,
             menu: None,
-            last_imu_ms: None,
             up_face: Face::PosY,
             last_roll: None,
             docked: false,
@@ -158,6 +164,12 @@ impl<P: Platform> Firmware<P> {
         self.menu.as_ref().map(|m| m.frame.front_face())
     }
 
+    /// The text orientation the menu page on `face` is drawn in, if one is.
+    pub fn menu_page_quarter(&self, face: Face) -> Option<orientation::Quarter> {
+        let frame = page_frame(self.menu.as_ref()?, face)?;
+        Some(page_quarter(&frame, face, &self.orientation))
+    }
+
     /// The menu's draft, if it's open.
     pub fn menu_draft(&self) -> Option<&Draft> {
         self.menu.as_ref().map(|m| &m.draft)
@@ -182,12 +194,10 @@ impl<P: Platform> Firmware<P> {
             if let Some(m) = self.motion.update(&sample, now) {
                 let _ = events.push(Event::Motion(m));
             }
-            let dt = self.last_imu_ms.map_or(0, |t| now - t) as f32 / 1000.0;
-            self.last_imu_ms = Some(now);
-            self.menu_tips(&sample, dt, now)?;
+            self.menu_tips(&sample, IMU_SAMPLE_S, now)?;
         }
         if let Some(m) = &self.menu {
-            if m.turning.is_none() && now - m.last_input >= MENU_IDLE_MS {
+            if m.turning.is_none() && now.saturating_sub(m.last_input) >= MENU_IDLE_MS {
                 let _ = events.push(Event::MenuTimeout);
             }
         }
@@ -215,7 +225,7 @@ impl<P: Platform> Firmware<P> {
             }
             let commands = self.sm.handle(event, now);
             for cmd in commands {
-                self.execute(cmd)?;
+                self.execute(cmd, now)?;
             }
         }
         let after = *self.sm.mode();
@@ -239,16 +249,23 @@ impl<P: Platform> Firmware<P> {
         }
         match update {
             TipUpdate::Turning { dir, progress } => {
-                if m.turning.is_none() {
+                // A tick each time the nearest face changes (45° into each
+                // face passed): once for a quick tip, as the mockup's buzz
+                // at its start, and once per face on a long turn, however
+                // many stops it makes on the way.
+                let detent = libm::floorf(progress + 0.5) as i32;
+                if detent != m.detent {
                     self.hw.haptics.play(smokebomb_hal::HapticEffect::MenuTip)?;
-                    m.last_input = now;
                 }
+                m.detent = detent;
                 m.turning = Some((dir, progress));
+                m.last_input = now;
             }
-            TipUpdate::Done(dir) => {
-                m.draft = m.draft.tipped(dir);
-                m.frame = m.frame.after(dir);
+            TipUpdate::Done { dir, steps } => {
+                m.draft = m.draft.stepped(dir, steps);
+                m.frame = m.frame.stepped(dir, steps);
                 m.turning = None;
+                m.detent = 0;
                 m.last_input = now;
             }
             TipUpdate::Cancelled => m.turning = None,
@@ -278,7 +295,7 @@ impl<P: Platform> Firmware<P> {
             }
             // Held for more than 0.8 s: at 60 Hz that's 49 frames, as in the
             // mockup, whose float clock never quite reaches 0.8 after 48.
-            (true, Some(since)) if !self.menu_hold_fired && now - since > MENU_HOLD_MS => {
+            (true, Some(since)) if !self.menu_hold_fired && now.saturating_sub(since) > MENU_HOLD_MS => {
                 self.menu_hold_fired = true;
                 let _ = events.push(Event::LongPress);
             }
@@ -299,7 +316,7 @@ impl<P: Platform> Firmware<P> {
     /// How far the current touch is toward a hold (0–1), once the ring shows.
     fn hold_progress(&self, now: u64) -> Option<f32> {
         let since = self.touch_since?;
-        let held = now - since;
+        let held = now.saturating_sub(since);
         let ring = !self.menu_hold_fired
             && held > HOLD_RING_AFTER_MS
             && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. } | Mode::Menu);
@@ -308,8 +325,9 @@ impl<P: Platform> Firmware<P> {
         })
     }
 
-    fn execute(&mut self, cmd: Command) -> HalResult<()> {
-        let now = self.hw.clock.now_ms();
+    /// Carry out a command. `now` is the tick's time: the clock moves on
+    /// while a tick runs, and everything in one tick must agree on when it is.
+    fn execute(&mut self, cmd: Command, now: u64) -> HalResult<()> {
         match cmd {
             Command::PlayClip(clip) => self.player.play(clip),
             Command::StopClip => self.player.stop(),
@@ -320,7 +338,7 @@ impl<P: Platform> Firmware<P> {
                     &mut self.hw.secure_element,
                     self.settings.die,
                     self.settings.count,
-                    self.hw.clock.now_ms(),
+                    now,
                 )?;
                 if is_max(&signed, self.settings.die) {
                     self.hw
@@ -343,6 +361,7 @@ impl<P: Platform> Firmware<P> {
                     tips: TipTracker::new(),
                     last_input: now,
                     turning: None,
+                    detent: 0,
                 });
                 self.ui.menu_opened(now);
             }
@@ -437,7 +456,16 @@ impl<P: Platform> Firmware<P> {
                 }
                 FaceContent::Menu => {
                     if let Some(m) = menu {
-                        draw_menu_face(&mut c, m, ui, face, now, battery, hold.map(|(_, p)| p));
+                        draw_menu_face(
+                            &mut c,
+                            m,
+                            ui,
+                            orientation,
+                            face,
+                            now,
+                            battery,
+                            hold.map(|(_, p)| p),
+                        );
                     }
                 }
                 // Placeholder until the Nest screens are built.
@@ -463,32 +491,46 @@ impl<P: Platform> Firmware<P> {
 
 /// One face while the menu is open (C3). The menu shows on the front face;
 /// during a tip the old page slides off against the turn and fades while
-/// the new one slides in from the leading edge of the face coming round.
+/// the new one slides in from the leading edge of the face coming round. On
+/// a turn past several faces the slide runs between the two faces the die
+/// is between, each showing the page it stands for.
+/// Each page is drawn upright for the frame it belongs to, the way it will
+/// read once its face is in front: a face coming round from the top or
+/// bottom would otherwise keep the orientation it had there until it
+/// counted as a side face, and flip mid-turn.
+#[allow(clippy::too_many_arguments)]
 fn draw_menu_face<A: smokebomb_hal::AssetStore>(
     c: &mut Ctx<A>,
     m: &MenuSession,
     ui: &Ui,
+    orientation: &TextOrientation,
     face: Face,
     now: u64,
     battery: u8,
     hold: Option<f32>,
 ) {
     let battery = battery as f32 / 100.0;
-    let front = m.frame.front_face();
-    if let Some((dir, u)) = m.turning {
-        let (mx, my) = m.frame.motion_dir(face, dir);
+    let Some(page) = page_frame(m, face) else {
+        return;
+    };
+    c.painter.xf = Transform::quarter(page_quarter(&page, face, orientation));
+    if let Some((dir, progress)) = m.turning {
+        // `k` whole faces passed, and `u` of the way to the next.
+        let k = libm::floorf(progress);
+        let u = progress - k;
+        let (frame, draft) = (m.frame.stepped(dir, k as i32), m.draft.stepped(dir, k as i32));
+        let (mx, my) = frame.motion_dir(face, dir);
         let d = screens::TIP_SLIDE;
-        if face == front {
-            screens::draw_menu(c, &m.draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
-        }
-        if face == m.frame.next_front(dir) {
-            let next = m.draft.tipped(dir);
+        if face == frame.front_face() {
+            screens::draw_menu(c, &draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
+        } else {
+            let next = draft.tipped(dir);
             let (ox, oy) = (mx * (1.0 - u) * d, my * (1.0 - u) * d);
             screens::draw_menu(c, &next, battery, ox, oy, u, 1.0);
         }
         return;
     }
-    if face == front {
+    {
         let intro = ui.menu_intro(now);
         screens::draw_hold_ring(c, 1.0, intro.ring_alpha, intro.ring_grow);
         screens::draw_menu(c, &m.draft, battery, 0.0, 0.0, intro.alpha, intro.scale);
@@ -496,6 +538,30 @@ fn draw_menu_face<A: smokebomb_hal::AssetStore>(
             screens::draw_hold_ring(c, p, 1.0, 0.0);
         }
     }
+}
+
+/// The menu frame whose page `face` shows: the front face's, or during a
+/// turn, the page being left or the one coming round.
+fn page_frame(m: &MenuSession, face: Face) -> Option<Frame> {
+    match m.turning {
+        Some((dir, progress)) => {
+            let frame = m.frame.stepped(dir, libm::floorf(progress) as i32);
+            if face == frame.front_face() {
+                Some(frame)
+            } else if face == frame.next_front(dir) {
+                Some(frame.after(dir))
+            } else {
+                None
+            }
+        }
+        None => (face == m.frame.front_face()).then_some(m.frame),
+    }
+}
+
+/// Upright for `frame`'s sky; the live orientation if that's undefined
+/// (the held face pointing up, SIM_SPEC H7).
+fn page_quarter(frame: &Frame, face: Face, live: &TextOrientation) -> orientation::Quarter {
+    orientation::upright(face, frame.up).unwrap_or_else(|| live.quarter(face))
 }
 
 fn fb_of<'a>(painter: &'a mut Painter<'_>) -> &'a mut Framebuffer {

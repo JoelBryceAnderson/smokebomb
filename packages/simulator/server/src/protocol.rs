@@ -7,7 +7,7 @@ use smokebomb_shared::SignedRoll;
 /// Bumped whenever a message changes shape. The browser compares it with its
 /// own copy (`web-ui/src/protocol.ts`) and shows a banner when they differ,
 /// which usually means the web UI build is out of date.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// First byte of a binary frame packet; followed by six 4bpp panel frames in
 /// `Face` order.
@@ -127,6 +127,15 @@ pub enum Inbound {
         dir: TipDirection,
         right: [f32; 3],
     },
+    /// Multi-turn: spin about a tip axis by `angle` radians since the spin
+    /// began (positive yaw = right tip, negative pitch = up tip).
+    Spin {
+        axis: SpinAxis,
+        angle: f32,
+        right: [f32; 3],
+    },
+    /// Let go of a spin: the die settles on the nearest face.
+    SpinEnd,
     /// Turn the die in the hand: radians about world Y, then world X.
     Rotate {
         yaw: f32,
@@ -154,6 +163,22 @@ pub enum TipDirection {
     Down,
     Left,
     Right,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum SpinAxis {
+    Yaw,
+    Pitch,
+}
+
+impl From<SpinAxis> for crate::world::SpinAxis {
+    fn from(a: SpinAxis) -> Self {
+        match a {
+            SpinAxis::Yaw => Self::Yaw,
+            SpinAxis::Pitch => Self::Pitch,
+        }
+    }
 }
 
 impl From<TipDirection> for crate::world::TipDir {

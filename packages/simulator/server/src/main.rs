@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::State;
+use axum::http::{header, HeaderValue};
 use axum::routing::get;
 use axum::{Json, Router};
 use smokebomb_firmware::board::{self, SimHandle};
@@ -25,6 +26,7 @@ use smokebomb_hal::SecureElement;
 use smokebomb_hal_simulator::SimSecureElement;
 use tokio::sync::{broadcast, Mutex};
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeader;
 
 use protocol::{Outbound, StatusSnapshot};
 use smokebomb_hal_simulator::world;
@@ -83,7 +85,13 @@ async fn main() -> anyhow::Result<()> {
             web_dir.display()
         );
     }
-    let static_files = ServeDir::new(&web_dir).fallback(ServeFile::new(web_dir.join("index.html")));
+    // Always revalidate: the UI is rebuilt often, and a browser that keeps a
+    // cached index.html (Safari does, without this) runs an old bundle.
+    let static_files = SetResponseHeader::overriding(
+        ServeDir::new(&web_dir).fallback(ServeFile::new(web_dir.join("index.html"))),
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache"),
+    );
 
     let app = Router::new()
         .route("/ws", get(ws::handler))
@@ -121,16 +129,19 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One firmware tick, in seconds: exactly 1/TICK_HZ, so the world's IMU
+/// samples cover the period the firmware integrates them over.
+pub const TICK_S: f64 = 1.0 / smokebomb_firmware::smokebomb_core::TICK_HZ as f64;
+
 /// Firmware main loop: tick, then publish anything that changed.
 async fn run_firmware(mut fw: board::Firmware, state: AppState) {
-    let period = Duration::from_millis(1000 / smokebomb_firmware::smokebomb_core::TICK_HZ as u64);
-    let mut interval = tokio::time::interval(period);
+    let mut interval = tokio::time::interval(Duration::from_secs_f64(TICK_S));
     let mut last_seq = 0;
     let mut last_mode = String::new();
     let mut last_counter = None;
     let mut last_pose = None;
     let mut menu_was_open = false;
-    let dt = period.as_secs_f64();
+    let dt = TICK_S;
 
     loop {
         interval.tick().await;
@@ -266,7 +277,7 @@ async fn get_device() -> Json<serde_json::Value> {
 mod tests {
     use super::world::World;
 
-    const DT: f64 = 1.0 / 60.0;
+    use super::TICK_S as DT;
 
     /// The real firmware, fed only by this world's IMU, rolls after a throw.
     #[test]
@@ -315,7 +326,7 @@ mod tests {
 
     use smokebomb_firmware::board;
     use smokebomb_hal::Face;
-    use smokebomb_hal_simulator::world::{TipDir, DEFAULT_VIEWER_RIGHT};
+    use smokebomb_hal_simulator::world::{SpinAxis, TipDir, DEFAULT_VIEWER_RIGHT};
 
     impl Rig {
         fn new() -> Self {
@@ -360,6 +371,201 @@ mod tests {
             assert!(self.world.tip(dir, DEFAULT_VIEWER_RIGHT));
             self.run(0.6);
         }
+
+        /// A multi-turn drag: spin to `quarters` faces (fractional is fine,
+        /// pausing on the way), then let go.
+        fn spin(&mut self, axis: SpinAxis, quarters: f32) {
+            let steps = 30;
+            for i in 1..=steps {
+                let angle = quarters * std::f32::consts::FRAC_PI_2 * i as f32 / steps as f32;
+                assert!(self.world.spin(axis, angle, DEFAULT_VIEWER_RIGHT));
+                self.run(DT);
+                if i == steps / 2 {
+                    self.run(0.4); // a pause between faces
+                }
+            }
+            self.run(0.2);
+            self.world.end_spin();
+            self.run(0.8);
+        }
+    }
+
+    /// A slow drag with long stops (a busy browser sends pointer moves this
+    /// sparsely): still three values, and one tick per face, not per nudge.
+    #[test]
+    fn a_stop_start_multi_turn_counts_faces_and_ticks_once_per_face() {
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.sim.lock().haptics.clear();
+        for i in 1..=30 {
+            let angle = -3.0 * std::f32::consts::FRAC_PI_2 * i as f32 / 30.0;
+            assert!(rig.world.spin(SpinAxis::Pitch, angle, DEFAULT_VIEWER_RIGHT));
+            rig.run(0.45);
+        }
+        rig.world.end_spin();
+        rig.run(1.5);
+        assert_eq!(rig.fw.menu_draft().unwrap().count, 4);
+        let ticks: Vec<_> = rig.sim.lock().haptics.drain(..).collect();
+        assert_eq!(ticks.len(), 3, "one per face passed: {ticks:?}");
+    }
+
+    /// Tips in quick succession, each starting the moment the last one
+    /// ends (and the first straight after the menu turns to the viewer):
+    /// every one counts, and the page is always on the face in front.
+    #[test]
+    fn quick_tips_in_a_row_keep_the_page_in_front() {
+        let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
+        let dirs = [
+            TipDir::Left,
+            TipDir::Up,
+            TipDir::Left,
+            TipDir::Down,
+            TipDir::Right,
+            TipDir::Up,
+            TipDir::Up,
+            TipDir::Left,
+            TipDir::Down,
+            TipDir::Right,
+        ];
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Hold +Z, and tip as soon as the die can move after the snap.
+        rig.sim.lock().touch_mask = 1 << Face::PosZ.index();
+        while rig.fw.menu_front().is_none() {
+            rig.run(DT);
+        }
+        rig.sim.lock().touch_mask = 0;
+        let mut expected = *rig.fw.menu_draft().unwrap();
+        for dir in dirs {
+            while !rig.world.tip(dir, DEFAULT_VIEWER_RIGHT) {
+                rig.run(DT);
+            }
+            expected = expected.tipped(match dir {
+                TipDir::Up => smokebomb_firmware::smokebomb_core::tips::TipDir::Up,
+                TipDir::Down => smokebomb_firmware::smokebomb_core::tips::TipDir::Down,
+                TipDir::Left => smokebomb_firmware::smokebomb_core::tips::TipDir::Left,
+                TipDir::Right => smokebomb_firmware::smokebomb_core::tips::TipDir::Right,
+            });
+        }
+        rig.run(1.0);
+        let front = rig.fw.menu_front().unwrap();
+        let n = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(front);
+        assert!(
+            n.dot(toward_viewer) > 0.99,
+            "the page is on {front:?}, which isn't in front"
+        );
+        assert_eq!(*rig.fw.menu_draft().unwrap(), expected);
+    }
+
+    /// The screen coming round in a tip reads the right way up from the
+    /// start: its orientation doesn't change during the tip, and matches the
+    /// die's own orientation for that face once it's in front.
+    #[test]
+    fn a_tip_brings_the_next_screen_round_the_right_way_up() {
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        for dir in [
+            TipDir::Up,
+            TipDir::Up,
+            TipDir::Down,
+            TipDir::Left,
+            TipDir::Down,
+            TipDir::Right,
+            TipDir::Up,
+        ] {
+            assert!(rig.world.tip(dir, DEFAULT_VIEWER_RIGHT));
+            let mut seen = Vec::new();
+            for _ in 0..36 {
+                rig.run(DT);
+                for face in Face::ALL {
+                    if let Some(q) = rig.fw.menu_page_quarter(face) {
+                        seen.push((face, q));
+                    }
+                }
+            }
+            rig.run(0.5);
+            let front = rig.fw.menu_front().unwrap();
+            let settled = rig.fw.orientation().quarter(front);
+            assert_eq!(rig.fw.menu_page_quarter(front), Some(settled), "{dir:?}: settled");
+            for (face, q) in seen {
+                if face == front {
+                    assert_eq!(
+                        q, settled,
+                        "{dir:?}: {front:?} came round as {q:?}, reads {settled:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Many tips in a row, at the server's real tick: every one counts once,
+    /// and the firmware's front face stays the one facing the viewer.
+    #[test]
+    fn a_long_run_of_tips_stays_in_step() {
+        use smokebomb_firmware::smokebomb_core::menu::Page;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        for _ in 0..13 {
+            rig.tip(TipDir::Left);
+            rig.run(0.3);
+        }
+        // 13 pages on, 3 pages to a cycle: one on from How many dice.
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Die);
+        for _ in 0..7 {
+            rig.tip(TipDir::Up);
+            rig.run(0.3);
+        }
+        // Seven values up from d20, wrapping: d100, Pot, d4, d6, d8, d10, d12.
+        assert_eq!(rig.fw.menu_draft().unwrap().die, smokebomb_shared::DieKind::D12);
+        let front = rig.fw.menu_front().unwrap();
+        let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
+        let n = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(front);
+        assert!(n.dot(toward_viewer) > 0.99, "{front:?} is not in front");
+    }
+
+    /// Once a tip has stopped, the screens already show the settled menu:
+    /// nothing moves or snaps when the turn is counted a moment later.
+    #[test]
+    fn a_finished_tip_shows_centred_before_it_settles() {
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        for dir in [TipDir::Left, TipDir::Up, TipDir::Right, TipDir::Down] {
+            assert!(rig.world.tip(dir, DEFAULT_VIEWER_RIGHT));
+            rig.run(0.5); // the turn is over; the tracker is still settling
+            let during = rig.sim.lock().faces;
+            rig.run(0.5);
+            let after = rig.sim.lock().faces;
+            assert!(during == after, "{dir:?}: screens changed when the tip settled");
+        }
+    }
+
+    #[test]
+    fn a_multi_turn_moves_as_many_steps_as_faces() {
+        use smokebomb_firmware::smokebomb_core::menu::Page;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        // Two faces left: two pages on (How many dice → Settings).
+        rig.spin(SpinAxis::Yaw, -2.2);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Settings);
+        // Back one and a bit: settles one face back (Which die).
+        rig.spin(SpinAxis::Yaw, 1.3);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Die);
+        // Three faces up: d20 → d100 → Pass the Pot → d4.
+        rig.spin(SpinAxis::Pitch, -3.0);
+        let draft = rig.fw.menu_draft().unwrap();
+        assert_eq!(draft.die, smokebomb_shared::DieKind::D4);
+        // The firmware's front face is the one really facing the viewer.
+        let front = rig.fw.menu_front().unwrap();
+        let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
+        let n = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(front);
+        assert!(n.dot(toward_viewer) > 0.99, "{front:?} is not in front");
     }
 
     #[test]

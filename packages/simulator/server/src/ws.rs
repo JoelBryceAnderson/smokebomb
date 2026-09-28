@@ -80,6 +80,10 @@ fn apply(state: &AppState, input: Inbound) {
         Inbound::Tip { dir, right } => {
             world.tip(dir.into(), glam::Vec3::from_array(right));
         }
+        Inbound::Spin { axis, angle, right } => {
+            world.spin(axis.into(), angle, glam::Vec3::from_array(right));
+        }
+        Inbound::SpinEnd => world.end_spin(),
         Inbound::Rotate { yaw, pitch } => world.rotate(yaw, pitch),
         Inbound::PlaceFaceUp { face } => {
             if let Some(f) = Face::from_index(face as usize) {
