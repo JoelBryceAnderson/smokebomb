@@ -115,18 +115,9 @@ impl TextOrientation {
                 slot.get_or_insert(0.0);
                 continue;
             }
-            // Text "down" is the opposite of the sky, projected onto the face.
-            let k = dot(up, b.n);
-            let down = [
-                -(up[0] - b.n[0] * k),
-                -(up[1] - b.n[1] * k),
-                -(up[2] - b.n[2] * k),
-            ];
-            if dot(down, down) < 1e-4 * dot(up, up) {
+            let Some(raw) = upright_angle(b, up) else {
                 continue; // no clear direction: keep what's there
-            }
-            let (lx, ly) = (dot(down, b.x), dot(down, b.y));
-            let raw = libm::atan2f(-lx, -ly);
+            };
             let snapped = libm::roundf(raw / FRAC_PI_2) * FRAC_PI_2;
             let current = *slot.get_or_insert(snapped);
             let diff = libm::atan2f(libm::sinf(raw - current), libm::cosf(raw - current));
@@ -135,6 +126,32 @@ impl TextOrientation {
             }
         }
     }
+}
+
+/// The text angle that stands upright on a side face with the sky along
+/// `up`: text "down" is the opposite of the sky, projected onto the face.
+fn upright_angle(b: &FaceBasis, up: [f32; 3]) -> Option<f32> {
+    let k = dot(up, b.n);
+    let down = [
+        -(up[0] - b.n[0] * k),
+        -(up[1] - b.n[1] * k),
+        -(up[2] - b.n[2] * k),
+    ];
+    if dot(down, down) < 1e-4 * dot(up, up) {
+        return None;
+    }
+    let (lx, ly) = (dot(down, b.x), dot(down, b.y));
+    Some(libm::atan2f(-lx, -ly))
+}
+
+/// Upright text for `face` if the sky were along `up` (any length), or
+/// `None` when `face` would be the top or bottom face.
+pub fn upright(face: Face, up: [f32; 3]) -> Option<Quarter> {
+    let b = &BASES[face.index()];
+    if dominant_axis(b.n) == dominant_axis(up) {
+        return None;
+    }
+    upright_angle(b, up).map(Quarter::from_angle)
 }
 
 /// Gravity-up in die coordinates from an accelerometer sample: at rest the

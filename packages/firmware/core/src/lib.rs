@@ -164,6 +164,12 @@ impl<P: Platform> Firmware<P> {
         self.menu.as_ref().map(|m| m.frame.front_face())
     }
 
+    /// The text orientation the menu page on `face` is drawn in, if one is.
+    pub fn menu_page_quarter(&self, face: Face) -> Option<orientation::Quarter> {
+        let frame = page_frame(self.menu.as_ref()?, face)?;
+        Some(page_quarter(&frame, face, &self.orientation))
+    }
+
     /// The menu's draft, if it's open.
     pub fn menu_draft(&self) -> Option<&Draft> {
         self.menu.as_ref().map(|m| &m.draft)
@@ -449,7 +455,16 @@ impl<P: Platform> Firmware<P> {
                 }
                 FaceContent::Menu => {
                     if let Some(m) = menu {
-                        draw_menu_face(&mut c, m, ui, face, now, battery, hold.map(|(_, p)| p));
+                        draw_menu_face(
+                            &mut c,
+                            m,
+                            ui,
+                            orientation,
+                            face,
+                            now,
+                            battery,
+                            hold.map(|(_, p)| p),
+                        );
                     }
                 }
                 // Placeholder until the Nest screens are built.
@@ -478,17 +493,26 @@ impl<P: Platform> Firmware<P> {
 /// the new one slides in from the leading edge of the face coming round. On
 /// a turn past several faces the slide runs between the two faces the die
 /// is between, each showing the page it stands for.
+/// Each page is drawn upright for the frame it belongs to, the way it will
+/// read once its face is in front: a face coming round from the top or
+/// bottom would otherwise keep the orientation it had there until it
+/// counted as a side face, and flip mid-turn.
+#[allow(clippy::too_many_arguments)]
 fn draw_menu_face<A: smokebomb_hal::AssetStore>(
     c: &mut Ctx<A>,
     m: &MenuSession,
     ui: &Ui,
+    orientation: &TextOrientation,
     face: Face,
     now: u64,
     battery: u8,
     hold: Option<f32>,
 ) {
     let battery = battery as f32 / 100.0;
-    let front = m.frame.front_face();
+    let Some(page) = page_frame(m, face) else {
+        return;
+    };
+    c.painter.xf = Transform::quarter(page_quarter(&page, face, orientation));
     if let Some((dir, progress)) = m.turning {
         // `k` whole faces passed, and `u` of the way to the next.
         let k = libm::floorf(progress);
@@ -498,15 +522,14 @@ fn draw_menu_face<A: smokebomb_hal::AssetStore>(
         let d = screens::TIP_SLIDE;
         if face == frame.front_face() {
             screens::draw_menu(c, &draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
-        }
-        if face == frame.next_front(dir) {
+        } else {
             let next = draft.tipped(dir);
             let (ox, oy) = (mx * (1.0 - u) * d, my * (1.0 - u) * d);
             screens::draw_menu(c, &next, battery, ox, oy, u, 1.0);
         }
         return;
     }
-    if face == front {
+    {
         let intro = ui.menu_intro(now);
         screens::draw_hold_ring(c, 1.0, intro.ring_alpha, intro.ring_grow);
         screens::draw_menu(c, &m.draft, battery, 0.0, 0.0, intro.alpha, intro.scale);
@@ -514,6 +537,30 @@ fn draw_menu_face<A: smokebomb_hal::AssetStore>(
             screens::draw_hold_ring(c, p, 1.0, 0.0);
         }
     }
+}
+
+/// The menu frame whose page `face` shows: the front face's, or during a
+/// turn, the page being left or the one coming round.
+fn page_frame(m: &MenuSession, face: Face) -> Option<Frame> {
+    match m.turning {
+        Some((dir, progress)) => {
+            let frame = m.frame.stepped(dir, libm::floorf(progress) as i32);
+            if face == frame.front_face() {
+                Some(frame)
+            } else if face == frame.next_front(dir) {
+                Some(frame.after(dir))
+            } else {
+                None
+            }
+        }
+        None => (face == m.frame.front_face()).then_some(m.frame),
+    }
+}
+
+/// Upright for `frame`'s sky; the live orientation if that's undefined
+/// (the held face pointing up, SIM_SPEC H7).
+fn page_quarter(frame: &Frame, face: Face, live: &TextOrientation) -> orientation::Quarter {
+    orientation::upright(face, frame.up).unwrap_or_else(|| live.quarter(face))
 }
 
 fn fb_of<'a>(painter: &'a mut Painter<'_>) -> &'a mut Framebuffer {
