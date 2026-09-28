@@ -202,6 +202,9 @@ pub struct TipTracker {
     /// (degrees). Those are the viewer's right and the sky, which stay put
     /// as the frame turns, so the leftover stays meaningful.
     leftover: (f32, f32),
+    /// Rotation (degrees, die axes) that started the next turn on the tick
+    /// the last one was counted.
+    carry: Option<[f32; 3]>,
 }
 
 impl TipTracker {
@@ -216,6 +219,25 @@ impl TipTracker {
 
     pub fn armed(&self) -> bool {
         self.armed
+    }
+
+    /// End the turn `steps` faces along `dir`, keeping what's left over.
+    fn settle(&mut self, dir: TipDir, steps: f32, frame: &Frame) -> TipUpdate {
+        let counted = frame.axis(dir).map(|a| a * steps * 90.0);
+        let left: [f32; 3] = core::array::from_fn(|i| self.theta[i] - counted[i]);
+        self.leftover = if norm(left) < NOISE_DEG {
+            (0.0, 0.0)
+        } else {
+            (dot(left, frame.right), dot(left, frame.up))
+        };
+        self.turning = false;
+        self.theta = [0.0; 3];
+        self.dir = None;
+        self.paused_since = None;
+        match steps as i32 {
+            0 => TipUpdate::Cancelled,
+            steps => TipUpdate::Done { dir, steps },
+        }
     }
 
     /// Signed progress in quarter turns along `dir`'s axis.
@@ -245,14 +267,32 @@ impl TipTracker {
         }
 
         if !self.turning {
-            if speed < START_DPS {
+            let carry = self.carry.take();
+            if carry.is_none() && speed < START_DPS {
                 return (false, TipUpdate::None);
             }
             self.turning = true;
             let (r, u) = self.leftover;
-            self.theta = core::array::from_fn(|i| r * frame.right[i] + u * frame.up[i]);
-            self.fresh = [0.0; 3];
+            let carry = carry.unwrap_or([0.0; 3]);
+            self.theta = core::array::from_fn(|i| r * frame.right[i] + u * frame.up[i] + carry[i]);
+            self.fresh = carry;
             self.dir = None;
+        }
+
+        // Moving again after resting on a face: that turn is over, even if it
+        // rested less than the usual settle time, and this is a new one. A
+        // quick second tip, perhaps in another direction, would otherwise be
+        // folded into the first and never counted.
+        if !still && self.paused_since.is_some() {
+            if let Some(dir) = self.dir {
+                let p = self.progress(dir, frame);
+                let steps = roundf(p);
+                if fabsf(p - steps) <= SETTLE {
+                    let result = self.settle(dir, steps, frame);
+                    self.carry = Some(w.map(|c| c * dt_s));
+                    return (false, result);
+                }
+            }
         }
 
         for ((t, f), w) in self.theta.iter_mut().zip(&mut self.fresh).zip(w) {
@@ -275,39 +315,19 @@ impl TipTracker {
         }
 
         if still {
-            let paused = now - *self.paused_since.get_or_insert(now);
-            let settled = match self.dir {
-                _ if paused < SETTLE_STILL_MS => None,
-                None => Some((TipUpdate::Cancelled, [0.0; 3])),
-                Some(dir) => {
-                    let p = self.progress(dir, frame);
-                    let steps = roundf(p);
-                    if fabsf(p - steps) <= SETTLE || paused >= SETTLE_MS {
-                        let counted = frame.axis(dir).map(|a| a * steps * 90.0);
-                        Some((
-                            match steps as i32 {
-                                0 => TipUpdate::Cancelled,
-                                steps => TipUpdate::Done { dir, steps },
-                            },
-                            counted,
-                        ))
-                    } else {
-                        None // stopped between faces: wait
+            let paused = now.saturating_sub(*self.paused_since.get_or_insert(now));
+            if paused >= SETTLE_STILL_MS {
+                match self.dir {
+                    None => return (false, self.settle(TipDir::Up, 0.0, frame)),
+                    Some(dir) => {
+                        let p = self.progress(dir, frame);
+                        let steps = roundf(p);
+                        if fabsf(p - steps) <= SETTLE || paused >= SETTLE_MS {
+                            return (false, self.settle(dir, steps, frame));
+                        }
+                        // Stopped between faces: wait.
                     }
                 }
-            };
-            if let Some((result, counted)) = settled {
-                let left: [f32; 3] = core::array::from_fn(|i| self.theta[i] - counted[i]);
-                self.leftover = if norm(left) < NOISE_DEG {
-                    (0.0, 0.0)
-                } else {
-                    (dot(left, frame.right), dot(left, frame.up))
-                };
-                self.turning = false;
-                self.theta = [0.0; 3];
-                self.dir = None;
-                self.paused_since = None;
-                return (false, result);
             }
         } else {
             self.paused_since = None;
@@ -606,33 +626,36 @@ mod tests {
     /// browser sending sparse pointer moves) still counts every face.
     #[test]
     fn a_turn_in_nudges_counts_every_face() {
-        let f = frame();
+        let mut frame = frame();
         let mut t = armed();
         let dt = 1.0 / 60.0;
-        let axis = f.axis(TipDir::Up);
         let mut now = 300;
-        let mut last = TipUpdate::None;
-        // 20 nudges of 13.5° (270° in all), each followed by 150 ms still.
+        let mut steps = 0;
+        let mut feed = |t: &mut TipTracker, frame: &mut Frame, now: u64, g: [i32; 3]| {
+            if let TipUpdate::Done { dir, steps: n } = t.update(g, dt, now, frame).1 {
+                assert_eq!(dir, TipDir::Up);
+                steps += n;
+                *frame = frame.stepped(dir, n);
+            }
+        };
+        // 20 nudges of 13.5° (270° in all), each followed by 150 ms still. A
+        // stop near a face ends that part of the turn, so it may be counted
+        // in pieces; together they must come to three faces.
         for _ in 0..20 {
             for _ in 0..3 {
                 now += 17;
-                let g = axis.map(|a| (a * 270.0 * 1000.0) as i32); // 4.5° per frame
-                last = t.update(g, dt, now, &f).1;
+                let g = frame.axis(TipDir::Up).map(|a| (a * 270.0 * 1000.0) as i32); // 4.5° per frame
+                feed(&mut t, &mut frame, now, g);
             }
             for _ in 0..9 {
                 now += 17;
-                last = t.update([0; 3], dt, now, &f).1;
+                feed(&mut t, &mut frame, now, [0; 3]);
             }
         }
-        assert!(matches!(last, TipUpdate::Turning { .. }), "{last:?}");
-        let done = (0..15).map(|_| {
+        for _ in 0..15 {
             now += 17;
-            t.update([0; 3], dt, now, &f).1
-        });
-        let done: std::vec::Vec<_> = done.collect();
-        assert!(done.contains(&TipUpdate::Done {
-            dir: TipDir::Up,
-            steps: 3
-        }));
+            feed(&mut t, &mut frame, now, [0; 3]);
+        }
+        assert_eq!(steps, 3);
     }
 }

@@ -30,6 +30,9 @@ const MIN_SHAKE_S: f64 = 0.05;
 pub const DEFAULT_VIEWER_RIGHT: Vec3 = Vec3::new(0.876_356, 0.0, -0.481_996);
 /// How long the menu takes to turn the held face toward the viewer.
 const SNAP_S: f64 = 0.35;
+/// The pause after that turn before the die takes a tip (the firmware arms
+/// its tip tracker after 120 ms still).
+const SNAP_HOLD_S: f64 = 0.15;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pose {
@@ -80,6 +83,9 @@ struct Turn {
     from: Quat,
     to: Quat,
     hop: bool,
+    /// Held still this long after the motion before the die takes another
+    /// (s).
+    hold: f64,
 }
 
 pub struct World {
@@ -207,6 +213,7 @@ impl World {
             from: self.pose.rotation,
             to,
             hop: true,
+            hold: 0.0,
         });
         true
     }
@@ -256,6 +263,7 @@ impl World {
             from: self.pose.rotation,
             to,
             hop: false,
+            hold: 0.0,
         });
     }
 
@@ -296,6 +304,9 @@ impl World {
             from: self.pose.rotation,
             to: (fix * aligned).normalize(),
             hop: false,
+            // Having turned the die to face you, you pause before tipping
+            // it; the firmware waits for that stillness to take its frame.
+            hold: SNAP_HOLD_S,
         });
     }
 
@@ -322,6 +333,7 @@ impl World {
             from: self.pose.rotation,
             to,
             hop: false,
+            hold: 0.0,
         });
     }
 
@@ -411,7 +423,9 @@ impl World {
             if u >= 1.0 {
                 self.pose.rotation = turn.to;
                 self.pose.position.y = 0.0;
-                self.turn = None;
+                if self.time - turn.start >= turn.duration + turn.hold {
+                    self.turn = None;
+                }
             }
         }
 
