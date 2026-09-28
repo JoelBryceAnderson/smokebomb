@@ -132,13 +132,13 @@ animation rate; panels accept at most 100 Hz. Each tick:
 
 1. **Sample.** Read the IMU → `MotionDetector` → `Motion` event on change.
    Low-pass the gravity direction and update each face's text orientation
-   (`orientation.rs`, SIM_SPEC B2). Poll touch (grip-rejected while
-   moving) → `Tap` / `LongPress`. Poll the PMIC for nest docking. Drain BLE
-   writes.
+   (`orientation.rs`, SIM_SPEC B2). While the menu is open, feed the gyro
+   to the tip tracker (below). Poll touch (grip-rejected while moving) →
+   `Tap` / `LongPress`. Poll the PMIC for nest docking. Drain BLE writes.
 2. **Decide.** Feed the events to the pure `StateMachine`, which returns
    `Command`s.
 3. **Act.** Execute the commands: start/stop clips, fire haptics, roll and
-   sign, change settings.
+   sign, open and close the menu.
 4. **Render.** Draw into six 8-bit grey framebuffers (the mockup's canvas
    value range), then quantize each to the panel's 16 levels with the
    mockup's ordered dither and pack it at 4 bpp (`display.rs`, SIM_SPEC B1).
@@ -155,13 +155,36 @@ animation rate; panels accept at most 100 Hz. Each tick:
    │                                   ▼                                   ▼
    └────────── timeout / Handled ── Reveal ◀─────────── Roll ◀─────────────┘
 
-  Idle/Reveal ── LongPress ──▶ Menu ── LongPress (save) ──▶ Idle
+  Idle/Reveal ── LongPress ──▶ Menu ── LongPress (save) / 25 s idle ──▶ Idle
+                                └── Shaking / FreeFall (discard) ──▶ Shaking / Airborne
   any ── Docked ──▶ Nest ── Undocked ──▶ Idle
 ```
 
 `state.rs` is free of side effects and has unit tests for every transition
 above. The motion thresholds in `motion.rs` are placeholders to be tuned
 against recorded throws on real hardware.
+
+### Menu
+
+Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
+
+- **Draft.** The menu works on a `Draft` (`menu.rs`): page, die, count and
+  the Settings item. Only a hold saves it into `Settings`. Holding on
+  Restart restarts the die instead; a throw, docking or 25 s without a tip
+  discards the draft.
+- **Tips** (`tips.rs`). The menu keeps a `Frame`: the front face (the held
+  one) and the sky and viewer's-right axes in die coordinates. A
+  `TipTracker` waits for the die to be still for 120 ms after the menu
+  opens, takes the sky from gravity, then integrates the gyro through each
+  quick turn. Left and right tips turn about gravity, which the
+  accelerometer can't see. The tracker classifies the turn against the frame
+  once it passes 8°, reports progress (angle ÷ 90°) while it turns, and
+  counts it as done if it stops past 60°. A finished tip updates the draft
+  and turns the frame analytically.
+- **Drawing.** Progress drives the content slide, so the page moves with
+  the die, as in the mockup where both follow the same ease-out.
+  `ui.rs` times the grow-in, the fade-out, the save flash, the success
+  screen and the restart blackout; `screens.rs` draws them.
 
 ### Rolls and verification
 
@@ -289,7 +312,7 @@ result (placeholder digits until the renderer lands).
  │ throw, tip pad, drag,     │──────────▶│ JSON: touch / shake / tip / rotate /    │
  │ face touch, dock          │           │       place_face_up / dock / ble        │
  └───────────────────────────┘           │                                         │
-                                         │  World (world.rs): die pose + motions   │
+                                         │  World: die pose + motions              │
                                          │     │ IMU sample each tick              │
                                          │     ▼                                   │
                                          │  SimHandle (Arc<Mutex<SimState>>)       │
@@ -300,15 +323,18 @@ result (placeholder digits until the renderer lands).
 ```
 
 - **The firmware is the real core.** The simulator only replaces the HAL.
-- **The server owns the die.** `World` holds the die's pose. Browser gestures
-  become motions following the mockup's curves (SIM_SPEC C3, C5):
+- **The server owns the die.** `World` (`hal/simulator/src/world.rs`, so
+  the firmware's golden tests can use it too) holds the die's pose. Browser
+  gestures become motions following the mockup's curves (SIM_SPEC C3, C5):
   - hold-to-shake with jitter;
   - the throw's tumble: slerp to a random face-aligned orientation, extra
     spin, two bounces;
   - quarter-turn tips (0.42 s, with a hop);
   - drag-to-turn;
   - setting a face up;
-  - settling upright in the Nest.
+  - settling upright in the Nest;
+  - the mockup's snap on menu open: when the firmware reports an open menu,
+    the server turns the held face squarely toward the viewer (0.35 s).
 
   Each tick produces the pose the browser draws and the IMU sample the
   firmware reads, so what the firmware senses always matches what you see.
@@ -316,8 +342,7 @@ result (placeholder digits until the renderer lands).
   motion. Linear acceleration is synthesized per phase (a vigorous hand
   shake, free fall while airborne, a 3 g spike at each bounce), because the
   mockup's stylised bounce implies almost none.
-- **Browser-only affordances** don't move the die: the camera, and the
-  mockup's snap-to-viewer on menu open (to become a camera move). While the
+- **Browser-only affordances** don't move the die: the camera. While the
   firmware reports a menu, a swipe tips the die instead of turning it, as in
   the mockup.
 - **Outputs:** frames are pushed only when `frame_seq` changes. Rolls are sent
@@ -331,8 +356,10 @@ result (placeholder digits until the renderer lands).
 `tools/mockup-capture` runs a pinned copy of the interactive mockup headless
 (seeded randomness, virtual time, three.js r128 and Space Grotesk from npm)
 and saves every face's quantized 96×96 output at fixed moments in nine
-scenarios. The renderer work compares firmware frames against these within a
-tolerance (SIM_SPEC H4). See its README.
+scenarios. `packages/firmware/core/tests/golden.rs` replays them against the
+firmware and compares every face within a tolerance (SIM_SPEC H4). The menu
+scenarios run on the simulator's `World`, so the firmware sees the same tips
+and snap the simulator produces. See the capture tool's README.
 
 ## Server
 

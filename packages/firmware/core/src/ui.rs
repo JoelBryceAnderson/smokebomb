@@ -7,12 +7,15 @@
 //! 4. result, on every face except the one facing down
 //! 5. wake label, on every face except the one facing down (decision H2)
 //!
-//! then the (placeholder) smoke clip on top. Restart blackout, landing flash,
-//! menu fade, hold ring and the success screen arrive with the menu and throw
-//! work.
+//! with the success screen after a saved menu between the result and the
+//! wake label, and then the (placeholder) smoke clip on top. Under the
+//! content go the save flash, the fading menu and the hold ring; a restart
+//! blacks everything out. The landing flash arrives with the throw work.
 
 use smokebomb_hal::Face;
+use smokebomb_shared::DieKind;
 
+use crate::menu::Draft;
 use crate::screens::BOOT_DURATION;
 use crate::state::Mode;
 
@@ -27,6 +30,16 @@ const RESULT_DIM_AFTER_MS: u64 = 7_000;
 const RESULT_DIM_FADE_MS: f32 = 1_200.0;
 /// A touch on a dimmed result brings it back for this long.
 const RESULT_RESTORE_MS: u64 = 4_000;
+/// Menu grow-in (C3): alpha over 0.3 s, scale and ring flash over 0.35 s.
+const MENU_FADE_IN_MS: f32 = 300.0;
+const MENU_GROW_MS: f32 = 350.0;
+/// Menu fade-out after it closes, and the save flash (C4).
+const MENU_FADE_OUT_MS: f32 = 300.0;
+const FLASH_MS: f32 = 250.0;
+/// The success screen on the face the menu was on (C4).
+pub const SUCCESS_MS: u64 = 1_300;
+/// Screens stay dark this long before a restart boots (C3).
+pub const RESTART_BLACKOUT_MS: u64 = 800;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Boot {
@@ -42,6 +55,34 @@ pub struct Ui {
     wake: Option<(u64, u64)>,
     /// (reveal, dim) times of the shown result.
     result: Option<(u64, u64)>,
+    menu_open_at: Option<u64>,
+    /// The menu fading out: when it closed, what it showed, and where.
+    menu_fade: Option<(u64, Draft, Face)>,
+    /// A saved setup: when, on which face, and what.
+    success: Option<(u64, Face, DieKind, u8)>,
+    flash: Option<u64>,
+    /// Restarting: dark until then, then boot.
+    blackout_until: Option<u64>,
+}
+
+/// How the menu enters (C3): its alpha and scale, and the hold ring that
+/// filled on the way in flashing outward.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MenuIntro {
+    pub alpha: f32,
+    pub scale: f32,
+    pub ring_alpha: f32,
+    pub ring_grow: f32,
+}
+
+/// The mockup's `ease`: ease-out cubic.
+pub fn ease(x: f32) -> f32 {
+    let u = 1.0 - x.clamp(0.0, 1.0);
+    1.0 - u * u * u
+}
+
+fn since(now: u64, t: u64) -> f32 {
+    now.saturating_sub(t) as f32
 }
 
 /// What to draw on one face this frame.
@@ -58,6 +99,12 @@ pub enum FaceContent {
     Result {
         alpha: f32,
     },
+    /// Seconds since a setup was saved, and the setup.
+    Success {
+        t: f32,
+        die: DieKind,
+        count: u8,
+    },
     Wake {
         alpha: f32,
     },
@@ -73,7 +120,63 @@ impl Ui {
     }
 
     pub fn booting(&self) -> bool {
-        self.boot.is_some()
+        self.boot.is_some() || self.blackout_until.is_some()
+    }
+
+    /// Restarting: every screen is dark.
+    pub fn blackout(&self) -> bool {
+        self.blackout_until.is_some()
+    }
+
+    pub fn menu_opened(&mut self, now: u64) {
+        self.menu_open_at = Some(now);
+        self.menu_fade = None;
+    }
+
+    /// The menu closed on `face` showing `draft`. Saving shows the success
+    /// screen there and flashes; either way the menu fades and the setup
+    /// label shows (C4).
+    pub fn menu_closed(&mut self, now: u64, face: Face, draft: Draft, saved: bool) {
+        self.menu_open_at = None;
+        self.menu_fade = Some((now, draft, face));
+        if saved {
+            self.success = Some((now, face, draft.die, draft.count));
+            self.flash = Some(now);
+        }
+        self.wake(now, WAKE_AFTER_BOOT_MS);
+    }
+
+    /// Holding on Restart: dark for a moment, then boot again (C3, C1).
+    pub fn restart(&mut self, now: u64) {
+        *self = Self {
+            started: true,
+            blackout_until: Some(now + RESTART_BLACKOUT_MS),
+            ..Self::default()
+        };
+    }
+
+    pub fn menu_intro(&self, now: u64) -> MenuIntro {
+        let t = self.menu_open_at.map_or(f32::MAX, |t| since(now, t));
+        let e = (t / MENU_GROW_MS).min(1.0);
+        MenuIntro {
+            alpha: (t / MENU_FADE_IN_MS).min(1.0),
+            scale: 0.86 + 0.14 * ease(e),
+            ring_alpha: 1.0 - e,
+            ring_grow: e * 3.0,
+        }
+    }
+
+    /// The closed menu fading out on its face: the draft, and progress 0–1.
+    pub fn menu_fade(&self, now: u64, face: Face) -> Option<(Draft, f32)> {
+        let (t, draft, f) = self.menu_fade?;
+        let u = since(now, t) / MENU_FADE_OUT_MS;
+        (f == face && u < 1.0).then_some((draft, u))
+    }
+
+    /// The save flash's alpha (before its 35%).
+    pub fn flash(&self, now: u64) -> f32 {
+        self.flash
+            .map_or(0.0, |t| (1.0 - since(now, t) / FLASH_MS).max(0.0))
     }
 
     /// Advance timers. Call once per tick after the state machine ran, with
@@ -83,6 +186,12 @@ impl Ui {
             self.started = true;
             self.boot = Some(Boot { start: now, top: up });
         }
+        if let Some(until) = self.blackout_until {
+            if now >= until {
+                self.blackout_until = None;
+                self.boot = Some(Boot { start: now, top: up });
+            }
+        }
 
         let entered = |m: fn(&Mode) -> bool| !m(before) && m(after);
         // A throw starts: the result, the wake label and the boot give way.
@@ -90,9 +199,10 @@ impl Ui {
             self.wake = None;
             self.result = None;
         }
-        if entered(|m| matches!(m, Mode::Menu(_))) || entered(|m| matches!(m, Mode::Nest)) {
+        if entered(|m| matches!(m, Mode::Menu)) || entered(|m| matches!(m, Mode::Nest)) {
             self.wake = None;
             self.result = None;
+            self.success = None;
         }
         if let Mode::Reveal { since_ms } = *after {
             if !matches!(before, Mode::Reveal { .. }) {
@@ -101,7 +211,7 @@ impl Ui {
         }
 
         if let Some(b) = self.boot {
-            let interrupted = tumbling(after) || matches!(after, Mode::Menu(_) | Mode::Reveal { .. });
+            let interrupted = tumbling(after) || matches!(after, Mode::Menu | Mode::Reveal { .. });
             if interrupted {
                 self.boot = None;
             } else if now - b.start >= BOOT_MS {
@@ -124,7 +234,7 @@ impl Ui {
 
     /// A tap on a screen (C2): show the setup, and bring back a dimmed result.
     pub fn tap(&mut self, now: u64, mode: &Mode) {
-        if matches!(mode, Mode::Menu(_) | Mode::Nest) {
+        if matches!(mode, Mode::Menu | Mode::Nest) || self.blackout() {
             return;
         }
         self.touch(now);
@@ -171,8 +281,11 @@ impl Ui {
     /// What `face` shows at `now`.
     pub fn content(&self, now: u64, face: Face, up: Face, mode: &Mode, has_result: bool) -> FaceContent {
         let down = face == up.opposite();
+        if self.blackout() {
+            return FaceContent::Blank;
+        }
         if let Some(b) = self.boot {
-            if !matches!(mode, Mode::Nest | Mode::Menu(_)) && !tumbling(mode) {
+            if !matches!(mode, Mode::Nest | Mode::Menu) && !tumbling(mode) {
                 return FaceContent::Boot {
                     t: (now - b.start) as f32 / 1000.0,
                     top: face == b.top,
@@ -181,12 +294,18 @@ impl Ui {
         }
         match mode {
             Mode::Nest => return FaceContent::Nest,
-            Mode::Menu(_) => return FaceContent::Menu,
+            Mode::Menu => return FaceContent::Menu,
             _ => {}
         }
         let result = self.result_alpha(now);
         if has_result && result > 0.0 && !down {
             return FaceContent::Result { alpha: result };
+        }
+        if let Some((t, f, die, count)) = self.success {
+            if f == face && now - t < SUCCESS_MS && !tumbling(mode) {
+                let t = since(now, t) / 1000.0;
+                return FaceContent::Success { t, die, count };
+            }
         }
         let wake = self.wake_alpha(now);
         if wake > 0.0 && !tumbling(mode) && !down {
@@ -238,6 +357,53 @@ mod tests {
             ui.content(1_100, Face::PosX, UP, &Mode::Airborne, false),
             FaceContent::Blank
         );
+    }
+
+    #[test]
+    fn saving_the_menu_shows_success_then_the_wake_label() {
+        let mut ui = Ui::new();
+        ui.tick(0, &Mode::Idle, &Mode::Idle, UP, false);
+        ui.tick(9_000, &Mode::Idle, &Mode::Menu, UP, false);
+        ui.menu_opened(9_000);
+        assert!(!ui.booting(), "the menu ends the boot");
+        let intro = ui.menu_intro(9_150);
+        assert!((intro.alpha - 0.5).abs() < 1e-3);
+        let draft = Draft::new(&crate::menu::Settings::default());
+        ui.menu_closed(12_000, Face::PosZ, draft, true);
+        ui.tick(12_000, &Mode::Menu, &Mode::Idle, UP, false);
+        assert!(ui.menu_fade(12_150, Face::PosZ).is_some());
+        assert!(ui.menu_fade(12_150, Face::PosX).is_none());
+        assert!(ui.flash(12_100) > 0.0);
+        assert!(matches!(
+            ui.content(12_500, Face::PosZ, UP, &Mode::Idle, false),
+            FaceContent::Success { .. }
+        ));
+        assert!(matches!(
+            ui.content(12_500, Face::PosX, UP, &Mode::Idle, false),
+            FaceContent::Wake { .. }
+        ));
+        assert!(matches!(
+            ui.content(13_500, Face::PosZ, UP, &Mode::Idle, false),
+            FaceContent::Wake { .. }
+        ));
+    }
+
+    #[test]
+    fn restart_blacks_out_then_boots() {
+        let mut ui = Ui::new();
+        ui.tick(0, &Mode::Idle, &Mode::Idle, UP, false);
+        ui.tick(7_000, &Mode::Idle, &Mode::Idle, UP, false);
+        ui.restart(9_000);
+        ui.tick(9_000, &Mode::Menu, &Mode::Idle, UP, false);
+        assert_eq!(
+            ui.content(9_500, Face::PosX, UP, &Mode::Idle, false),
+            FaceContent::Blank
+        );
+        ui.tick(9_800, &Mode::Idle, &Mode::Idle, UP, false);
+        assert!(matches!(
+            ui.content(9_900, Face::PosX, UP, &Mode::Idle, false),
+            FaceContent::Boot { .. }
+        ));
     }
 
     #[test]

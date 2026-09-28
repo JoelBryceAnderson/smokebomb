@@ -4,14 +4,15 @@
 
 use core::fmt::Write as _;
 
-use heapless::String;
-use libm::{floorf, powf, roundf, sinf};
+use heapless::{String, Vec};
+use libm::{floorf, powf, roundf, sinf, sqrtf};
 use smokebomb_hal::AssetStore;
 use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
 use crate::display::FG;
 use crate::font::{fit_px, Align, Fonts};
 use crate::gfx::{Painter, Style};
+use crate::menu::{short_label, Draft, Page, SETTINGS};
 
 /// The lit area's half-size in canvas units.
 pub const ACTIVE: f32 = 83.0;
@@ -27,6 +28,21 @@ impl<A: AssetStore> Ctx<'_, '_, A> {
     fn text(&mut self, text: &str, x: f32, y: f32, px: u16, style: Style) {
         self.fonts
             .draw(self.assets, self.painter, text, x, y, px, Align::Center, style);
+    }
+
+    fn text_left(&mut self, text: &str, x: f32, y: f32, px: u16, style: Style) {
+        self.fonts
+            .draw(self.assets, self.painter, text, x, y, px, Align::Left, style);
+    }
+
+    /// Draw with the content moved by `(ox, oy)` canvas units (before the
+    /// face's rotation) and scaled about its centre, like the mockup's
+    /// `translate(S/2 + ox, S/2 + oy); rotate(angle); scale(s)`.
+    fn shifted(&mut self, ox: f32, oy: f32, scale: f32, draw: impl FnOnce(&mut Self)) {
+        let base = self.painter.xf;
+        self.painter.xf = base.offset(ox, oy).scaled(scale);
+        draw(self);
+        self.painter.xf = base;
     }
 }
 
@@ -278,6 +294,186 @@ fn draw_pot_tokens<A: AssetStore>(c: &mut Ctx<A>, values: &[u8], value: u8, alph
                 c.painter.stroke_paths(&[&shaft, &head], sz * 0.1, style);
             }
         }
+    }
+}
+
+// ---------- menu (C3, C4) ----------
+
+/// How far menu content slides during a tip, canvas units.
+pub const TIP_SLIDE: f32 = 120.0;
+
+/// One menu page: status bar (setup and battery), title, ▲/▼, the value,
+/// and page dots. `battery` is 0–1.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_menu<A: AssetStore>(
+    c: &mut Ctx<A>,
+    m: &Draft,
+    battery: f32,
+    ox: f32,
+    oy: f32,
+    alpha: f32,
+    scale: f32,
+) {
+    if alpha <= 0.0 {
+        return;
+    }
+    c.shifted(ox, oy, scale, |c| {
+        let status = Style::new(FG, 0.85 * alpha, 0.0);
+        c.text_left(&short_label(m.die, m.count), -66.0, -66.0, 14, status);
+        c.painter.stroke_rect(44.0, -71.0, 20.0, 10.0, 1.5, status);
+        c.painter.fill_rect(64.0, -68.0, 2.0, 4.0, status);
+        c.painter
+            .fill_rect(46.0, -69.0, 16.0 * battery.clamp(0.0, 1.0), 6.0, status);
+
+        c.text(m.page.title(), 0.0, -40.0, 15, Style::new(FG, 0.75 * alpha, 0.0));
+        let arrows = Style::new(FG, 0.55 * alpha, 0.0);
+        let (w, h) = (4.5, 4.0);
+        c.painter
+            .fill_triangle([(0.0, -22.0 - h), (w, -22.0 + h), (-w, -22.0 + h)], arrows);
+        c.painter
+            .fill_triangle([(-w, 46.0 - h), (w, 46.0 - h), (0.0, 46.0 + h)], arrows);
+
+        if m.page == Page::Settings {
+            let (name, value) = SETTINGS[m.setting as usize];
+            c.text(
+                name,
+                0.0,
+                2.0,
+                fit_px(name, 26, 150.0),
+                Style::new(FG, alpha, 10.0),
+            );
+            c.text(
+                value,
+                0.0,
+                27.0,
+                fit_px(value, 18, 150.0),
+                Style::new(FG, 0.72 * alpha, 0.0),
+            );
+        } else {
+            let value = m.value();
+            c.text(
+                &value,
+                0.0,
+                12.0,
+                fit_px(&value, 52, 150.0),
+                Style::new(FG, alpha, 14.0),
+            );
+        }
+
+        let n = Page::ALL.len();
+        for page in Page::ALL {
+            let x = (page.index() as f32 - (n as f32 - 1.0) / 2.0) * 14.0;
+            let a = if page == m.page { 1.0 } else { 0.35 };
+            c.painter
+                .fill_circle(x, 66.0, 3.5, Style::new(FG, a * alpha, 0.0));
+        }
+    });
+}
+
+/// The hold ring: a rounded square just inside the lit area that fills
+/// clockwise from 12 o'clock as a hold progresses (`p`, 0–1). `grow` pushes
+/// it outward as it flashes away.
+pub fn draw_hold_ring<A: AssetStore>(c: &mut Ctx<A>, p: f32, alpha: f32, grow: f32) {
+    if alpha <= 0.0 || p <= 0.0 {
+        return;
+    }
+    let inset = 3.0 - grow;
+    let (x0, x1) = (-ACTIVE + inset, ACTIVE - inset);
+    let (y0, y1) = (x0, x1);
+    let r = 24.0 - inset;
+    // The mockup's dash length assumes circular corners.
+    let total = 4.0 * (x1 - x0 - 2.0 * r) + 2.0 * core::f32::consts::PI * r;
+    let mut path = Path::new(0.0, y0, p * total);
+    path.line(x1 - r, y0);
+    path.quad((x1, y0), (x1, y0 + r));
+    path.line(x1, y1 - r);
+    path.quad((x1, y1), (x1 - r, y1));
+    path.line(x0 + r, y1);
+    path.quad((x0, y1), (x0, y1 - r));
+    path.line(x0, y0 + r);
+    path.quad((x0, y0), (x0 + r, y0));
+    path.line(0.0, y0);
+    c.painter
+        .stroke_polyline(&path.points, 4.0, Style::new(FG, alpha, 4.0));
+}
+
+/// A polyline that stops after `budget` canvas units, for dashed strokes.
+struct Path {
+    points: Vec<(f32, f32), 64>,
+    budget: f32,
+}
+
+impl Path {
+    fn new(x: f32, y: f32, budget: f32) -> Self {
+        let mut points = Vec::new();
+        let _ = points.push((x, y));
+        Self { points, budget }
+    }
+
+    fn line(&mut self, x: f32, y: f32) {
+        if self.budget <= 0.0 {
+            return;
+        }
+        let &(px, py) = self.points.last().unwrap_or(&(x, y));
+        let len = sqrtf((x - px) * (x - px) + (y - py) * (y - py));
+        let (x, y) = if len > self.budget {
+            let k = self.budget / len;
+            (px + (x - px) * k, py + (y - py) * k)
+        } else {
+            (x, y)
+        };
+        self.budget -= len;
+        let _ = self.points.push((x, y));
+    }
+
+    fn quad(&mut self, ctrl: (f32, f32), to: (f32, f32)) {
+        let from = self.points.last().copied().unwrap_or(to);
+        const STEPS: usize = 8;
+        for i in 1..=STEPS {
+            let t = i as f32 / STEPS as f32;
+            let u = 1.0 - t;
+            let x = u * u * from.0 + 2.0 * u * t * ctrl.0 + t * t * to.0;
+            let y = u * u * from.1 + 2.0 * u * t * ctrl.1 + t * t * to.1;
+            self.line(x, y);
+        }
+    }
+}
+
+/// After a save: a check draws itself, then the setup and a nudge to roll.
+/// `t` is seconds since the save.
+pub fn draw_success<A: AssetStore>(c: &mut Ctx<A>, label: &str, t: f32) {
+    let a = (t / 0.15).min(1.0)
+        * if t < 0.9 {
+            1.0
+        } else {
+            (1.0 - (t - 0.9) / 0.35).max(0.0)
+        };
+    if a <= 0.0 {
+        return;
+    }
+    let p = ((t - 0.05) / 0.3).clamp(0.0, 1.0);
+    let (l1, l2) = (sqrtf(200.0), sqrtf(884.0));
+    let d = p * (l1 + l2);
+    let mut check: Vec<(f32, f32), 3> = Vec::new();
+    let _ = check.push((-14.0, -40.0));
+    if d <= l1 {
+        let _ = check.push((-14.0 + 10.0 * d / l1, -40.0 + 10.0 * d / l1));
+    } else {
+        let k = (d - l1) / l2;
+        let _ = check.push((-4.0, -30.0));
+        let _ = check.push((-4.0 + 20.0 * k, -30.0 - 22.0 * k));
+    }
+    c.painter.stroke_polyline(&check, 5.0, Style::new(FG, a, 8.0));
+    c.text(label, 0.0, 6.0, fit_px(label, 50, 150.0), Style::new(FG, a, 14.0));
+    c.text("Ready to roll", 0.0, 48.0, 15, Style::new(FG, a * 0.75, 0.0));
+}
+
+/// The whole-face flash when a setup is saved.
+pub fn draw_flash<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
+    if alpha > 0.0 {
+        // #e8ecf2 at 35%.
+        c.painter
+            .fill_rect(-128.0, -128.0, 256.0, 256.0, Style::new(0xf2, alpha * 0.35, 0.0));
     }
 }
 

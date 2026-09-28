@@ -7,9 +7,13 @@
 //!    │                                       ▼                                      ▼
 //!    └──────────────── timeout / Handled ── Reveal ◀──────────── roll ◀────────────┘
 //!
-//!   Idle/Reveal ── LongPress ──▶ Menu ── LongPress (save) ──▶ Idle
+//!   Idle/Reveal ── LongPress ──▶ Menu ── LongPress (save) / MenuTimeout ──▶ Idle
+//!                                 └──── Shaking / FreeFall (discard) ──▶ Shaking / Airborne
 //!   any ── Docked(true) ──▶ Nest ── Docked(false) ──▶ Idle
 //! ```
+//!
+//! Tips inside the menu don't pass through here: the firmware reads them
+//! from the gyro and applies them to the menu's draft ([`crate::menu`]).
 //!
 //! The machine is pure: it consumes [`Event`]s and returns [`Command`]s for
 //! the firmware to execute, which keeps it unit-testable without hardware.
@@ -18,7 +22,6 @@ use heapless::Vec;
 use smokebomb_hal::HapticEffect;
 use smokebomb_shared::assets::ClipId;
 
-use crate::menu::{MenuInput, MenuPage};
 use crate::motion::Motion;
 
 /// How long a result stays on screen before returning to idle.
@@ -34,7 +37,8 @@ pub enum Mode {
     Reveal {
         since_ms: u64,
     },
-    Menu(MenuPage),
+    /// The setup menu (SIM_SPEC C3).
+    Menu,
     /// On the charging nest.
     Nest,
 }
@@ -47,6 +51,8 @@ pub enum Event {
     /// Touch held for [`crate::MENU_HOLD_MS`].
     LongPress,
     Docked(bool),
+    /// No menu input for [`crate::MENU_IDLE_MS`].
+    MenuTimeout,
     Tick,
 }
 
@@ -56,7 +62,12 @@ pub enum Command {
     StopClip,
     Haptic(HapticEffect),
     Roll,
-    MenuInput(MenuInput),
+    /// Start a menu draft from the current setup.
+    MenuOpen,
+    /// Leave the menu, saving the draft or not.
+    MenuClose {
+        save: bool,
+    },
 }
 
 pub type Commands = Vec<Command, 4>;
@@ -93,26 +104,40 @@ impl StateMachine {
             (Nest, Event::Docked(false)) => Some(Idle),
             (Nest, _) => None,
             (_, Event::Docked(true)) => {
+                if self.mode == Menu {
+                    emit(MenuClose { save: false });
+                }
                 emit(StopClip);
                 Some(Nest)
             }
 
-            // Menu: tap cycles the value, tip (any handling) turns the page,
-            // long-press saves and exits.
-            (Menu(page), Event::Tap) => {
-                emit(MenuInput(crate::menu::MenuInput::Cycle(page)));
-                None
-            }
-            (Menu(page), Event::Motion(Motion::Handled)) => Some(Menu(page.next())),
-            (Menu(_), Event::LongPress) => {
-                emit(Haptic(HapticEffect::Buzz));
+            // Menu: hold again to save; a throw or a timeout discards.
+            (Menu, Event::LongPress) => {
+                emit(MenuClose { save: true });
+                emit(Haptic(HapticEffect::MenuSave));
                 Some(Idle)
             }
-            (Menu(_), _) => None,
+            (Menu, Event::MenuTimeout) => {
+                emit(MenuClose { save: false });
+                Some(Idle)
+            }
+            (Menu, Event::Motion(Motion::Shaking)) => {
+                emit(MenuClose { save: false });
+                emit(PlayClip(ClipId::SmokeShake));
+                emit(Haptic(HapticEffect::Tick));
+                Some(Shaking)
+            }
+            (Menu, Event::Motion(Motion::FreeFall)) => {
+                emit(MenuClose { save: false });
+                emit(PlayClip(ClipId::SmokeThrow));
+                Some(Airborne)
+            }
+            (Menu, _) => None,
             (Idle | Reveal { .. }, Event::LongPress) => {
                 emit(StopClip);
-                emit(Haptic(HapticEffect::Buzz));
-                Some(Menu(MenuPage::first()))
+                emit(Haptic(HapticEffect::MenuOpen));
+                emit(MenuOpen);
+                Some(Menu)
             }
 
             // Roll flow.
@@ -198,12 +223,31 @@ mod tests {
     }
 
     #[test]
-    fn long_press_toggles_menu() {
+    fn hold_opens_the_menu_and_hold_again_saves() {
         let mut sm = StateMachine::new();
-        feed(&mut sm, &[Event::LongPress]);
-        assert!(matches!(sm.mode(), Mode::Menu(_)));
-        feed(&mut sm, &[Event::LongPress]);
+        let cmds = feed(&mut sm, &[Event::LongPress]);
+        assert_eq!(*sm.mode(), Mode::Menu);
+        assert!(cmds.contains(&Command::MenuOpen));
+        assert!(cmds.contains(&Command::Haptic(HapticEffect::MenuOpen)));
+        let cmds = feed(&mut sm, &[Event::Motion(Motion::Handled), Event::LongPress]);
         assert_eq!(*sm.mode(), Mode::Idle);
+        assert!(cmds.contains(&Command::MenuClose { save: true }));
+    }
+
+    #[test]
+    fn a_throw_timeout_or_dock_discards_the_menu() {
+        for (event, mode) in [
+            (Event::Motion(Motion::Shaking), Mode::Shaking),
+            (Event::Motion(Motion::FreeFall), Mode::Airborne),
+            (Event::MenuTimeout, Mode::Idle),
+            (Event::Docked(true), Mode::Nest),
+        ] {
+            let mut sm = StateMachine::new();
+            feed(&mut sm, &[Event::LongPress]);
+            let cmds = feed(&mut sm, &[event]);
+            assert_eq!(*sm.mode(), mode, "{event:?}");
+            assert!(cmds.contains(&Command::MenuClose { save: false }), "{event:?}");
+        }
     }
 
     #[test]

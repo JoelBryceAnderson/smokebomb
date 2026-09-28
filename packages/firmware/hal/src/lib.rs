@@ -105,6 +105,12 @@ pub enum HapticEffect {
     LandingThud,
     MaxCelebration,
     Dud,
+    /// Menu opens: 18 ms on, 40 off, 26 on (SIM_SPEC C8).
+    MenuOpen,
+    /// One tip in the menu: 10 ms.
+    MenuTip,
+    /// Menu saved: 28 ms.
+    MenuSave,
 }
 
 /// DRV2605L LRA driver.

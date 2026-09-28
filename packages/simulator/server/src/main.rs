@@ -10,7 +10,6 @@
 //! <http://localhost:3000>.
 
 mod protocol;
-mod world;
 mod ws;
 
 use std::net::{IpAddr, SocketAddr};
@@ -28,6 +27,7 @@ use tokio::sync::{broadcast, Mutex};
 use tower_http::services::{ServeDir, ServeFile};
 
 use protocol::{Outbound, StatusSnapshot};
+use smokebomb_hal_simulator::world;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -129,6 +129,7 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
     let mut last_mode = String::new();
     let mut last_counter = None;
     let mut last_pose = None;
+    let mut menu_was_open = false;
     let dt = period.as_secs_f64();
 
     loop {
@@ -155,6 +156,18 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
             continue;
         }
 
+        // The menu just opened: turn the held face toward the viewer, as the
+        // person would (the mockup does the same).
+        let menu_front = fw.menu_front();
+        if let (false, Some(face)) = (menu_was_open, menu_front) {
+            state
+                .world
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .snap_to_viewer(face);
+        }
+        menu_was_open = menu_front.is_some();
+
         let (frames, haptics) = {
             let mut s = state.sim.lock();
             let frames = (s.frame_seq != last_seq).then(|| {
@@ -173,7 +186,7 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
             }));
         }
 
-        // "Reveal { since_ms: 123 }" -> "Reveal"; keeps "Menu(DieType)" intact.
+        // "Reveal { since_ms: 123 }" -> "Reveal".
         let mode = format!("{:?}", fw.mode())
             .split(" {")
             .next()
@@ -247,4 +260,150 @@ async fn get_device() -> Json<serde_json::Value> {
         "public_key": hex::encode(key),
         "firmware_version": env!("CARGO_PKG_VERSION"),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::world::World;
+
+    const DT: f64 = 1.0 / 60.0;
+
+    /// The real firmware, fed only by this world's IMU, rolls after a throw.
+    #[test]
+    fn firmware_rolls_from_a_simulated_throw() {
+        use smokebomb_firmware::board;
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let sim = board::SimHandle::new();
+        sim.lock().manual_time_ms = Some(0);
+        let mut fw = board::boot(&sim).unwrap();
+        let mut w = World::new();
+        let mut t = 0.0;
+        let mut tick = |w: &mut World, fw: &mut board::Firmware| {
+            t += DT;
+            let imu = w.step(DT);
+            {
+                let mut s = sim.lock();
+                s.imu_resting = imu;
+                s.manual_time_ms = Some((t * 1000.0) as u64);
+            }
+            fw.tick().unwrap();
+        };
+        for _ in 0..30 {
+            tick(&mut w, &mut fw);
+        }
+        w.start_shake();
+        for _ in 0..30 {
+            tick(&mut w, &mut fw);
+        }
+        w.end_shake(true);
+        for _ in 0..150 {
+            tick(&mut w, &mut fw);
+        }
+        assert!(matches!(fw.mode(), Mode::Reveal { .. }), "{:?}", fw.mode());
+        assert!(fw.last_roll().is_some());
+    }
+
+    /// The firmware on the world model, ticked like `run_firmware` does.
+    struct Rig {
+        sim: board::SimHandle,
+        fw: board::Firmware,
+        world: World,
+        t: f64,
+        menu_was_open: bool,
+    }
+
+    use smokebomb_firmware::board;
+    use smokebomb_hal::Face;
+    use smokebomb_hal_simulator::world::{TipDir, DEFAULT_VIEWER_RIGHT};
+
+    impl Rig {
+        fn new() -> Self {
+            let sim = board::SimHandle::new();
+            sim.lock().manual_time_ms = Some(0);
+            let fw = board::boot(&sim).unwrap();
+            Self {
+                sim,
+                fw,
+                world: World::new(),
+                t: 0.0,
+                menu_was_open: false,
+            }
+        }
+
+        fn run(&mut self, seconds: f64) {
+            for _ in 0..(seconds / DT).round() as usize {
+                self.t += DT;
+                let imu = self.world.step(DT);
+                {
+                    let mut s = self.sim.lock();
+                    s.imu_resting = imu;
+                    s.manual_time_ms = Some((self.t * 1000.0) as u64);
+                }
+                self.fw.tick().unwrap();
+                let front = self.fw.menu_front();
+                if let (false, Some(face)) = (self.menu_was_open, front) {
+                    self.world.snap_to_viewer(face);
+                }
+                self.menu_was_open = front.is_some();
+            }
+        }
+
+        fn hold(&mut self, face: Face) {
+            self.sim.lock().touch_mask = 1 << face.index();
+            self.run(1.0);
+            self.sim.lock().touch_mask = 0;
+            self.run(0.5);
+        }
+
+        fn tip(&mut self, dir: TipDir) {
+            assert!(self.world.tip(dir, DEFAULT_VIEWER_RIGHT));
+            self.run(0.6);
+        }
+    }
+
+    #[test]
+    fn menu_tips_change_the_setup_and_a_hold_saves_it() {
+        use smokebomb_firmware::smokebomb_core::menu::Page;
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+        use smokebomb_shared::DieKind;
+
+        let mut rig = Rig::new();
+        rig.run(7.0); // boot
+                      // Held on a side face that isn't facing the viewer: the die turns it
+                      // round first.
+        rig.hold(Face::NegX);
+        assert_eq!(*rig.fw.mode(), Mode::Menu);
+        assert_eq!(rig.fw.menu_front(), Some(Face::NegX));
+        rig.tip(TipDir::Up);
+        assert_eq!(rig.fw.menu_draft().unwrap().count, 2);
+        rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
+        let draft = *rig.fw.menu_draft().unwrap();
+        assert_eq!((draft.page, draft.die), (Page::Die, DieKind::D12));
+        assert_eq!(rig.fw.settings().die, DieKind::D20, "nothing changes until saved");
+        rig.hold(Face::PosY);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert_eq!(
+            (rig.fw.settings().die, rig.fw.settings().count),
+            (DieKind::D12, 2)
+        );
+    }
+
+    #[test]
+    fn holding_on_restart_restarts_without_saving() {
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Up); // 2 dice, not saved
+        rig.tip(TipDir::Right); // Settings
+        rig.tip(TipDir::Down); // About
+        rig.tip(TipDir::Down); // Restart
+        rig.hold(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(rig.fw.booting());
+        assert_eq!(rig.fw.settings().count, 1);
+    }
 }

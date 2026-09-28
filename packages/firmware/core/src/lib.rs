@@ -20,6 +20,7 @@ pub mod pack;
 pub mod roll;
 pub mod screens;
 pub mod state;
+pub mod tips;
 pub mod ui;
 
 use heapless::Vec;
@@ -33,13 +34,14 @@ use animation::AnimationPlayer;
 use display::Framebuffer;
 use font::Fonts;
 use gfx::{Layer, Painter, Transform};
-use menu::Settings;
+use menu::{Draft, Settings};
 use motion::MotionDetector;
 use orientation::TextOrientation;
 use pack::PackIndex;
 use roll::RollEngine;
 use screens::Ctx;
 use state::{Command, Event, Mode, StateMachine};
+use tips::{Frame, TipDir, TipTracker, TipUpdate};
 use ui::{FaceContent, Ui};
 
 /// Main loop rate. The mockup animates at display rate (~60 Hz); panels
@@ -51,6 +53,20 @@ const UP_FILTER: f32 = 0.25;
 
 /// How long a screen must be held to open the menu (SIM_SPEC C3).
 pub const MENU_HOLD_MS: u64 = 800;
+/// The hold ring appears once a touch is clearly a hold, not a tap.
+pub const HOLD_RING_AFTER_MS: u64 = 220;
+/// The menu closes without saving after this long without a tip.
+pub const MENU_IDLE_MS: u64 = 25_000;
+
+/// The open menu: its draft, which way the person is holding the die, and
+/// the tip being made.
+struct MenuSession {
+    draft: Draft,
+    frame: Frame,
+    tips: TipTracker,
+    last_input: u64,
+    turning: Option<(TipDir, f32)>,
+}
 
 pub struct Firmware<P: Platform> {
     hw: Peripherals<P>,
@@ -70,7 +86,11 @@ pub struct Firmware<P: Platform> {
     up: Option<[f32; 3]>,
     orientation: TextOrientation,
     touch_since: Option<u64>,
+    /// The face a touch started on (the lowest one, if several).
+    touch_face: Face,
     menu_hold_fired: bool,
+    menu: Option<MenuSession>,
+    last_imu_ms: Option<u64>,
     up_face: Face,
     last_roll: Option<SignedRoll>,
     docked: bool,
@@ -98,7 +118,10 @@ impl<P: Platform> Firmware<P> {
             up: None,
             orientation: TextOrientation::new(),
             touch_since: None,
+            touch_face: Face::PosZ,
             menu_hold_fired: false,
+            menu: None,
+            last_imu_ms: None,
             up_face: Face::PosY,
             last_roll: None,
             docked: false,
@@ -129,6 +152,17 @@ impl<P: Platform> Firmware<P> {
         self.ui.booting()
     }
 
+    /// The face the open menu is on, if it's open. The simulator turns this
+    /// face toward the viewer when the menu opens.
+    pub fn menu_front(&self) -> Option<Face> {
+        self.menu.as_ref().map(|m| m.frame.front_face())
+    }
+
+    /// The menu's draft, if it's open.
+    pub fn menu_draft(&self) -> Option<&Draft> {
+        self.menu.as_ref().map(|m| &m.draft)
+    }
+
     /// One pass of the main loop: sample inputs, advance the state machine,
     /// execute its commands, render and present.
     pub fn tick(&mut self) -> HalResult<()> {
@@ -147,6 +181,14 @@ impl<P: Platform> Firmware<P> {
             }
             if let Some(m) = self.motion.update(&sample, now) {
                 let _ = events.push(Event::Motion(m));
+            }
+            let dt = self.last_imu_ms.map_or(0, |t| now - t) as f32 / 1000.0;
+            self.last_imu_ms = Some(now);
+            self.menu_tips(&sample, dt, now)?;
+        }
+        if let Some(m) = &self.menu {
+            if m.turning.is_none() && now - m.last_input >= MENU_IDLE_MS {
+                let _ = events.push(Event::MenuTimeout);
             }
         }
 
@@ -183,24 +225,68 @@ impl<P: Platform> Firmware<P> {
         Ok(())
     }
 
+    /// Feed the gyro to the menu's tip tracker and apply finished tips.
+    fn menu_tips(&mut self, sample: &smokebomb_hal::ImuSample, dt: f32, now: u64) -> HalResult<()> {
+        let Some(m) = &mut self.menu else {
+            return Ok(());
+        };
+        let (armed, update) = m.tips.update(sample.gyro_mdps, dt, now, &m.frame);
+        if armed {
+            // The die is still in front of the person: take the sky from
+            // here (the simulator has just turned the die toward the viewer).
+            let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
+            m.frame = Frame::new(m.frame.front_face(), up);
+        }
+        match update {
+            TipUpdate::Turning { dir, progress } => {
+                if m.turning.is_none() {
+                    self.hw.haptics.play(smokebomb_hal::HapticEffect::MenuTip)?;
+                    m.last_input = now;
+                }
+                m.turning = Some((dir, progress));
+            }
+            TipUpdate::Done(dir) => {
+                m.draft = m.draft.tipped(dir);
+                m.frame = m.frame.after(dir);
+                m.turning = None;
+                m.last_input = now;
+            }
+            TipUpdate::Cancelled => m.turning = None,
+            TipUpdate::None => {}
+        }
+        Ok(())
+    }
+
     /// Returns true when a touch starts.
     fn poll_touch(&mut self, now: u64, events: &mut Vec<Event, 8>) -> HalResult<bool> {
         let mask = self.hw.touch.read()?;
-        // Grip rejection: touches while the die is moving are ignored.
-        let usable = mask != 0 && self.motion.is_still();
+        // Grip rejection: touches while the die is moving are ignored. In
+        // the menu the die is in the hand anyway; only a tip in progress
+        // blocks a hold.
+        let usable = mask != 0
+            && match &self.menu {
+                Some(m) => m.turning.is_none(),
+                None => self.motion.is_still(),
+            };
         let mut started = false;
         match (usable, self.touch_since) {
             (true, None) => {
                 self.touch_since = Some(now);
+                self.touch_face = Face::ALL[mask.trailing_zeros() as usize % Face::ALL.len()];
                 self.menu_hold_fired = false;
                 started = true;
             }
-            (true, Some(since)) if !self.menu_hold_fired && now - since >= MENU_HOLD_MS => {
+            // Held for more than 0.8 s: at 60 Hz that's 49 frames, as in the
+            // mockup, whose float clock never quite reaches 0.8 after 48.
+            (true, Some(since)) if !self.menu_hold_fired && now - since > MENU_HOLD_MS => {
                 self.menu_hold_fired = true;
                 let _ = events.push(Event::LongPress);
             }
             (false, Some(_)) => {
-                if !self.menu_hold_fired {
+                // Letting go after a hold that saved the menu shows the
+                // setup like a tap does (the mockup's pointer-up); letting go
+                // after the hold that opened it doesn't.
+                if !self.menu_hold_fired || self.menu.is_none() {
                     let _ = events.push(Event::Tap);
                 }
                 self.touch_since = None;
@@ -210,7 +296,20 @@ impl<P: Platform> Firmware<P> {
         Ok(started)
     }
 
+    /// How far the current touch is toward a hold (0–1), once the ring shows.
+    fn hold_progress(&self, now: u64) -> Option<f32> {
+        let since = self.touch_since?;
+        let held = now - since;
+        let ring = !self.menu_hold_fired
+            && held > HOLD_RING_AFTER_MS
+            && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. } | Mode::Menu);
+        ring.then(|| {
+            ((held - HOLD_RING_AFTER_MS) as f32 / (MENU_HOLD_MS - HOLD_RING_AFTER_MS) as f32).min(1.0)
+        })
+    }
+
     fn execute(&mut self, cmd: Command) -> HalResult<()> {
+        let now = self.hw.clock.now_ms();
         match cmd {
             Command::PlayClip(clip) => self.player.play(clip),
             Command::StopClip => self.player.stop(),
@@ -235,7 +334,31 @@ impl<P: Platform> Firmware<P> {
                 }
                 self.last_roll = Some(signed);
             }
-            Command::MenuInput(input) => self.settings.apply(input),
+            Command::MenuOpen => {
+                let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
+                self.menu = Some(MenuSession {
+                    draft: Draft::new(&self.settings),
+                    frame: Frame::new(self.touch_face, up),
+                    // Starts disarmed: tips count once the die is still.
+                    tips: TipTracker::new(),
+                    last_input: now,
+                    turning: None,
+                });
+                self.ui.menu_opened(now);
+            }
+            Command::MenuClose { save } => {
+                if let Some(m) = self.menu.take() {
+                    if save && m.draft.restart_selected() {
+                        self.player.stop();
+                        self.ui.restart(now);
+                    } else {
+                        if save {
+                            m.draft.commit(&mut self.settings);
+                        }
+                        self.ui.menu_closed(now, m.frame.front_face(), m.draft, save);
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -244,6 +367,8 @@ impl<P: Platform> Firmware<P> {
         let mode = *self.sm.mode();
         let up = self.up_face;
         let label = screens::setup_label(self.settings.die, self.settings.count);
+        let battery = self.hw.power.battery()?.percent;
+        let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
         let Self {
             frames,
             layer,
@@ -252,14 +377,18 @@ impl<P: Platform> Firmware<P> {
             ui,
             orientation,
             last_roll,
-            settings,
+            menu,
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
+        let blackout = ui.blackout();
 
         for face in Face::ALL {
             let fb = &mut frames[face.index()];
             fb.clear();
+            if blackout {
+                continue;
+            }
             let content = ui.content(now, face, up, &mode, record.is_some());
             let rot = orientation.quarter(face);
             let mut painter = Painter::new(fb, layer, Transform::quarter(rot));
@@ -268,6 +397,32 @@ impl<P: Platform> Firmware<P> {
                 fonts,
                 assets: &mut hw.assets,
             };
+
+            // Under the content: the save flash (not on the face-down
+            // screen, H2), the closed menu fading, and the hold ring.
+            if face != up.opposite() {
+                screens::draw_flash(&mut c, ui.flash(now));
+            }
+            if let Some((draft, u)) = ui.menu_fade(now, face) {
+                screens::draw_menu(
+                    &mut c,
+                    &draft,
+                    battery as f32 / 100.0,
+                    0.0,
+                    0.0,
+                    1.0 - u,
+                    1.0 + 0.12 * u,
+                );
+                screens::draw_hold_ring(&mut c, 1.0, 1.0 - u, u * 3.0);
+            }
+            if menu.is_none() {
+                if let Some((f, p)) = hold {
+                    if f == face {
+                        screens::draw_hold_ring(&mut c, p, 1.0, 0.0);
+                    }
+                }
+            }
+
             match content {
                 FaceContent::Blank => {}
                 FaceContent::Boot { t, top } => screens::draw_boot(&mut c, face.index(), top, t),
@@ -277,17 +432,19 @@ impl<P: Platform> Firmware<P> {
                         screens::draw_result(&mut c, r, display::FG, alpha);
                     }
                 }
-                // Placeholders until the menu and Nest screens are built.
-                FaceContent::Menu if face == up => {
-                    if let Mode::Menu(page) = mode {
-                        menu::render(fb_of(&mut painter), page, settings, rot);
+                FaceContent::Success { t, die, count } => {
+                    screens::draw_success(&mut c, &screens::setup_label(die, count), t);
+                }
+                FaceContent::Menu => {
+                    if let Some(m) = menu {
+                        draw_menu_face(&mut c, m, ui, face, now, battery, hold.map(|(_, p)| p));
                     }
                 }
+                // Placeholder until the Nest screens are built.
                 FaceContent::Nest if face == up => {
-                    let pct = hw.power.battery()?.percent;
-                    fb_of(&mut painter).draw_number(pct as u16, 6, display::FG, rot);
+                    fb_of(&mut painter).draw_number(battery as u16, 6, display::FG, rot);
                 }
-                FaceContent::Menu | FaceContent::Nest => {}
+                FaceContent::Nest => {}
             }
         }
 
@@ -301,6 +458,43 @@ impl<P: Platform> Firmware<P> {
             self.hw.display.write_frame(face, &self.panel)?;
         }
         self.hw.display.flush()
+    }
+}
+
+/// One face while the menu is open (C3). The menu shows on the front face;
+/// during a tip the old page slides off against the turn and fades while
+/// the new one slides in from the leading edge of the face coming round.
+fn draw_menu_face<A: smokebomb_hal::AssetStore>(
+    c: &mut Ctx<A>,
+    m: &MenuSession,
+    ui: &Ui,
+    face: Face,
+    now: u64,
+    battery: u8,
+    hold: Option<f32>,
+) {
+    let battery = battery as f32 / 100.0;
+    let front = m.frame.front_face();
+    if let Some((dir, u)) = m.turning {
+        let (mx, my) = m.frame.motion_dir(face, dir);
+        let d = screens::TIP_SLIDE;
+        if face == front {
+            screens::draw_menu(c, &m.draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
+        }
+        if face == m.frame.next_front(dir) {
+            let next = m.draft.tipped(dir);
+            let (ox, oy) = (mx * (1.0 - u) * d, my * (1.0 - u) * d);
+            screens::draw_menu(c, &next, battery, ox, oy, u, 1.0);
+        }
+        return;
+    }
+    if face == front {
+        let intro = ui.menu_intro(now);
+        screens::draw_hold_ring(c, 1.0, intro.ring_alpha, intro.ring_grow);
+        screens::draw_menu(c, &m.draft, battery, 0.0, 0.0, intro.alpha, intro.scale);
+        if let Some(p) = hold {
+            screens::draw_hold_ring(c, p, 1.0, 0.0);
+        }
     }
 }
 
