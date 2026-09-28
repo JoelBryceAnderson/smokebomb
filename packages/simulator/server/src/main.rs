@@ -158,7 +158,7 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
         let mut status = state.status.lock().await;
         status.mode = mode;
         let s = fw.settings();
-        status.die_sides = s.die.sides();
+        status.die = s.die.wire_name();
         status.die_count = s.count;
         if let Some(roll) = roll {
             status.last_roll = Some((&roll).into());

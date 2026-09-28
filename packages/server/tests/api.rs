@@ -91,7 +91,7 @@ async fn register_device_and_verify_simulated_rolls() {
         "device_serial": serial,
         "counter": roll.record.counter,
         "uptime_ms": roll.record.uptime_ms,
-        "die_sides": 20,
+        "die": "d20",
         "values": roll.record.values.to_vec(),
         "prev_hash": hex::encode(roll.record.prev_hash),
         "signature": hex::encode(roll.signature),
@@ -107,4 +107,38 @@ async fn register_device_and_verify_simulated_rolls() {
     body["values"] = json!([20, 20]);
     let (_, res) = call(&app, "POST", "/v1/rolls/verify", Some(body)).await;
     assert_eq!(res["valid"], false, "{res}");
+
+    // Pass the Pot: signed as raw d6 values, chained to the previous roll.
+    let pot = engine
+        .roll(
+            &mut SimRng,
+            &mut se,
+            smokebomb_shared::DieKind::PassThePot,
+            3,
+            2_000,
+        )
+        .unwrap();
+    let mut body = json!({
+        "device_serial": serial,
+        "counter": pot.record.counter,
+        "uptime_ms": pot.record.uptime_ms,
+        "die": "pass_the_pot",
+        "values": pot.record.values.to_vec(),
+        "prev_hash": hex::encode(pot.record.prev_hash),
+        "signature": hex::encode(pot.signature),
+    });
+    let (status, res) = call(&app, "POST", "/v1/rolls/verify", Some(body.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["valid"], true, "{res}");
+
+    // The same bytes claimed as a d6 roll no longer match the signature.
+    body["die"] = json!("d6");
+    let (_, res) = call(&app, "POST", "/v1/rolls/verify", Some(body.clone())).await;
+    assert_eq!(res["valid"], false, "{res}");
+
+    // Pass the Pot allows at most three dice.
+    body["die"] = json!("pass_the_pot");
+    body["values"] = json!([1, 2, 3, 4]);
+    let (status, _) = call(&app, "POST", "/v1/rolls/verify", Some(body)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

@@ -12,4 +12,4 @@ pub mod roll;
 pub mod types;
 
 pub use roll::{RollRecord, SignedRoll};
-pub use types::{DeviceSerial, DieKind, Face, SessionId};
+pub use types::{DeviceSerial, DieKind, Face, PotFace, SessionId};

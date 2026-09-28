@@ -20,7 +20,9 @@ pub struct SignedRollBody {
     pub session: Option<String>,
     pub counter: u32,
     pub uptime_ms: u64,
-    pub die_sides: u8,
+    /// `d4` … `d100` or `pass_the_pot`.
+    pub die: String,
+    /// Raw values in `1..=sides` (d6 values for Pass the Pot).
     pub values: Vec<u8>,
     pub prev_hash: String,
     pub signature: String,
@@ -28,8 +30,15 @@ pub struct SignedRollBody {
 
 impl SignedRollBody {
     fn record(&self) -> ApiResult<RollRecord> {
-        let die = DieKind::from_sides(self.die_sides)
-            .ok_or_else(|| ApiError::BadRequest(format!("unsupported die d{}", self.die_sides)))?;
+        let die = DieKind::from_wire(&self.die)
+            .ok_or_else(|| ApiError::BadRequest(format!("unsupported die {:?}", self.die)))?;
+        if self.values.is_empty() || self.values.len() > die.max_count() {
+            return Err(ApiError::BadRequest(format!(
+                "{} takes 1 to {} dice",
+                die.wire_name(),
+                die.max_count()
+            )));
+        }
         if self.values.iter().any(|&v| v == 0 || v > die.sides()) {
             return Err(ApiError::BadRequest("value out of range for die".into()));
         }
@@ -122,7 +131,7 @@ pub async fn submit(Json(_body): Json<SignedRollBody>) -> ApiResult<Json<RollVie
 #[derive(Debug, Serialize)]
 pub struct RollView {
     pub counter: i64,
-    pub die_sides: i16,
+    pub die: String,
     pub values: Vec<i16>,
     pub digest: String,
     pub received_at: DateTime<Utc>,
@@ -151,7 +160,7 @@ pub async fn list_for_device(
             .into_iter()
             .map(|r| RollView {
                 counter: r.counter,
-                die_sides: r.die_sides,
+                die: r.die,
                 values: r.dice,
                 digest: hex::encode(r.digest),
                 received_at: r.received_at,

@@ -35,7 +35,7 @@ impl RollEngine {
         count: u8,
         uptime_ms: u64,
     ) -> HalResult<SignedRoll> {
-        let count = (count as usize).clamp(1, MAX_DICE);
+        let count = (count as usize).clamp(1, die.max_count());
         let mut values: Vec<u8, MAX_DICE> = Vec::new();
         for _ in 0..count {
             let _ = values.push(uniform(rng, die.sides())?);

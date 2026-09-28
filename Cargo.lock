@@ -1566,6 +1566,7 @@ name = "smokebomb-core"
 version = "0.1.0"
 dependencies = [
  "heapless",
+ "libm",
  "p256",
  "smokebomb-hal",
  "smokebomb-hal-simulator",

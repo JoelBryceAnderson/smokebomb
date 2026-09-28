@@ -46,7 +46,7 @@ pub struct RollView {
     pub device_serial: String,
     pub counter: u32,
     pub uptime_ms: u64,
-    pub die_sides: u8,
+    pub die: &'static str,
     pub values: Vec<u8>,
     pub total: u16,
     pub digest: String,
@@ -60,7 +60,7 @@ impl From<&SignedRoll> for RollView {
             device_serial: hex::encode(r.record.device.0),
             counter: r.record.counter,
             uptime_ms: r.record.uptime_ms,
-            die_sides: r.record.die.sides(),
+            die: r.record.die.wire_name(),
             values: r.record.values.to_vec(),
             total: r.record.total(),
             digest: hex::encode(r.record.digest()),
@@ -73,7 +73,7 @@ impl From<&SignedRoll> for RollView {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct StatusSnapshot {
     pub mode: String,
-    pub die_sides: u8,
+    pub die: &'static str,
     pub die_count: u8,
     pub last_roll: Option<RollView>,
 }

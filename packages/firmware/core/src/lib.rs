@@ -13,12 +13,14 @@ pub mod animation;
 pub mod display;
 pub mod menu;
 pub mod motion;
+pub mod orientation;
 pub mod roll;
 pub mod state;
 
 use heapless::Vec;
 use smokebomb_hal::{
-    Ble, Clock, Display, Face, HalResult, Haptics, Imu, Peripherals, Platform, Power, Touch,
+    Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Peripherals, Platform, Power, Touch,
+    FRAME_BYTES,
 };
 use smokebomb_shared::{DieKind, SignedRoll};
 
@@ -26,11 +28,16 @@ use animation::AnimationPlayer;
 use display::Framebuffer;
 use menu::Settings;
 use motion::MotionDetector;
+use orientation::TextOrientation;
 use roll::RollEngine;
 use state::{Command, Event, Mode, StateMachine};
 
-/// Main loop rate. Animation clips are authored at 30 fps.
-pub const TICK_HZ: u32 = 30;
+/// Main loop rate. The mockup animates at display rate (~60 Hz); panels
+/// accept at most 100 Hz (SIM_SPEC B1).
+pub const TICK_HZ: u32 = 60;
+
+/// Low-pass factor for the gravity estimate, per tick.
+const UP_FILTER: f32 = 0.25;
 
 /// How long a face must be held to open the menu.
 pub const MENU_HOLD_MS: u64 = 1_500;
@@ -43,6 +50,11 @@ pub struct Firmware<P: Platform> {
     roller: RollEngine,
     player: AnimationPlayer,
     frames: [Framebuffer; smokebomb_hal::FACE_COUNT],
+    /// Packed 4bpp scratch for the panel and for streaming assets.
+    panel: FrameBytes,
+    /// Filtered gravity-up direction in die coordinates (milli-g).
+    up: [f32; 3],
+    orientation: TextOrientation,
     touch_since: Option<u64>,
     menu_hold_fired: bool,
     up_face: Face,
@@ -63,6 +75,9 @@ impl<P: Platform> Firmware<P> {
             roller,
             player,
             frames: [Framebuffer::new(); smokebomb_hal::FACE_COUNT],
+            panel: [0; FRAME_BYTES],
+            up: [0.0, 0.0, 1000.0],
+            orientation: TextOrientation::new(),
             touch_since: None,
             menu_hold_fired: false,
             up_face: Face::PosZ,
@@ -87,6 +102,10 @@ impl<P: Platform> Firmware<P> {
         &self.frames
     }
 
+    pub fn orientation(&self) -> &TextOrientation {
+        &self.orientation
+    }
+
     /// One pass of the main loop: sample inputs, advance the state machine,
     /// execute its commands, render and present.
     pub fn tick(&mut self) -> HalResult<()> {
@@ -94,6 +113,11 @@ impl<P: Platform> Firmware<P> {
         let mut events: Vec<Event, 8> = Vec::new();
 
         if let Some(sample) = self.hw.imu.read()? {
+            let raw = orientation::up_from(&sample);
+            for (u, r) in self.up.iter_mut().zip(raw) {
+                *u += (r - *u) * UP_FILTER;
+            }
+            self.orientation.update(self.up);
             if let Some(face) = motion::up_face(&sample) {
                 self.up_face = face;
             }
@@ -183,7 +207,9 @@ impl<P: Platform> Firmware<P> {
     }
 
     fn render(&mut self, now: u64) -> HalResult<()> {
-        let animating = self.player.render(&mut self.hw.assets, &mut self.frames, now)?;
+        let animating = self
+            .player
+            .render(&mut self.hw.assets, &mut self.frames, &mut self.panel, now)?;
         if !animating {
             for fb in self.frames.iter_mut() {
                 fb.clear();
@@ -191,29 +217,40 @@ impl<P: Platform> Firmware<P> {
             match self.sm.mode() {
                 Mode::Reveal { .. } => {
                     if let Some(roll) = &self.last_roll {
-                        display::draw_result(&mut self.frames, self.up_face, &roll.record);
+                        display::draw_result(&mut self.frames, &self.orientation, self.up_face, &roll.record);
                     }
                 }
                 Mode::Menu(page) => {
-                    menu::render(&mut self.frames[self.up_face.index()], *page, &self.settings)
+                    let face = self.up_face;
+                    menu::render(
+                        &mut self.frames[face.index()],
+                        *page,
+                        &self.settings,
+                        self.orientation.quarter(face),
+                    )
                 }
                 Mode::Nest => {
                     // TODO: analog clock + pixel shifting for burn-in mitigation.
                     let pct = self.hw.power.battery()?.percent;
-                    self.frames[self.up_face.index()].draw_number(pct as u16, 6);
+                    let face = self.up_face;
+                    let rot = self.orientation.quarter(face);
+                    self.frames[face.index()].draw_number(pct as u16, 6, display::FG, rot);
                 }
                 _ => {}
             }
         }
         for face in Face::ALL {
-            self.hw
-                .display
-                .write_frame(face, self.frames[face.index()].bytes())?;
+            self.frames[face.index()].quantize(&mut self.panel);
+            self.hw.display.write_frame(face, &self.panel)?;
         }
         self.hw.display.flush()
     }
 }
 
+/// Every die shows its top value (N > 2); Pass the Pot has no max (SIM_SPEC C6).
 fn is_max(roll: &SignedRoll, die: DieKind) -> bool {
-    !roll.record.values.is_empty() && roll.record.values.iter().all(|&v| v == die.sides())
+    die.is_numeric()
+        && die.sides() > 2
+        && !roll.record.values.is_empty()
+        && roll.record.values.iter().all(|&v| v == die.sides())
 }

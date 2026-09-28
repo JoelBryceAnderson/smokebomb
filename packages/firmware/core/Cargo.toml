@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 heapless.workspace = true
+libm.workspace = true
 smokebomb-hal.workspace = true
 smokebomb-shared.workspace = true
 

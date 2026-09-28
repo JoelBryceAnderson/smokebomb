@@ -5,7 +5,7 @@
 //! [`smokebomb_shared::assets`] for the pack layout.
 
 use heapless::Vec;
-use smokebomb_hal::{AssetStore, Face, HalResult, FACE_COUNT};
+use smokebomb_hal::{AssetStore, Face, FrameBytes, HalResult, FACE_COUNT};
 use smokebomb_shared::assets::{ClipEntry, ClipId, PackHeader, CLIP_ENTRY_LEN, HEADER_LEN, PACK_VERSION};
 
 use crate::display::Framebuffer;
@@ -68,6 +68,7 @@ impl AnimationPlayer {
         &mut self,
         assets: &mut A,
         frames: &mut [Framebuffer; FACE_COUNT],
+        scratch: &mut FrameBytes,
         now_ms: u64,
     ) -> HalResult<bool> {
         let Some(p) = self.playing.as_mut() else {
@@ -86,8 +87,8 @@ impl AnimationPlayer {
         }
         let base = p.clip.frame_offset(frame as u16);
         for face in Face::ALL {
-            let fb = frames[face.index()].bytes_mut();
-            assets.read(base + (face.index() * fb.len()) as u32, fb)?;
+            assets.read(base + (face.index() * scratch.len()) as u32, scratch)?;
+            frames[face.index()].load_packed(scratch);
         }
         Ok(true)
     }
