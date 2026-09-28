@@ -630,7 +630,9 @@ fn menu_settings_match_the_mockup() {
         times.push((10.1 + 0.5 * i as f64 + 0.45, name));
     }
     let mut inputs: Vec<(f64, Input)> = vec![
-        (8.2, Run::press),
+        // Open by 8.97 s, so the die has turned to the viewer and held still
+        // (0.5 s in all) before the first tip at 9.5 s.
+        (8.1, Run::press),
         (9.3, Run::release),
         (9.5, |r| r.tip(TipDir::Right)),
     ];

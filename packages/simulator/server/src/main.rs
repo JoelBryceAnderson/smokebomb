@@ -460,6 +460,54 @@ mod tests {
         assert_eq!(shown, live);
     }
 
+    /// Tips in quick succession, each starting the moment the last one
+    /// ends (and the first straight after the menu turns to the viewer):
+    /// every one counts, and the page is always on the face in front.
+    #[test]
+    fn quick_tips_in_a_row_keep_the_page_in_front() {
+        let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
+        let dirs = [
+            TipDir::Left,
+            TipDir::Up,
+            TipDir::Left,
+            TipDir::Down,
+            TipDir::Right,
+            TipDir::Up,
+            TipDir::Up,
+            TipDir::Left,
+            TipDir::Down,
+            TipDir::Right,
+        ];
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Hold +Z, and tip as soon as the die can move after the snap.
+        rig.sim.lock().touch_mask = 1 << Face::PosZ.index();
+        while rig.fw.menu_front().is_none() {
+            rig.run(DT);
+        }
+        rig.sim.lock().touch_mask = 0;
+        let mut expected = *rig.fw.menu_draft().unwrap();
+        for dir in dirs {
+            while !rig.world.tip(dir, DEFAULT_VIEWER_RIGHT) {
+                rig.run(DT);
+            }
+            expected = expected.tipped(match dir {
+                TipDir::Up => smokebomb_firmware::smokebomb_core::tips::TipDir::Up,
+                TipDir::Down => smokebomb_firmware::smokebomb_core::tips::TipDir::Down,
+                TipDir::Left => smokebomb_firmware::smokebomb_core::tips::TipDir::Left,
+                TipDir::Right => smokebomb_firmware::smokebomb_core::tips::TipDir::Right,
+            });
+        }
+        rig.run(1.0);
+        let front = rig.fw.menu_front().unwrap();
+        let n = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(front);
+        assert!(
+            n.dot(toward_viewer) > 0.99,
+            "the page is on {front:?}, which isn't in front"
+        );
+        assert_eq!(*rig.fw.menu_draft().unwrap(), expected);
+    }
+
     /// The screen coming round in a tip reads the right way up from the
     /// start: its orientation doesn't change during the tip, and matches the
     /// die's own orientation for that face once it's in front.
