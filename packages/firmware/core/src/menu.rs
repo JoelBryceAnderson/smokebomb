@@ -3,7 +3,7 @@
 //! Hold any screen to open the menu there. Tipping the die moves through it:
 //! left and right turn the page, up and down change the value (on the
 //! Settings page, up and down pick the item). A tap changes the selected
-//! Settings item, or restarts the die on Restart. Everything happens on a
+//! Settings item, or powers the die off on Power off. Everything happens on a
 //! [`Draft`]; a hold always saves it and returns to the roll, and a throw,
 //! docking or 25 s without input leaves the setup as it was.
 
@@ -15,7 +15,7 @@ use smokebomb_shared::DieKind;
 use crate::tips::TipDir;
 
 /// One row of the Settings page. A tap steps `options`; a row without any is
-/// display-only (or, for [`RESTART`], an action).
+/// display-only (or, for [`POWER_OFF`], an action).
 pub struct Item {
     pub name: &'static str,
     /// The values a tap cycles through, or the single text a fixed row shows.
@@ -55,14 +55,14 @@ pub const SETTINGS: [Item; 11] = [
     Item::choice("Bluetooth", &["Off", "On"], 1),
     Item::choice("Verified rolls", &["Off", "On"], 0),
     Item::fixed("Owner", &["Joel"]),
-    Item::fixed("Restart", &["Tap to restart"]),
+    Item::fixed("Power off", &["Tap to power off"]),
     Item::fixed("About", &["v0.1.0 · SB-0042"]),
 ];
 
 const BRIGHTNESS: usize = 0;
 const HAPTICS: usize = 1;
 const BLUETOOTH: usize = 6;
-const RESTART: u8 = 9;
+const POWER_OFF: u8 = 9;
 
 /// The chosen option of every Settings item.
 pub type Choices = [u8; SETTINGS.len()];
@@ -198,9 +198,9 @@ impl Draft {
         (0..steps.unsigned_abs()).fold(self, |m, _| m.tipped(d))
     }
 
-    /// A tap on this draft restarts the die.
-    pub fn restart_selected(&self) -> bool {
-        self.page == Page::Settings && self.setting == RESTART
+    /// A tap on this draft powers the die off.
+    pub fn power_off_selected(&self) -> bool {
+        self.page == Page::Settings && self.setting == POWER_OFF
     }
 
     /// The draft after a tap: the selected Settings item moves to its next
@@ -314,14 +314,14 @@ mod tests {
     }
 
     #[test]
-    fn restart_is_the_tenth_setting() {
+    fn power_off_is_the_tenth_setting() {
         let mut d = draft().tipped(TipDir::Right);
         for _ in 0..9 {
-            assert!(!d.restart_selected());
+            assert!(!d.power_off_selected());
             d = d.tipped(TipDir::Up);
         }
-        assert_eq!(d.setting().0, "Restart");
-        assert!(d.restart_selected());
+        assert_eq!(d.setting().0, "Power off");
+        assert!(d.power_off_selected());
     }
 
     #[test]
@@ -353,7 +353,7 @@ mod tests {
         assert_eq!(d.tapped(), d);
         assert_eq!(d.tipped(TipDir::Left).tapped(), d.tipped(TipDir::Left));
         let mut d = draft().tipped(TipDir::Right);
-        for name in ["Owner", "Restart", "About"] {
+        for name in ["Owner", "Power off", "About"] {
             while d.setting().0 != name {
                 d = d.tipped(TipDir::Up);
             }

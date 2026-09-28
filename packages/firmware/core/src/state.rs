@@ -8,7 +8,8 @@
 //!    └──────────────── timeout / Handled ── Reveal ◀──────────── roll ◀────────────┘
 //!
 //!   Idle/Reveal ── LongPress ──▶ Menu ── LongPress (save) / MenuTimeout ──▶ Idle
-//!                                 ├──── Tap: change the setting / Restart ──▶ Menu / Idle
+//!                                 ├──── Tap: change the setting / Power off ──▶ Menu / Off
+//!   Off ── Tap ──▶ Idle (boot)
 //!                                 └──── Shaking / FreeFall (discard) ──▶ Shaking / Airborne
 //!   any ── Docked(true) ──▶ Nest ── Docked(false) ──▶ Idle
 //! ```
@@ -39,6 +40,9 @@ pub enum Mode {
     },
     /// The setup menu (SIM_SPEC C3).
     Menu,
+    /// Powered off: dark until a tap. There is no power switch, so this is
+    /// as off as the die gets.
+    Off,
     /// On the charging nest.
     Nest,
 }
@@ -50,8 +54,8 @@ pub enum Event {
     Tap,
     /// Touch held for [`crate::MENU_HOLD_MS`].
     LongPress,
-    /// A tap in the menu while Restart is selected.
-    Restart,
+    /// A tap in the menu while Power off is selected.
+    PowerOff,
     Docked(bool),
     /// No menu input for [`crate::MENU_IDLE_MS`].
     MenuTimeout,
@@ -70,8 +74,10 @@ pub enum Command {
     },
     /// A tap in the menu: change the selected setting.
     MenuTap,
-    /// Leave the menu without saving and restart the die.
-    MenuRestart,
+    /// Leave the menu without saving and power the die off.
+    MenuPowerOff,
+    /// A tap while off: the screens light and the die boots.
+    WakeUp,
 }
 
 pub type Commands = Vec<Command, 4>;
@@ -107,6 +113,10 @@ impl StateMachine {
         let next = match (self.mode, event) {
             (Nest, Event::Docked(false)) => Some(Idle),
             (Nest, _) => None,
+            (Off, Event::Tap) => {
+                emit(WakeUp);
+                Some(Idle)
+            }
             (_, Event::Docked(true)) => {
                 if self.mode == Menu {
                     emit(MenuClose { save: false });
@@ -124,9 +134,9 @@ impl StateMachine {
                 emit(MenuTap);
                 None
             }
-            (Menu, Event::Restart) => {
-                emit(MenuRestart);
-                Some(Idle)
+            (Menu, Event::PowerOff) => {
+                emit(MenuPowerOff);
+                Some(Off)
             }
             (Menu, Event::MenuTimeout) => {
                 emit(MenuClose { save: false });
@@ -242,13 +252,40 @@ mod tests {
     }
 
     #[test]
-    fn restart_leaves_the_menu_without_saving() {
+    fn power_off_leaves_the_menu_without_saving() {
         let mut sm = StateMachine::new();
         feed(&mut sm, &[Event::LongPress]);
-        let cmds = feed(&mut sm, &[Event::Restart]);
-        assert_eq!(*sm.mode(), Mode::Idle);
-        assert!(cmds.contains(&Command::MenuRestart));
+        let cmds = feed(&mut sm, &[Event::PowerOff]);
+        assert_eq!(*sm.mode(), Mode::Off);
+        assert!(cmds.contains(&Command::MenuPowerOff));
         assert!(!cmds.iter().any(|c| matches!(c, Command::MenuClose { .. })));
+    }
+
+    #[test]
+    fn only_a_tap_wakes_a_powered_off_die() {
+        let mut sm = StateMachine::new();
+        feed(&mut sm, &[Event::LongPress, Event::PowerOff]);
+        let cmds = feed(
+            &mut sm,
+            &[
+                Event::Motion(Motion::Handled),
+                Event::Motion(Motion::Shaking),
+                Event::LongPress,
+                Event::Tick,
+            ],
+        );
+        assert_eq!(*sm.mode(), Mode::Off, "motion and holds don't wake it");
+        assert!(cmds.is_empty());
+        let cmds = feed(&mut sm, &[Event::Tap]);
+        assert_eq!(*sm.mode(), Mode::Idle);
+        assert!(cmds.contains(&Command::WakeUp));
+    }
+
+    #[test]
+    fn docking_a_powered_off_die_shows_the_nest() {
+        let mut sm = StateMachine::new();
+        feed(&mut sm, &[Event::LongPress, Event::PowerOff, Event::Docked(true)]);
+        assert_eq!(*sm.mode(), Mode::Nest);
     }
 
     #[test]

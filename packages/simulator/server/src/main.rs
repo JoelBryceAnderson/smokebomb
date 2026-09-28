@@ -654,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn tapping_restart_restarts_without_saving() {
+    fn tapping_power_off_darkens_the_die_and_a_tap_boots_it() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
         let mut rig = Rig::new();
@@ -663,11 +663,20 @@ mod tests {
         rig.tip(TipDir::Up); // 2 dice, not saved
         rig.tip(TipDir::Right); // Settings
         rig.tip(TipDir::Down); // About
-        rig.tip(TipDir::Down); // Restart
+        rig.tip(TipDir::Down); // Power off
         rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+        assert!(!rig.sim.lock().display_on);
+        assert_eq!(rig.fw.settings().count, 1, "not saved");
+        // Stays dark, ignoring a long wait.
+        rig.run(30.0);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+        assert!(rig.sim.lock().faces.iter().all(|f| f.iter().all(|b| *b == 0)));
+        // A tap boots straight away.
+        rig.tap(Face::PosY);
         assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(rig.sim.lock().display_on);
         assert!(rig.fw.booting());
-        assert_eq!(rig.fw.settings().count, 1);
     }
 
     #[test]
@@ -688,7 +697,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hold_on_restart_saves_and_returns_like_anywhere_else() {
+    fn a_hold_on_power_off_saves_and_returns_like_anywhere_else() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
         let mut rig = Rig::new();
@@ -697,10 +706,10 @@ mod tests {
         rig.tip(TipDir::Up); // 2 dice
         rig.tip(TipDir::Right); // Settings
         rig.tip(TipDir::Down); // About
-        rig.tip(TipDir::Down); // Restart
+        rig.tip(TipDir::Down); // Power off
         rig.hold(Face::PosZ);
         assert_eq!(*rig.fw.mode(), Mode::Idle);
-        assert!(!rig.fw.booting(), "no restart");
+        assert!(!rig.fw.booting(), "still on");
         assert_eq!(rig.fw.settings().count, 2, "saved");
     }
 }

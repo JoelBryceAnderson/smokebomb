@@ -171,14 +171,14 @@ The face touching the table is dark:
 ## Part C: States and behavior
 
 Order of precedence each frame, per face:
-1. Restart blackout.
+1. Power-off blackout (the mockup's Restart blackout).
 2. Landing flash overlay.
 3. Menu close fade.
 4. Hold ring.
 5. **Boot**, **docked**, **menu**, **result**, **success** or **wake label**, whichever applies, in that order.
 6. Smoke and particles drawn on top, additively.
 
-### C1. Boot (power-on or Restart only; never on wake)
+### C1. Boot (power-on or after Power off only; never on wake)
 - **Pips:** center-to-corner offset **38.2 canvas (22.1 px)**, pip radius **12.45 canvas (7.2 px)**.
 - **Slot order** (each value keeps existing pips sliding and grows or shrinks the rest):
 
@@ -258,7 +258,7 @@ The boot is interrupted by a throw or by opening the menu.
 |---|---|---|
 | 0 | How many dice | 1–10 (1–3 for Pass the Pot) |
 | 1 | Which die | d4, d6, d8, d10, d12, d20, d100, Pass the Pot |
-| 2 | Settings | Brightness 70%; Haptics Strong; Smoke Full; Large text Off; Sleep after 2 min; Night mode Auto; Bluetooth On; Verified rolls Off; Owner "Joel"; Restart "Tap to restart"; About "v0.1.0 · SB-0042". **Decided (H11):** a tap steps the selected item to its next value (see the options below); Owner, Restart and About aren't editable. |
+| 2 | Settings | Brightness 70%; Haptics Strong; Smoke Full; Large text Off; Sleep after 2 min; Night mode Auto; Bluetooth On; Verified rolls Off; Owner "Joel"; Power off "Tap to power off"; About "v0.1.0 · SB-0042". **Decided (H11):** a tap steps the selected item to its next value (see the options below); Owner, Power off and About aren't editable. |
 
 Choosing Pass the Pot while the count is above 3 clamps the count to 3.
 
@@ -303,7 +303,7 @@ Mockup input: a swipe of more than 36 px (by dominant direction), or the arrow k
   - a throw or shake,
   - changing view or docking,
   - **25 s** with no input.
-- **Restart** (a *tap* while "Restart" is selected; a hold there saves like anywhere else): screens go black for **0.8 s**, then boot (C1). Any count or die change made in the same menu session is **not** saved.
+- **Power off** (a *tap* while "Power off" is selected; a hold there saves like anywhere else): the screens go black and stay black. Motion and holds are ignored; a **tap** on any screen boots the die at once (C1). Docking shows the nest as usual. Any count or die change made in the same menu session is **not** saved. There is no power switch, so this is as off as the die gets. (Replaces the mockup's "Restart", which blacked out for 0.8 s and rebooted on its own; see H11.)
 
 ### C4. Success screen (after saving)
 - **Duration:** about **1.25 s** on the menu face.
@@ -513,7 +513,7 @@ The mockup also has "side-face" variants for smoke (life 2.2–3.5, size 20–38
 | Result dim | 7 s after reveal, 1.2 s fade (≥5 s after a max or dud effect; a touch adds 4 s) |
 | Landing flash | 0.25 s |
 | Die pulse | 0.28 s, +3.5% |
-| Restart blackout | 0.8 s |
+| Power-off blackout | until the next tap (the mockup's Restart: 0.8 s) |
 | Boot | 6.2 s total |
 | Panel refresh cap | 100 Hz |
 | Reduced motion | tumble 0.45 s (no spin, no bounce), tip 0.15 s, fewer particles (D3), no shake jitter, no idle spin |
@@ -575,4 +575,4 @@ Decided 2026-09-28.
 | H8 | **Label weight** (G14) | **700 everywhere, matching what the mockup renders.** The firmware ships one Space Grotesk cut (Bold). |
 | H9 | **Screens after a roll.** The mockup re-orients every face continuously, so picking the die up to read a result turns the text and can light the old bottom face. | **Freeze at the reveal.** Each face's text orientation and the dark face are fixed when the result is revealed and stay fixed while the result lasts (including a dimmed result brought back by a touch). A shake or throw, the menu, docking or a restart releases them. Departs from the mockup, whose die never leaves the table. |
 | H10 | **The mockup as a reference.** Once the firmware worked, keeping it 1:1 with the mockup meant editing the mockup for every design change. | **The firmware leads.** The mockup capture tool and its golden frames are removed (they remain in git history). Screens are checked by **snapshot tests**: sheets generated from the firmware and committed in `packages/firmware/core/tests/snapshots/`, regenerated with `UPDATE_SNAPSHOTS=1` when a change is intended. Statistical smoke comparisons against the mockup are replaced by exact snapshots of a seeded run. This document stays as the description of the design; it is no longer a promise to match the mockup. |
-| H11 | **Settings items in the menu.** The mockup shows them but they do nothing, and "hold to restart" clashes with hold meaning save. | **A hold always saves and returns to the roll. A tap changes the selected Settings item** (Brightness 30/50/70/100 %, Haptics Off/Light/Strong, Smoke Off/Light/Full, Large text Off/On, Sleep after 30 s/1/2/5 min/Never, Night mode Off/Auto/On, Bluetooth Off/On, Verified rolls Off/On), **and a tap on Restart restarts the die.** Owner and About are display-only. Defaults are the mockup's values. Departs from the mockup. |
+| H11 | **Settings items in the menu.** The mockup shows them but they do nothing, and "hold to restart" clashes with hold meaning save. | **A hold always saves and returns to the roll. A tap changes the selected Settings item** (Brightness 30/50/70/100 %, Haptics Off/Light/Strong, Smoke Off/Light/Full, Large text Off/On, Sleep after 30 s/1/2/5 min/Never, Night mode Off/Auto/On, Bluetooth Off/On, Verified rolls Off/On), **and a tap on Power off darkens the die until the next tap.** Owner and About are display-only. Defaults are the mockup's values. Departs from the mockup. |

@@ -413,10 +413,10 @@ impl<P: Platform> Firmware<P> {
                 // Letting go after a hold that saved the menu shows the
                 // setup like a tap does (the mockup's pointer-up); letting go
                 // after the hold that opened it doesn't. A tap inside the
-                // menu changes the selected setting, or restarts the die.
+                // menu changes the selected setting, or powers the die off.
                 if !self.menu_hold_fired || self.menu.is_none() {
-                    let restart = self.menu.as_ref().is_some_and(|m| m.draft.restart_selected());
-                    let _ = events.push(if restart { Event::Restart } else { Event::Tap });
+                    let off = self.menu.as_ref().is_some_and(|m| m.draft.power_off_selected());
+                    let _ = events.push(if off { Event::PowerOff } else { Event::Tap });
                 }
                 self.touch_since = None;
             }
@@ -490,13 +490,18 @@ impl<P: Platform> Firmware<P> {
                     m.last_input = now;
                 }
             }
-            // The draft is dropped: a restart saves nothing.
-            Command::MenuRestart => {
+            // The draft is dropped: powering off saves nothing.
+            Command::MenuPowerOff => {
                 if self.menu.take().is_some() {
                     self.smoke.clear();
                     self.pending_special = None;
-                    self.ui.restart(now);
+                    self.ui.power_off();
+                    self.hw.display.set_enabled(false)?;
                 }
+            }
+            Command::WakeUp => {
+                self.hw.display.set_enabled(true)?;
+                self.ui.wake_up(now);
             }
             Command::MenuClose { save } => {
                 if let Some(m) = self.menu.take() {

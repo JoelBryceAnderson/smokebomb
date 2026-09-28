@@ -170,7 +170,7 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   the Settings item and each item's chosen option. On the Settings page a tap
   steps the selected item to its next value. Only a hold saves the draft into
   `Settings`, and a hold always saves and returns to the roll. A tap on
-  Restart restarts the die without saving; a throw, docking or 25 s without a
+  Power off darkens the die without saving (`Mode::Off`; the next tap boots it); a throw, docking or 25 s without a
   tip discards the draft. Saving applies brightness, haptics-off and
   Bluetooth; the other items are stored and not acted on yet.
 - **Tips** (`tips.rs`). The menu keeps a `Frame`: the front face (the held
@@ -194,7 +194,7 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
 - **Drawing.** Progress drives the content slide, so the page moves with
   the die, as in the mockup where both follow the same ease-out.
   `ui.rs` times the grow-in, the fade-out, the save flash, the success
-  screen and the restart blackout; `screens.rs` draws them.
+  screen and the power-off blackout; `screens.rs` draws them.
 
 ### Rolls and verification
 
