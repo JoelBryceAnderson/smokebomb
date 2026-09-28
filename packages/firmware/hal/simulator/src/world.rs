@@ -110,6 +110,11 @@ impl World {
     pub fn new() -> Self {
         let mut seed = [0u8; 8];
         let _ = getrandom::getrandom(&mut seed);
+        Self::with_seed(u64::from_le_bytes(seed))
+    }
+
+    /// A world whose shakes and tumbles are the same every run (tests).
+    pub fn with_seed(seed: u64) -> Self {
         Self {
             // Mockup load orientation: 0.35 rad about vertical, +Y up.
             pose: Pose {
@@ -125,7 +130,7 @@ impl World {
             viewer_right: DEFAULT_VIEWER_RIGHT,
             docked: false,
             reduced_motion: false,
-            rng: u64::from_le_bytes(seed) | 1,
+            rng: seed | 1,
             next_landing: None,
         }
     }

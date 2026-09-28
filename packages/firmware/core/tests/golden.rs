@@ -32,6 +32,9 @@ type Levels = [u8; PIXELS];
 /// well above this.
 const MAX_BLURRED_MAE: f32 = 0.25;
 
+/// The world model's seed, so shakes and tumbles are the same every run.
+const WORLD_SEED: u64 = 1;
+
 /// The capture tool seeds the mockup's `Math.random` with mulberry32(42), and
 /// the page draws this many numbers while it loads (textures and the like;
 /// counted by stepping the capture harness frame by frame). The boot burst
@@ -86,7 +89,11 @@ impl Run {
 
     /// Driven by the simulator's world model, like the simulator itself.
     fn with_world() -> Self {
-        Self::start(Some(World::new()))
+        let seed = std::env::var("WORLD_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(WORLD_SEED);
+        Self::start(Some(World::with_seed(seed)))
     }
 
     fn start(world: Option<World>) -> Self {
@@ -407,10 +414,14 @@ fn block_means(l: &Levels) -> [f32; 64] {
     out
 }
 
-/// Block MAE a smoke frame may have, in levels. Random smoke on a face that
-/// is ~13 levels bright in both scores 1–4.5; a face with no smoke where the
-/// mockup has a full cloud, or the reverse, scores 8 or more.
-const MAX_SMOKE_BLOCK_MAE: f32 = 5.0;
+/// How far the whole die's mean level may be from the mockup's. Which faces
+/// the random smoke favours varies, but the total is steady: within 1.1
+/// levels at every checkpoint across world seeds. No smoke where the mockup
+/// has a cloud is ~10 off; smoke that never drained, ~5.
+const MAX_SMOKE_AMOUNT_DIFF: f32 = 1.5;
+/// Block MAE one face may have, in levels: a guard against smoke in the
+/// wrong places. Random smoke scores up to ~6.3 across world seeds.
+const MAX_SMOKE_BLOCK_MAE: f32 = 7.5;
 
 fn smoke_score(golden: &Levels, ours: &Levels) -> f32 {
     let (g, o) = (block_means(golden), block_means(ours));
@@ -443,7 +454,9 @@ fn run_smoke_scenario(
     let mut inputs = inputs.into_iter().peekable();
     let mut failures = Vec::new();
     let mut rows = Vec::new();
-    println!("\n{scenario} (smoke): block MAE per face (+X −X +Y −Y +Z −Z), levels 0–15");
+    println!(
+        "\n{scenario} (smoke): whole-die mean level vs the mockup, then block MAE per face (+X −X +Y −Y +Z −Z)"
+    );
     for &(t, name) in times {
         while let Some((at, _)) = inputs.peek() {
             if *at > t {
@@ -455,7 +468,16 @@ fn run_smoke_scenario(
         }
         run.advance_to(t);
         let (golden, ours) = (load_golden(scenario, name), run.faces());
-        let mut line = format!("  t={name:>5}");
+        let mean = |f: &[Levels; FACE_COUNT]| {
+            f.iter().flatten().map(|&v| v as f32).sum::<f32>() / (FACE_COUNT * PIXELS) as f32
+        };
+        let amount = mean(&ours) - mean(&golden);
+        if amount.abs() > MAX_SMOKE_AMOUNT_DIFF {
+            failures.push(format!(
+                "{scenario} t={name}: the die's mean level is {amount:+.2} from the mockup's (limit ±{MAX_SMOKE_AMOUNT_DIFF})"
+            ));
+        }
+        let mut line = format!("  t={name:>5}  amount {amount:+5.2} |");
         for face in Face::ALL {
             let score = smoke_score(&golden[face.index()], &ours[face.index()]);
             line += &format!(" {score:5.2}");

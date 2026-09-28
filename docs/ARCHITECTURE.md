@@ -336,8 +336,10 @@ statement for statement.
 like the other screens (it matches to within 0.21 levels as the last,
 faintest smoke fades). Shake and throw smoke can't match particle for
 particle, because the mockup draws the shake's jitter and the tumble from
-the same random stream, so those frames are compared as 8×8 blocks of mean
-level: the right amount of smoke in the right places at the right times.
+the same random stream, so those frames are compared statistically, on a
+seeded world model: the whole die's mean level against the mockup's (within
+1.5 levels; the right amount of smoke at the right times), and each face as
+8×8 blocks of mean level (a looser guard against smoke in the wrong places).
 
 ### Faces
 

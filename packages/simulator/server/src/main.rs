@@ -410,6 +410,48 @@ mod tests {
         assert_eq!(ticks.len(), 3, "one per face passed: {ticks:?}");
     }
 
+    /// The screen coming round in a tip reads the right way up from the
+    /// start: its orientation doesn't change during the tip, and matches the
+    /// die's own orientation for that face once it's in front.
+    #[test]
+    fn a_tip_brings_the_next_screen_round_the_right_way_up() {
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        for dir in [
+            TipDir::Up,
+            TipDir::Up,
+            TipDir::Down,
+            TipDir::Left,
+            TipDir::Down,
+            TipDir::Right,
+            TipDir::Up,
+        ] {
+            assert!(rig.world.tip(dir, DEFAULT_VIEWER_RIGHT));
+            let mut seen = Vec::new();
+            for _ in 0..36 {
+                rig.run(DT);
+                for face in Face::ALL {
+                    if let Some(q) = rig.fw.menu_page_quarter(face) {
+                        seen.push((face, q));
+                    }
+                }
+            }
+            rig.run(0.5);
+            let front = rig.fw.menu_front().unwrap();
+            let settled = rig.fw.orientation().quarter(front);
+            assert_eq!(rig.fw.menu_page_quarter(front), Some(settled), "{dir:?}: settled");
+            for (face, q) in seen {
+                if face == front {
+                    assert_eq!(
+                        q, settled,
+                        "{dir:?}: {front:?} came round as {q:?}, reads {settled:?}"
+                    );
+                }
+            }
+        }
+    }
+
     /// Many tips in a row, at the server's real tick: every one counts once,
     /// and the firmware's front face stays the one facing the viewer.
     #[test]
