@@ -555,7 +555,7 @@ Differences found when this document was checked against the mockup source (2026
 | G16 | C3 | Unspecified | Letting go after the saving hold is a tap (wake label for 3 s from the release). The 0.8 s hold completes on the 49th frame at 60 Hz (the mockup's clock sums float frame times), so the firmware waits for *more than* 0.8 s |
 | G17 | D2 | Unspecified | A lingering particle lingers through its boundary frame: the mockup's clock is a sum of frame times that falls just short of `spawn + 0.75` there. The firmware lingers for *at least* the time |
 
-**Snapshots (H10).** `packages/firmware/core/tests/snapshots.rs` runs the firmware through scripted scenarios (boot, tap, result, quick-throw smoke, throw smoke, menu, menu settings) and compares every face with the sheets in `tests/snapshots/`. They began as frames captured from the mockup (the captures confirmed G1, that the wake label is lit on the face-down screen; the firmware keeps that screen dark, H2); the firmware is now their source.
+**Snapshots (H10).** `packages/firmware/core/tests/snapshots.rs` runs the firmware through scripted scenarios (boot, tap, result, quick-throw smoke, throw smoke, menu, menu settings, and settings tap and power off) and compares every face with the sheets in `tests/snapshots/`. They began as frames captured from the mockup (the captures confirmed G1, that the wake label is lit on the face-down screen; the firmware keeps that screen dark, H2); the firmware is now their source.
 
 Everything else was checked and matches: all canvas → panel-px conversions, timings, the boot sequence (the top face's start value of 6 is an explicit override of the per-face table), the menu layout, the particle formulas, and every die, Nest and case dimension.
 
