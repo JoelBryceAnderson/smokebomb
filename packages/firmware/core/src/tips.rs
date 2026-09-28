@@ -43,6 +43,10 @@ const SETTLE: f32 = 1.0 / 3.0;
 const SETTLE_STILL_MS: u64 = 200;
 /// A turn that stops between faces for this long ends at the nearest face.
 const SETTLE_MS: u64 = 1_000;
+/// Leftovers smaller than this (degrees) when a turn settles on a face are
+/// sensor error, not a real offset, and are dropped so they can't build up
+/// over many tips.
+const NOISE_DEG: f32 = 5.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TipDir {
@@ -294,7 +298,11 @@ impl TipTracker {
             };
             if let Some((result, counted)) = settled {
                 let left: [f32; 3] = core::array::from_fn(|i| self.theta[i] - counted[i]);
-                self.leftover = (dot(left, frame.right), dot(left, frame.up));
+                self.leftover = if norm(left) < NOISE_DEG {
+                    (0.0, 0.0)
+                } else {
+                    (dot(left, frame.right), dot(left, frame.up))
+                };
                 self.turning = false;
                 self.theta = [0.0; 3];
                 self.dir = None;
@@ -305,13 +313,18 @@ impl TipTracker {
             self.paused_since = None;
         }
         match self.dir {
-            Some(dir) => (
-                false,
-                TipUpdate::Turning {
-                    dir,
-                    progress: self.progress(dir, frame),
-                },
-            ),
+            Some(dir) => {
+                // At rest near a face, show it there while the turn settles,
+                // rather than a few degrees off and then snapping.
+                let p = self.progress(dir, frame);
+                let near = roundf(p);
+                let progress = if still && fabsf(p - near) <= SETTLE {
+                    near
+                } else {
+                    p
+                };
+                (false, TipUpdate::Turning { dir, progress })
+            }
             None => (false, TipUpdate::None),
         }
     }
@@ -529,6 +542,43 @@ mod tests {
             })
             .sum();
         assert_eq!(steps, 1, "{all:?}");
+    }
+
+    /// A gyro that reads 4% high (sensor scale error) still counts one step
+    /// per tip over a long run, and each tip rests exactly on its face.
+    #[test]
+    fn scale_error_does_not_build_up() {
+        let f = frame();
+        let mut t = armed();
+        let dt = 1.0 / 60.0;
+        let mut now = 300;
+        let mut steps = 0;
+        let mut frame = f;
+        for _ in 0..13 {
+            let mut prev = 0.0;
+            let mut last_turning = None;
+            for i in 1..=45 {
+                let u = ((i as f32 * dt) / 0.42).min(1.0);
+                let angle = 90.0 * (1.0 - (1.0 - u).powi(3));
+                let rate = (angle - prev) / dt * 1.04;
+                prev = angle;
+                now += 17;
+                let axis = frame.axis(TipDir::Left);
+                match t
+                    .update(axis.map(|a| (a * rate * 1000.0) as i32), dt, now, &frame)
+                    .1
+                {
+                    TipUpdate::Turning { progress, .. } => last_turning = Some(progress),
+                    TipUpdate::Done { steps: n, .. } => {
+                        steps += n;
+                        frame = frame.stepped(TipDir::Left, n);
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(last_turning, Some(1.0), "rests on the face, centred");
+        }
+        assert_eq!(steps, 13);
     }
 
     #[test]

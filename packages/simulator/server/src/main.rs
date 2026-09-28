@@ -129,16 +129,19 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One firmware tick, in seconds: exactly 1/TICK_HZ, so the world's IMU
+/// samples cover the period the firmware integrates them over.
+pub const TICK_S: f64 = 1.0 / smokebomb_firmware::smokebomb_core::TICK_HZ as f64;
+
 /// Firmware main loop: tick, then publish anything that changed.
 async fn run_firmware(mut fw: board::Firmware, state: AppState) {
-    let period = Duration::from_millis(1000 / smokebomb_firmware::smokebomb_core::TICK_HZ as u64);
-    let mut interval = tokio::time::interval(period);
+    let mut interval = tokio::time::interval(Duration::from_secs_f64(TICK_S));
     let mut last_seq = 0;
     let mut last_mode = String::new();
     let mut last_counter = None;
     let mut last_pose = None;
     let mut menu_was_open = false;
-    let dt = period.as_secs_f64();
+    let dt = TICK_S;
 
     loop {
         interval.tick().await;
@@ -274,7 +277,7 @@ async fn get_device() -> Json<serde_json::Value> {
 mod tests {
     use super::world::World;
 
-    const DT: f64 = 1.0 / 60.0;
+    use super::TICK_S as DT;
 
     /// The real firmware, fed only by this world's IMU, rolls after a throw.
     #[test]
@@ -405,6 +408,50 @@ mod tests {
         assert_eq!(rig.fw.menu_draft().unwrap().count, 4);
         let ticks: Vec<_> = rig.sim.lock().haptics.drain(..).collect();
         assert_eq!(ticks.len(), 3, "one per face passed: {ticks:?}");
+    }
+
+    /// Many tips in a row, at the server's real tick: every one counts once,
+    /// and the firmware's front face stays the one facing the viewer.
+    #[test]
+    fn a_long_run_of_tips_stays_in_step() {
+        use smokebomb_firmware::smokebomb_core::menu::Page;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        for _ in 0..13 {
+            rig.tip(TipDir::Left);
+            rig.run(0.3);
+        }
+        // 13 pages on, 3 pages to a cycle: one on from How many dice.
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Die);
+        for _ in 0..7 {
+            rig.tip(TipDir::Up);
+            rig.run(0.3);
+        }
+        // Seven values up from d20, wrapping: d100, Pot, d4, d6, d8, d10, d12.
+        assert_eq!(rig.fw.menu_draft().unwrap().die, smokebomb_shared::DieKind::D12);
+        let front = rig.fw.menu_front().unwrap();
+        let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
+        let n = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(front);
+        assert!(n.dot(toward_viewer) > 0.99, "{front:?} is not in front");
+    }
+
+    /// Once a tip has stopped, the screens already show the settled menu:
+    /// nothing moves or snaps when the turn is counted a moment later.
+    #[test]
+    fn a_finished_tip_shows_centred_before_it_settles() {
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        for dir in [TipDir::Left, TipDir::Up, TipDir::Right, TipDir::Down] {
+            assert!(rig.world.tip(dir, DEFAULT_VIEWER_RIGHT));
+            rig.run(0.5); // the turn is over; the tracker is still settling
+            let during = rig.sim.lock().faces;
+            rig.run(0.5);
+            let after = rig.sim.lock().faces;
+            assert!(during == after, "{dir:?}: screens changed when the tip settled");
+        }
     }
 
     #[test]
