@@ -71,7 +71,7 @@ pub fn woff_to_sfnt(woff: &[u8]) -> Result<Vec<u8>, String> {
             data,
         });
     }
-    tables.sort_by(|a, b| a.tag.cmp(&b.tag));
+    tables.sort_by_key(|t| t.tag);
 
     let mut out = Vec::new();
     let pow2 = 1u16 << (15 - (num_tables as u16).leading_zeros());
