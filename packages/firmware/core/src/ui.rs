@@ -260,7 +260,7 @@ impl Ui {
             let interrupted = tumbling(after) || matches!(after, Mode::Menu | Mode::Reveal { .. });
             if interrupted {
                 self.boot = None;
-            } else if now - b.start >= BOOT_MS {
+            } else if now.saturating_sub(b.start) >= BOOT_MS {
                 self.boot = None;
                 if !docked {
                     self.wake(now, WAKE_AFTER_BOOT_MS);
@@ -303,11 +303,11 @@ impl Ui {
         if now < reveal {
             return 0.0;
         }
-        let fade_in = ((now - reveal) as f32 / RESULT_FADE_IN_MS).min(1.0);
+        let fade_in = ((now.saturating_sub(reveal)) as f32 / RESULT_FADE_IN_MS).min(1.0);
         let dimming = if now < dim {
             1.0
         } else {
-            (1.0 - (now - dim) as f32 / RESULT_DIM_FADE_MS).max(0.0)
+            (1.0 - (now.saturating_sub(dim)) as f32 / RESULT_DIM_FADE_MS).max(0.0)
         };
         fade_in * dimming
     }
@@ -315,7 +315,7 @@ impl Ui {
     fn wake_alpha(&self, now: u64) -> f32 {
         match self.wake {
             Some((start, until)) if now < until => {
-                let a = ((now - start) as f32 / 350.0)
+                let a = ((now.saturating_sub(start)) as f32 / 350.0)
                     .min((until - now) as f32 / 600.0)
                     .min(1.0);
                 a * 0.85
@@ -333,7 +333,7 @@ impl Ui {
         if let Some(b) = self.boot {
             if !matches!(mode, Mode::Nest | Mode::Menu) && !tumbling(mode) {
                 return FaceContent::Boot {
-                    t: (now - b.start) as f32 / 1000.0,
+                    t: (now.saturating_sub(b.start)) as f32 / 1000.0,
                     top: face == b.top,
                 };
             }
@@ -348,7 +348,7 @@ impl Ui {
             return FaceContent::Result { alpha: result };
         }
         if let Some((t, f, die, count)) = self.success {
-            if f == face && now - t < SUCCESS_MS && !tumbling(mode) {
+            if f == face && now.saturating_sub(t) < SUCCESS_MS && !tumbling(mode) {
                 let t = since(now, t) / 1000.0;
                 return FaceContent::Success { t, die, count };
             }

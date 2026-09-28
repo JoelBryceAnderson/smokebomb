@@ -214,7 +214,7 @@ impl<P: Platform> Firmware<P> {
             self.menu_tips(&sample, IMU_SAMPLE_S, now)?;
         }
         if let Some(m) = &self.menu {
-            if m.turning.is_none() && now - m.last_input >= MENU_IDLE_MS {
+            if m.turning.is_none() && now.saturating_sub(m.last_input) >= MENU_IDLE_MS {
                 let _ = events.push(Event::MenuTimeout);
             }
         }
@@ -242,7 +242,7 @@ impl<P: Platform> Firmware<P> {
             }
             let commands = self.sm.handle(event, now);
             for cmd in commands {
-                self.execute(cmd)?;
+                self.execute(cmd, now)?;
             }
         }
         let after = *self.sm.mode();
@@ -367,7 +367,7 @@ impl<P: Platform> Firmware<P> {
             }
             // Held for more than 0.8 s: at 60 Hz that's 49 frames, as in the
             // mockup, whose float clock never quite reaches 0.8 after 48.
-            (true, Some(since)) if !self.menu_hold_fired && now - since > MENU_HOLD_MS => {
+            (true, Some(since)) if !self.menu_hold_fired && now.saturating_sub(since) > MENU_HOLD_MS => {
                 self.menu_hold_fired = true;
                 let _ = events.push(Event::LongPress);
             }
@@ -388,7 +388,7 @@ impl<P: Platform> Firmware<P> {
     /// How far the current touch is toward a hold (0–1), once the ring shows.
     fn hold_progress(&self, now: u64) -> Option<f32> {
         let since = self.touch_since?;
-        let held = now - since;
+        let held = now.saturating_sub(since);
         let ring = !self.menu_hold_fired
             && held > HOLD_RING_AFTER_MS
             && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. } | Mode::Menu);
@@ -397,8 +397,9 @@ impl<P: Platform> Firmware<P> {
         })
     }
 
-    fn execute(&mut self, cmd: Command) -> HalResult<()> {
-        let now = self.hw.clock.now_ms();
+    /// Carry out a command. `now` is the tick's time: the clock moves on
+    /// while a tick runs, and everything in one tick must agree on when it is.
+    fn execute(&mut self, cmd: Command, now: u64) -> HalResult<()> {
         match cmd {
             Command::Haptic(effect) => self.hw.haptics.play(effect)?,
             Command::Roll => {
@@ -407,7 +408,7 @@ impl<P: Platform> Firmware<P> {
                     &mut self.hw.secure_element,
                     self.settings.die,
                     self.settings.count,
-                    self.hw.clock.now_ms(),
+                    now,
                 )?;
                 self.pending_special = special(&signed, self.settings.die);
                 if self.pending_special == Some(Special::Max) {
