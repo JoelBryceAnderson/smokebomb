@@ -157,12 +157,14 @@ Glow: the mockup draws text with a soft glow (shadow blur of 18 canvas units for
   4. Change the snapped angle only when the raw angle drifts more than **45° + 0.3 rad** from the current one. This hysteresis prevents flicker.
 - **Top and bottom faces** (the axis of the face pointing up): keep a **locked orientation**, whatever they last had. The die can't know where the viewer is.
 - **No clear up direction:** keep the current angle.
+- **While a result is up** (decision H9): every face keeps the orientation it had when the result was revealed, like a printed die. Turning the die over to read it doesn't turn the text. A shake or throw, the menu, docking or a restart clears the result, and the faces follow gravity again. In the menu, pages are drawn upright for the face they'll be on once it's in front.
 
 ### B3. The face-down screen
 The face touching the table is dark:
 - no result,
 - no smoke spawned on it (particles can still drift onto it and are drawn there),
 - no wake label (decision H2; the mockup still draws it there and should be updated to match).
+- While a result is up, "the face down" means the face that was down when it was revealed (H9): picking the die up doesn't light it or darken another.
 
 ---
 
@@ -571,3 +573,4 @@ Decided 2026-09-28.
 | H6 | **Pass the Pot in the signed roll** | **Sign the raw d6 value** (1 → ←, 2 → P, 3 → →, 4–6 → •), exactly as the mockup draws it. Requires roll format v2 and a 10-dice limit. |
 | H7 | **Menu frame on hardware when the held face points up.** "Front" and "up" coincide, so right/up are undefined. | **Hardware question, still open.** The firmware takes the frame from the held face and gravity once the die has been still for 120 ms after the menu opens, and falls back to an arbitrary perpendicular "up" if the held face points up. The simulator turns the die like the mockup's snap, so it never hits the fallback. |
 | H8 | **Label weight** (G14) | **700 everywhere, matching what the mockup renders.** The firmware ships one Space Grotesk cut (Bold). |
+| H9 | **Screens after a roll.** The mockup re-orients every face continuously, so picking the die up to read a result turns the text and can light the old bottom face. | **Freeze at the reveal.** Each face's text orientation and the dark face are fixed when the result is revealed and stay fixed while the result lasts (including a dimmed result brought back by a touch). A shake or throw, the menu, docking or a restart releases them. Departs from the mockup, whose die never leaves the table. |

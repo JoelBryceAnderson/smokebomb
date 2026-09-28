@@ -141,6 +141,12 @@ impl Ui {
         Some(b.top)
     }
 
+    /// A roll's result exists, from its reveal until something clears it (a
+    /// shake, the menu, docking, a restart), dimmed or not.
+    pub fn has_result(&self) -> bool {
+        self.result.is_some()
+    }
+
     /// A result is up (revealed, possibly dimmed).
     pub fn showing_result(&self, now: u64) -> bool {
         self.result.is_some_and(|(reveal, _)| now >= reveal)

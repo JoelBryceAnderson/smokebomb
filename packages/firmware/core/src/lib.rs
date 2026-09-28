@@ -64,6 +64,15 @@ pub const HOLD_RING_AFTER_MS: u64 = 220;
 /// The menu closes without saving after this long without a tip.
 pub const MENU_IDLE_MS: u64 = 25_000;
 
+/// How the screens were oriented when a result was revealed. While the
+/// result lasts they stay that way, like a printed die: picking the die up to
+/// read it doesn't turn the text or light a different face (decision H9).
+#[derive(Clone, Copy, Debug)]
+struct Frozen {
+    quarters: [orientation::Quarter; smokebomb_hal::FACE_COUNT],
+    up: Face,
+}
+
 /// The open menu: its draft, which way the person is holding the die, and
 /// the tip being made.
 struct MenuSession {
@@ -103,6 +112,8 @@ pub struct Firmware<P: Platform> {
     menu_hold_fired: bool,
     menu: Option<MenuSession>,
     up_face: Face,
+    /// The screens' orientation, frozen while a result is up.
+    frozen: Option<Frozen>,
     last_roll: Option<SignedRoll>,
     docked: bool,
 }
@@ -136,6 +147,7 @@ impl<P: Platform> Firmware<P> {
             menu_hold_fired: false,
             menu: None,
             up_face: Face::PosY,
+            frozen: None,
             last_roll: None,
             docked: false,
         })
@@ -248,9 +260,35 @@ impl<P: Platform> Firmware<P> {
         let after = *self.sm.mode();
         self.ui.tick(now, &before, &after, self.up_face, self.docked);
         self.update_smoke(now, &before, &after);
+        self.freeze_for_result(&before, &after);
 
         self.render(now)?;
         Ok(())
+    }
+
+    /// Freeze the screens' orientation when a result is revealed, and let
+    /// it go once the result is cleared.
+    fn freeze_for_result(&mut self, before: &Mode, after: &Mode) {
+        let revealed = matches!(after, Mode::Reveal { .. }) && !matches!(before, Mode::Reveal { .. });
+        if revealed {
+            self.frozen = Some(Frozen {
+                quarters: Face::ALL.map(|f| self.orientation.quarter(f)),
+                up: self.up_face,
+            });
+        } else if !self.ui.has_result() {
+            self.frozen = None;
+        }
+    }
+
+    /// Which face is up, as the screens see it (frozen while a result is up).
+    pub fn display_up(&self) -> Face {
+        self.frozen.map_or(self.up_face, |f| f.up)
+    }
+
+    /// A face's text orientation, as drawn (frozen while a result is up).
+    pub fn display_quarter(&self, face: Face) -> orientation::Quarter {
+        self.frozen
+            .map_or_else(|| self.orientation.quarter(face), |f| f.quarters[face.index()])
     }
 
     /// Drive the smoke through the throw, in the mockup's frame order:
@@ -456,7 +494,8 @@ impl<P: Platform> Firmware<P> {
 
     fn render(&mut self, now: u64) -> HalResult<()> {
         let mode = *self.sm.mode();
-        let up = self.up_face;
+        let up = self.display_up();
+        let quarters = Face::ALL.map(|f| self.display_quarter(f));
         let label = screens::setup_label(self.settings.die, self.settings.count);
         let battery = self.hw.power.battery()?.percent;
         let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
@@ -481,7 +520,7 @@ impl<P: Platform> Firmware<P> {
                 continue;
             }
             let content = ui.content(now, face, up, &mode, record.is_some());
-            let rot = orientation.quarter(face);
+            let rot = quarters[face.index()];
             let mut painter = Painter::new(fb, layer, Transform::quarter(rot));
             let mut c = Ctx {
                 painter: &mut painter,
