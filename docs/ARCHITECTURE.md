@@ -205,34 +205,68 @@ Open items: `prev_hash` has to persist across reboots (flash), and device
 registration has to require a factory attestation instead of trusting any
 submitted key.
 
-### Pre-rendered animation
+### Asset pack
 
-> **Superseded.** Smoke is a live particle system in the firmware
-> ([SIM_SPEC.md](SIM_SPEC.md), Part D and decision H1). QSPI holds pre-rendered
-> *assets* (smoke sprites, font bitmaps), not full-frame clips. This section
-> still describes the scaffold as built and will be rewritten with that work.
-
-Smoke is rendered offline and stored in QSPI flash as an **SMKB asset pack**
-(`smokebomb_shared::assets`):
+Everything the firmware draws from flash lives in one **SMKB v2 asset pack**
+in the 64 MB QSPI flash (`smokebomb_shared::assets`). Theme-store downloads use
+the same format.
 
 ```text
-offset 0    PackHeader  "SMKB" | version u16 | clip_count u16 | total_len u32 | reserved
-offset 16   ClipEntry × clip_count   id u16 | frame_count u16 | fps u8 | flags u8 | offset u32
-...         frames: each frame is six 4608-byte panels (4bpp, 96×96), in Face order
+offset 0    PackHeader    "SMKB" | version u16 = 2 | section_count u16 | total_len u32 | reserved
+offset 16   SectionEntry × section_count   kind u16 | id u16 | offset u32 | len u32 | reserved
+...         sections
 ```
 
-Budget: one six-face frame is 27,648 bytes, so 64 MB holds about 2,400 frames,
-roughly 80 seconds of smoke at 30 fps across all clips. Playback is a straight
-`AssetStore::read` into the framebuffers, with no decoding or compositing on
-the MCU. If the pack is missing or corrupt, the die still rolls and just shows
-no smoke. Clip ids are fixed slots (`SmokeIdle`, `SmokeShake`, `SmokeThrow`,
-`Reveal`, `MaxBurst`, `Dud`), so a theme pack replaces the look without a
-firmware change. The simulator creates a placeholder pack of procedurally
-drawn rings (`hal/simulator/src/assets.rs`).
+| Section | Contents |
+|---|---|
+| `Font` (one per size) | Space Grotesk Bold at one mockup canvas size (8–94 px): header with ascent/descent, glyph table (advance, bitmap box), pair kerning, 8-bit coverage bitmaps at panel resolution |
+| `Clips` | The placeholder smoke clips (procedural rings, 4bpp six-face frames), until the particle system replaces them (SIM_SPEC H1) |
 
-Next step: an offline render pipeline (Blender or a custom renderer, then
-dithering to 4bpp, then packing), and compression if the budget gets tight
-(RLE per panel is a cheap first option).
+`packages/firmware/assets-build` builds the pack on the host:
+- **Fonts:** it rasterizes the bundled font (`assets/fonts`, the exact
+  fontsource build the golden frames were captured with) with fontdue. It
+  measures kerning by shaping every character pair with rustybuzz, as the
+  browser does for canvas text.
+- **Clips:** it renders the placeholder smoke clips.
+
+The simulator HAL builds the pack at compile time and starts its simulated
+flash with it. `cargo run -p smokebomb-assets-build -- out.smkb` writes one
+for flashing. The whole pack is about 4 MB.
+
+### Rendering
+
+Screens are written in the mockup's canvas units (the lit area is ±83 around
+the face centre), so layouts port line for line from the mockup's drawing
+code.
+- **Transform** (`gfx.rs`): maps canvas units to panel pixels in the mockup's
+  order (offset, rotate, scale). The rotation is the face's quarter-turn text
+  orientation, and offset and scale serve the menu's tip slide and grow-in.
+- **Primitives:** circles, round-capped strokes, arcs and rectangles are
+  anti-aliased from signed distances.
+- **Text** (`font.rs`): glyphs are read from the pack and sampled bilinearly
+  through the same transform. Layout follows canvas `fillText`: pair kerning,
+  `textAlign: center` and `textBaseline: middle`.
+- **Glow** (canvas `shadowBlur`): each draw call rasterizes coverage into a
+  scratch layer. With glow, the layer is blurred (three box passes ≈ a
+  Gaussian, σ = blur ÷ 2) and composited underneath first.
+- **Output:** the 8-bit framebuffers are quantized to the panel's 16 levels as
+  before.
+- **Screens** (`screens.rs`): boot (pips, finale, SMOKEBOMB), the wake/setup
+  label, and results (numeric layout and Pass the Pot glyphs).
+- **Timing** (`ui.rs`): decides what each face shows and when: boot, fades,
+  dimming, and the precedence order from SIM_SPEC Part C.
+
+**Checking against the mockup:** `packages/firmware/core/tests/golden.rs`
+drives the firmware through the boot and tap timelines of
+`tools/mockup-capture`. It scores every face against the golden frame by mean
+difference in panel levels after a 3×3 blur, which forgives sub-pixel edge
+placement but not missing, misplaced or mis-sized content. With
+`SMOKEBOMB_GOLDEN_SHEETS=<dir>` it also writes golden, firmware and difference
+images side by side.
+
+**Hardware note:** glyphs are read from flash every time they're drawn. On the
+nRF54L15 the QSPI flash can be memory-mapped (XIP), which makes that a plain
+memory read; otherwise add a glyph cache.
 
 ### Faces
 

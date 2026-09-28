@@ -44,6 +44,9 @@ pub struct SimState {
     pub qspi: Vec<u8>,
     /// When set, the clock reports this instead of wall time (for tests).
     pub manual_time_ms: Option<u64>,
+    /// Values the RNG returns (as little-endian u32s) before falling back to
+    /// OS entropy, so tests can make the die roll a chosen number.
+    pub rng_script: VecDeque<u32>,
 }
 
 impl Default for SimState {
@@ -65,8 +68,9 @@ impl Default for SimState {
             haptics: VecDeque::new(),
             power_mode: PowerMode::Normal,
             nfc_payload: Vec::new(),
-            qspi: assets::placeholder_pack(),
+            qspi: assets::standard_pack(),
             manual_time_ms: None,
+            rng_script: VecDeque::new(),
         }
     }
 }
@@ -93,7 +97,7 @@ impl SimHandle {
             touch: SimTouch(self.clone()),
             ble: SimBle(self.clone()),
             secure_element: SimSecureElement::new(),
-            rng: SimRng,
+            rng: SimRng(Some(self.clone())),
             haptics: SimHaptics(self.clone()),
             power: SimPower(self.clone()),
             assets: SimAssets(self.clone()),
@@ -247,11 +251,22 @@ impl SecureElement for SimSecureElement {
     }
 }
 
-/// OS entropy.
-pub struct SimRng;
+/// OS entropy, or scripted values from [`SimState::rng_script`] when wired
+/// to a [`SimHandle`]. `SimRng::default()` is plain OS entropy.
+#[derive(Default)]
+pub struct SimRng(pub Option<SimHandle>);
 
 impl Rng for SimRng {
     fn fill_bytes(&mut self, buf: &mut [u8]) -> HalResult<()> {
+        if let Some(h) = &self.0 {
+            let mut s = h.lock();
+            if buf.len() == 4 {
+                if let Some(v) = s.rng_script.pop_front() {
+                    buf.copy_from_slice(&v.to_le_bytes());
+                    return Ok(());
+                }
+            }
+        }
         getrandom::getrandom(buf).map_err(|_| HalError::NotReady)
     }
 }

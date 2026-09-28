@@ -1,0 +1,18 @@
+[package]
+name = "smokebomb-assets-build"
+description = "Builds the QSPI asset pack: Space Grotesk bitmaps and placeholder smoke clips"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+flate2.workspace = true
+fontdue.workspace = true
+rustybuzz.workspace = true
+smokebomb-shared.workspace = true
+
+[[bin]]
+name = "smokebomb-pack"
+path = "src/main.rs"

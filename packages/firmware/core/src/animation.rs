@@ -1,14 +1,15 @@
-//! Playback of pre-rendered smoke clips from the QSPI asset pack.
+//! Playback of the placeholder smoke clips from the QSPI asset pack.
 //!
-//! Frames are streamed straight from flash into the framebuffers each tick;
-//! nothing is decoded or composited on the MCU. See
-//! [`smokebomb_shared::assets`] for the pack layout.
+//! Superseded by the live particle system (SIM_SPEC decision H1); kept until
+//! that lands so shaking and throwing still show something. Frames are
+//! streamed from flash and added on top of each face.
 
 use heapless::Vec;
 use smokebomb_hal::{AssetStore, Face, FrameBytes, HalResult, FACE_COUNT};
-use smokebomb_shared::assets::{ClipEntry, ClipId, PackHeader, CLIP_ENTRY_LEN, HEADER_LEN, PACK_VERSION};
+use smokebomb_shared::assets::{ClipEntry, ClipId, SectionKind, CLIPS_HEADER_LEN, CLIP_ENTRY_LEN};
 
 use crate::display::Framebuffer;
+use crate::pack::PackIndex;
 
 pub const MAX_CLIPS: usize = 32;
 
@@ -23,16 +24,16 @@ pub struct AnimationPlayer {
 }
 
 impl AnimationPlayer {
-    /// Read the clip table. A missing or corrupt pack yields a player with no
-    /// clips; the die still rolls, just without smoke.
-    pub fn load<A: AssetStore>(assets: &mut A) -> Self {
+    /// Read the clip table, if the pack has one.
+    pub fn load<A: AssetStore>(assets: &mut A, pack: &PackIndex) -> Self {
         let mut clips = Vec::new();
-        let mut hdr = [0u8; HEADER_LEN];
-        if assets.read(0, &mut hdr).is_ok() {
-            if let Some(h) = PackHeader::decode(&hdr).filter(|h| h.version == PACK_VERSION) {
-                for i in 0..(h.clip_count as usize).min(MAX_CLIPS) {
+        if let Some(section) = pack.sections(SectionKind::Clips).next() {
+            let mut hdr = [0u8; CLIPS_HEADER_LEN];
+            if assets.read(section.offset, &mut hdr).is_ok() {
+                let count = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
+                for i in 0..count.min(MAX_CLIPS) {
                     let mut e = [0u8; CLIP_ENTRY_LEN];
-                    let off = (HEADER_LEN + i * CLIP_ENTRY_LEN) as u32;
+                    let off = section.offset + (CLIPS_HEADER_LEN + i * CLIP_ENTRY_LEN) as u32;
                     if assets.read(off, &mut e).is_err() {
                         break;
                     }
@@ -62,8 +63,8 @@ impl AnimationPlayer {
         self.playing = None;
     }
 
-    /// Render the current frame into `frames`. Returns `false` when nothing is
-    /// playing so the caller can draw static content instead.
+    /// Add the current frame on top of `frames`. Returns `false` when
+    /// nothing is playing.
     pub fn render<A: AssetStore>(
         &mut self,
         assets: &mut A,
@@ -88,7 +89,7 @@ impl AnimationPlayer {
         let base = p.clip.frame_offset(frame as u16);
         for face in Face::ALL {
             assets.read(base + (face.index() * scratch.len()) as u32, scratch)?;
-            frames[face.index()].load_packed(scratch);
+            frames[face.index()].add_packed(scratch);
         }
         Ok(true)
     }

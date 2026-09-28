@@ -8,6 +8,7 @@ on:
       - "packages/firmware/**"
       - "packages/shared/**"
       - "packages/simulator/**"
+      - "tools/mockup-capture/golden/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rustfmt.toml"
@@ -37,13 +38,22 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy (host crates)
-        run: cargo clippy -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-hal-nrf54l15 --all-targets -- -D warnings
+        run: cargo clippy -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-hal-nrf54l15 -p smokebomb-assets-build --all-targets -- -D warnings
       - name: Clippy (firmware, simulator board)
         run: cargo clippy -p smokebomb-firmware --features simulator -- -D warnings
       - name: Clippy (firmware, nRF54L15 board)
         run: cargo clippy -p smokebomb-firmware --no-default-features --features nrf54l15 --target thumbv8m.main-none-eabihf -- -D warnings
-      - name: Test
-        run: cargo test -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator
+      - name: Test (includes the golden-frame comparison)
+        env:
+          SMOKEBOMB_GOLDEN_SHEETS: target/golden-sheets
+        run: cargo test -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-assets-build
+      - name: Upload golden comparison sheets
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-sheets
+          path: target/golden-sheets/*.png
+          if-no-files-found: ignore
       - name: Build nRF54L15 image (no_std)
         run: cargo fw
       - name: Size report

@@ -114,6 +114,20 @@ This regenerates `tools/mockup-capture/golden/`, the reference frames the
 firmware renderer is checked against. Only rerun it when the mockup or a
 scenario changes. See `tools/mockup-capture/README.md`.
 
+The comparison itself is an ordinary test. To see golden, firmware and
+difference images side by side:
+
+```sh
+SMOKEBOMB_GOLDEN_SHEETS=target/golden-sheets cargo test -p smokebomb-core --test golden -- --nocapture
+```
+
+It prints each face's score (mean difference in panel levels after a slight
+blur; below 0.2 passes). CI uploads the sheets as the `golden-sheets`
+artifact.
+
+To rebuild the asset pack (fonts + placeholder clips) as a file for flashing:
+`cargo run -p smokebomb-assets-build -- smokebomb.smkb`.
+
 ## Server
 
 ```sh
