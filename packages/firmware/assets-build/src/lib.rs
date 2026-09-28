@@ -6,14 +6,12 @@
 //! - rasterizes Space Grotesk at every canvas size the screens use, with pair
 //!   kerning measured by shaping each pair with HarfBuzz (rustybuzz), as the
 //!   browser does for canvas text;
-//! - renders the placeholder smoke clips (to be replaced by particle
-//!   sprites, SIM_SPEC decision H1);
-//! - lays both out as an SMKB v2 pack.
+//! - bakes the smoke sprites the particle system stamps (SIM_SPEC D1, D3);
+//! - lays both out as an SMKB v3 pack.
 
 use std::io::Read;
 
 use smokebomb_shared::assets::*;
-use smokebomb_shared::types::FACE_COUNT;
 
 /// Space Grotesk Bold, the fontsource build the golden frames were captured
 /// with (SIL Open Font License, see `assets/fonts/OFL.txt`).
@@ -204,73 +202,40 @@ pub fn font_sections(sfnt: &[u8], weight: u16) -> Vec<(u16, Vec<u8>)> {
         .collect()
 }
 
-// ---------- placeholder clips ----------
+// ---------- sprites ----------
 
-pub struct Clip {
-    pub id: ClipId,
-    pub fps: u8,
-    pub looping: bool,
-    /// Six packed faces per frame.
-    pub frames: Vec<Vec<u8>>,
-}
-
-/// Cheap procedural rings standing in for smoke until the particle system
-/// lands (SIM_SPEC H1).
-pub fn placeholder_clips() -> Vec<Clip> {
+/// The mockup's sprites: a radial gradient at full opacity in the centre,
+/// 45% at 0.45 of the radius and clear at the edge, in each kind's colour.
+/// The grey value is the colour's brightest channel, as for screen colours.
+pub fn sprites() -> Vec<SpriteEntry> {
+    let alpha = |r: f32| {
+        if r <= 0.45 {
+            1.0 - (1.0 - 0.45) * r / 0.45
+        } else {
+            0.45 * (1.0 - r) / (1.0 - 0.45)
+        }
+    };
+    let profile: [u8; SPRITE_PROFILE_LEN] =
+        std::array::from_fn(|i| (alpha(i as f32 / (SPRITE_PROFILE_LEN - 1) as f32) * 255.0).round() as u8);
     [
-        (ClipId::SmokeIdle, 30u16, true),
-        (ClipId::SmokeShake, 20, true),
-        (ClipId::SmokeThrow, 15, true),
-        (ClipId::MaxBurst, 30, false),
-        (ClipId::Dud, 15, false),
+        (SpriteKind::Smoke, [214u8, 219, 226]),
+        (SpriteKind::Ember, [246, 247, 249]),
+        (SpriteKind::Gold, [255, 255, 255]),
+        (SpriteKind::Fizzle, [120, 122, 126]),
     ]
     .into_iter()
-    .map(|(id, frames, looping)| Clip {
-        id,
-        fps: 30,
-        looping,
-        frames: (0..frames)
-            .map(|f| {
-                (0..FACE_COUNT)
-                    .flat_map(|face| ring_frame(id, f, frames, face))
-                    .collect()
-            })
-            .collect(),
+    .map(|(kind, rgb)| SpriteEntry {
+        kind: kind as u8,
+        value: rgb.into_iter().max().unwrap_or(0),
+        profile,
     })
     .collect()
-}
-
-/// Expanding soft ring, phase-shifted per face so the cube shimmers.
-fn ring_frame(clip: ClipId, frame: u16, frames: u16, face: usize) -> Vec<u8> {
-    let t = (frame as f32 / frames as f32 + face as f32 / 6.0) % 1.0;
-    let radius = 8.0 + t * 48.0;
-    let width = match clip {
-        ClipId::MaxBurst => 10.0,
-        ClipId::SmokeShake => 4.0,
-        _ => 7.0,
-    };
-    let peak = if clip == ClipId::Dud {
-        3.0
-    } else {
-        9.0 * (1.0 - t * 0.6)
-    };
-    let mut buf = vec![0u8; FRAME_BYTES];
-    for y in 0..PANEL_HEIGHT {
-        for x in 0..PANEL_WIDTH {
-            let (dx, dy) = (x as f32 - 47.5, y as f32 - 47.5);
-            let d = (dx * dx + dy * dy).sqrt();
-            let level = (peak * (1.0 - ((d - radius).abs() / width)).max(0.0)) as u8;
-            let i = y * PANEL_WIDTH + x;
-            buf[i / 2] |= if i % 2 == 0 { level << 4 } else { level & 0x0f };
-        }
-    }
-    buf
 }
 
 // ---------- pack ----------
 
 pub enum Section {
-    Clips(Vec<Clip>),
+    Sprites(Vec<SpriteEntry>),
     /// `(canvas_px, bytes)` from [`font_sections`].
     Font(u16, Vec<u8>),
 }
@@ -283,31 +248,14 @@ pub fn build_pack(sections: Vec<Section>) -> Vec<u8> {
         let offset = (table_len + body.len()) as u32;
         let (kind, id, bytes) = match s {
             Section::Font(px, bytes) => (SectionKind::Font, px, bytes),
-            Section::Clips(clips) => {
-                // Clip frames follow the clip table; offsets are absolute.
-                let header = CLIPS_HEADER_LEN + clips.len() * CLIP_ENTRY_LEN;
+            Section::Sprites(sprites) => {
                 let mut table = Vec::new();
-                table.extend((clips.len() as u16).to_le_bytes());
+                table.extend((sprites.len() as u16).to_le_bytes());
                 table.extend([0u8; 2]);
-                let mut data: Vec<u8> = Vec::new();
-                for c in &clips {
-                    table.extend(
-                        ClipEntry {
-                            id: c.id as u16,
-                            frame_count: c.frames.len() as u16,
-                            fps: c.fps,
-                            flags: if c.looping { ClipEntry::FLAG_LOOP } else { 0 },
-                            offset: offset + (header + data.len()) as u32,
-                        }
-                        .encode(),
-                    );
-                    for f in &c.frames {
-                        assert_eq!(f.len(), CUBE_FRAME_BYTES);
-                        data.extend(f);
-                    }
+                for sp in &sprites {
+                    table.extend(sp.encode());
                 }
-                table.extend(data);
-                (SectionKind::Clips, 0, table)
+                (SectionKind::Sprites, 0, table)
             }
         };
         entries.push(SectionEntry {
@@ -335,10 +283,10 @@ pub fn build_pack(sections: Vec<Section>) -> Vec<u8> {
     out
 }
 
-/// The standard pack: Space Grotesk Bold at every size, plus placeholder clips.
+/// The standard pack: Space Grotesk Bold at every size, plus the smoke sprites.
 pub fn standard_pack() -> Vec<u8> {
     let sfnt = woff_to_sfnt(SPACE_GROTESK_BOLD_WOFF).expect("bundled font converts");
-    let mut sections = vec![Section::Clips(placeholder_clips())];
+    let mut sections = vec![Section::Sprites(sprites())];
     sections.extend(
         font_sections(&sfnt, 700)
             .into_iter()
@@ -352,13 +300,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn standard_pack_has_fonts_and_clips() {
+    fn standard_pack_has_fonts_and_sprites() {
         let pack = standard_pack();
         let header = PackHeader::decode(pack[..HEADER_LEN].try_into().unwrap()).unwrap();
         assert_eq!(header.version, PACK_VERSION);
         assert_eq!(header.total_len as usize, pack.len());
         assert_eq!(header.section_count as usize, 1 + CANVAS_SIZES.count());
         assert!(pack.len() < QSPI_CAPACITY as usize);
+    }
+
+    #[test]
+    fn sprites_match_the_mockup_gradient() {
+        let smoke = sprites()[SpriteKind::Smoke as usize];
+        assert_eq!(smoke.value, 226);
+        assert_eq!(smoke.profile[0], 255);
+        // 0.45 of the radius is sample 28.8: 45% there.
+        assert!(
+            (smoke.profile[29] as i32 - 114).abs() <= 2,
+            "{}",
+            smoke.profile[29]
+        );
+        assert_eq!(smoke.profile[SPRITE_PROFILE_LEN - 1], 0);
     }
 
     #[test]

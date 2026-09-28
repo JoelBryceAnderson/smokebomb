@@ -13,6 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
+use smokebomb_core::smoke::SmokeRng;
 use smokebomb_core::Firmware;
 use smokebomb_hal::{Face, FACE_COUNT, FRAME_BYTES};
 use smokebomb_hal_simulator::world::{TipDir, World, DEFAULT_VIEWER_RIGHT};
@@ -30,6 +31,22 @@ type Levels = [u8; PIXELS];
 /// Content that is missing, misplaced by a pixel (≈ 1.0) or mis-sized scores
 /// well above this.
 const MAX_BLURRED_MAE: f32 = 0.25;
+
+/// The world model's seed, so shakes and tumbles are the same every run.
+const WORLD_SEED: u64 = 1;
+
+/// The capture tool seeds the mockup's `Math.random` with mulberry32(42), and
+/// the page draws this many numbers while it loads (textures and the like;
+/// counted by stepping the capture harness frame by frame). The boot burst
+/// at 2.7 s draws the next ones, so a firmware whose smoke generator starts
+/// here spawns exactly the mockup's particles.
+const MOCKUP_RANDOM_CALLS_AT_LOAD: u32 = 44_488;
+
+fn mockup_rng() -> SmokeRng {
+    let mut rng = SmokeRng::new(42);
+    rng.skip(MOCKUP_RANDOM_CALLS_AT_LOAD);
+    rng
+}
 
 fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tools/mockup-capture/golden")
@@ -72,7 +89,11 @@ impl Run {
 
     /// Driven by the simulator's world model, like the simulator itself.
     fn with_world() -> Self {
-        Self::start(Some(World::new()))
+        let seed = std::env::var("WORLD_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(WORLD_SEED);
+        Self::start(Some(World::with_seed(seed)))
     }
 
     fn start(world: Option<World>) -> Self {
@@ -84,7 +105,8 @@ impl Run {
             // The mockup's stand-in battery level.
             s.battery_percent = 78;
         }
-        let fw = Firmware::new(sim.peripherals()).unwrap();
+        let mut fw = Firmware::new(sim.peripherals()).unwrap();
+        fw.smoke_mut().set_rng(mockup_rng());
         let mut run = Self {
             sim,
             fw,
@@ -287,8 +309,8 @@ fn run_scenario_on(
 
 #[test]
 fn boot_and_wake_label_match_the_mockup() {
-    // Smoke from the top-face burst (t ≈ 2.7–5.5 s) needs the particle
-    // system, so those checkpoints wait for it.
+    // 2.7–5.5 s is the top face's smoke burst, replayed particle for particle
+    // from the mockup's random sequence.
     let times: &[(f64, &str)] = &[
         (0.1, "0.10"),
         (0.25, "0.25"),
@@ -301,6 +323,10 @@ fn boot_and_wake_label_match_the_mockup() {
         (2.35, "2.35"),
         (2.5, "2.50"),
         (2.7, "2.70"),
+        (3.0, "3.00"),
+        (3.6, "3.60"),
+        (4.2, "4.20"),
+        (5.0, "5.00"),
         (5.9, "5.90"),
         (6.1, "6.10"),
         (6.5, "6.50"),
@@ -371,6 +397,162 @@ fn result_screen_matches_the_mockup() {
 }
 
 const THROW_AT: f64 = 10.4;
+
+// ---------- smoke ----------
+
+/// Smoke from a shake or throw can't match the mockup particle for particle:
+/// the mockup draws the shake's jitter and the tumble from the same random
+/// stream as the smoke. Those frames are compared on coarse statistics
+/// instead: each face as 8×8 blocks of 12×12 px, by mean level. This checks
+/// that about as much smoke is in about the same places at the same times.
+fn block_means(l: &Levels) -> [f32; 64] {
+    let mut out = [0f32; 64];
+    for (i, &v) in l.iter().enumerate() {
+        let (x, y) = (i % 96, i / 96);
+        out[(y / 12) * 8 + x / 12] += v as f32 / 144.0;
+    }
+    out
+}
+
+/// How far the whole die's mean level may be from the mockup's. Which faces
+/// the random smoke favours varies, but the total is steady: within 1.1
+/// levels at every checkpoint across world seeds. No smoke where the mockup
+/// has a cloud is ~10 off; smoke that never drained, ~5.
+const MAX_SMOKE_AMOUNT_DIFF: f32 = 1.5;
+/// Block MAE one face may have, in levels: a guard against smoke in the
+/// wrong places. Random smoke scores up to ~6.3 across world seeds.
+const MAX_SMOKE_BLOCK_MAE: f32 = 7.5;
+
+fn smoke_score(golden: &Levels, ours: &Levels) -> f32 {
+    let (g, o) = (block_means(golden), block_means(ours));
+    g.iter().zip(&o).map(|(a, b)| (a - b).abs()).sum::<f32>() / 64.0
+}
+
+impl Run {
+    fn shake(&mut self) {
+        self.world.as_mut().expect("the world model").start_shake();
+    }
+
+    fn throw_release(&mut self) {
+        self.world.as_mut().expect("the world model").end_shake(true);
+    }
+}
+
+/// Run a mockup scenario with random smoke on the world model and print
+/// per-face block scores; returns the failures above `max`.
+fn run_smoke_scenario(
+    scenario: &str,
+    times: &[(f64, &'static str)],
+    inputs: Vec<(f64, Input)>,
+    setup: impl FnOnce(&mut Run),
+    max: f32,
+) -> Vec<String> {
+    let mut run = Run::with_world();
+    setup(&mut run);
+    let mut inputs = inputs;
+    inputs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut inputs = inputs.into_iter().peekable();
+    let mut failures = Vec::new();
+    let mut rows = Vec::new();
+    println!(
+        "\n{scenario} (smoke): whole-die mean level vs the mockup, then block MAE per face (+X −X +Y −Y +Z −Z)"
+    );
+    for &(t, name) in times {
+        while let Some((at, _)) = inputs.peek() {
+            if *at > t {
+                break;
+            }
+            let (at, input) = inputs.next().unwrap();
+            run.advance_to(at - 1.0 / FPS);
+            input(&mut run);
+        }
+        run.advance_to(t);
+        let (golden, ours) = (load_golden(scenario, name), run.faces());
+        let mean = |f: &[Levels; FACE_COUNT]| {
+            f.iter().flatten().map(|&v| v as f32).sum::<f32>() / (FACE_COUNT * PIXELS) as f32
+        };
+        let amount = mean(&ours) - mean(&golden);
+        if amount.abs() > MAX_SMOKE_AMOUNT_DIFF {
+            failures.push(format!(
+                "{scenario} t={name}: the die's mean level is {amount:+.2} from the mockup's (limit ±{MAX_SMOKE_AMOUNT_DIFF})"
+            ));
+        }
+        let mut line = format!("  t={name:>5}  amount {amount:+5.2} |");
+        for face in Face::ALL {
+            let score = smoke_score(&golden[face.index()], &ours[face.index()]);
+            line += &format!(" {score:5.2}");
+            if score > max {
+                failures.push(format!(
+                    "{scenario} t={name} face {face:?}: smoke block MAE {score:.2} > {max}"
+                ));
+            }
+        }
+        println!("{line}");
+        rows.push(Row { name, golden, ours });
+    }
+    if let Some(dir) = std::env::var_os("SMOKEBOMB_GOLDEN_SHEETS") {
+        write_sheet(Path::new(&dir), &format!("{scenario}-smoke"), &rows);
+        for row in &rows {
+            let raw: Vec<u8> = row.ours.iter().flatten().copied().collect();
+            std::fs::write(
+                Path::new(&dir).join(format!("{scenario}-smoke-{}.levels", row.name)),
+                raw,
+            )
+            .unwrap();
+        }
+    }
+    failures
+}
+
+#[test]
+fn quick_throw_smoke_matches_the_mockup() {
+    // A quick press throws with almost no shake: the throw fills the cloud.
+    let times: &[(f64, &str)] = &[(9.3, "9.30"), (10.6, "10.60"), (11.2, "11.20")];
+    let failures = run_smoke_scenario(
+        "quickThrow",
+        times,
+        vec![(9.0, Run::shake), (9.05, Run::throw_release)],
+        |_| {},
+        MAX_SMOKE_BLOCK_MAE,
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn throw_smoke_matches_the_mockup() {
+    // Hold the throw button 1 s, release: the shake fills the cloud, the
+    // tumble carries it, the landing drains it with embers. The mockup's
+    // throw rolled 12 and landed +Z up.
+    let times: &[(f64, &str)] = &[
+        (9.2, "9.20"),
+        (9.5, "9.50"),
+        (9.9, "9.90"),
+        (10.2, "10.20"),
+        (10.6, "10.60"),
+        (11.0, "11.00"),
+        // 11.25 is the landing frame itself: the held smoke restarts its
+        // life there and fades back in over 0.12 s, so a frame's difference
+        // in when the die stops decides the whole frame.
+        (11.3, "11.30"),
+        (11.45, "11.45"),
+        (11.6, "11.60"),
+        (11.8, "11.80"),
+        (12.1, "12.10"),
+        (12.5, "12.50"),
+        (13.5, "13.50"),
+    ];
+    let failures = run_smoke_scenario(
+        "throw",
+        times,
+        vec![(9.0, Run::shake), (10.0, Run::throw_release)],
+        |r| {
+            r.world.as_mut().unwrap().set_next_landing(Face::PosZ);
+            r.sim.lock().rng_script.push_back(11);
+        },
+        MAX_SMOKE_BLOCK_MAE,
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
 
 fn checkpoints(times: &[(f64, &'static str)], skip: &'static [(Face, &'static str)]) -> Vec<Checkpoint> {
     times

@@ -35,7 +35,7 @@ smokebomb/
 └── packages/
     ├── shared/                 smokebomb-shared: no_std wire types, roll record + hashing, asset pack layout
     ├── firmware/               smokebomb-firmware: picks the board by feature (simulator | nrf54l15)
-    │   ├── core/               smokebomb-core: state machine, motion, rolls, menu, rendering, animation player
+    │   ├── core/               smokebomb-core: state machine, motion, rolls, menu, rendering, smoke
     │   ├── hal/                smokebomb-hal: peripheral traits (Display, Imu, Touch, Ble, SecureElement, ...)
     │   │   ├── simulator/      smokebomb-hal-simulator: in-memory peripherals + scripted IMU input
     │   │   └── nrf54l15/       smokebomb-hal-nrf54l15: production board (stub)
@@ -137,8 +137,8 @@ animation rate; panels accept at most 100 Hz. Each tick:
    `Tap` / `LongPress`. Poll the PMIC for nest docking. Drain BLE writes.
 2. **Decide.** Feed the events to the pure `StateMachine`, which returns
    `Command`s.
-3. **Act.** Execute the commands: start/stop clips, fire haptics, roll and
-   sign, open and close the menu.
+3. **Act.** Execute the commands: fire haptics, roll and sign, open and
+   close the menu. Then drive the smoke through the throw (below).
 4. **Render.** Draw into six 8-bit grey framebuffers (the mockup's canvas
    value range), then quantize each to the panel's 16 levels with the
    mockup's ordered dither and pack it at 4 bpp (`display.rs`, SIM_SPEC B1).
@@ -239,12 +239,12 @@ submitted key.
 
 ### Asset pack
 
-Everything the firmware draws from flash lives in one **SMKB v2 asset pack**
+Everything the firmware draws from flash lives in one **SMKB v3 asset pack**
 in the 64 MB QSPI flash (`smokebomb_shared::assets`). Theme-store downloads use
 the same format.
 
 ```text
-offset 0    PackHeader    "SMKB" | version u16 = 2 | section_count u16 | total_len u32 | reserved
+offset 0    PackHeader    "SMKB" | version u16 = 3 | section_count u16 | total_len u32 | reserved
 offset 16   SectionEntry × section_count   kind u16 | id u16 | offset u32 | len u32 | reserved
 ...         sections
 ```
@@ -252,14 +252,15 @@ offset 16   SectionEntry × section_count   kind u16 | id u16 | offset u32 | len
 | Section | Contents |
 |---|---|
 | `Font` (one per size) | Space Grotesk Bold at one mockup canvas size (8–94 px): header with ascent/descent, glyph table (advance, bitmap box), pair kerning, 8-bit coverage bitmaps at panel resolution |
-| `Clips` | The placeholder smoke clips (procedural rings, 4bpp six-face frames), until the particle system replaces them (SIM_SPEC H1) |
+| `Sprites` | One smoke stamp per particle kind (smoke, ember, gold, fizzle): its grey value and a 65-point radial opacity profile. A theme is a sprite set plus parameters (SIM_SPEC H1) |
 
 `packages/firmware/assets-build` builds the pack on the host:
 - **Fonts:** it rasterizes the bundled font (`assets/fonts`, the exact
   fontsource build the golden frames were captured with) with fontdue. It
   measures kerning by shaping every character pair with rustybuzz, as the
   browser does for canvas text.
-- **Clips:** it renders the placeholder smoke clips.
+- **Sprites:** it bakes the mockup's radial gradient (full at the centre,
+  45% at 0.45 of the radius, clear at the edge) for each kind's colour.
 
 The simulator HAL builds the pack at compile time and starts its simulated
 flash with it. `cargo run -p smokebomb-assets-build -- out.smkb` writes one
@@ -289,8 +290,8 @@ code.
   dimming, and the precedence order from SIM_SPEC Part C.
 
 **Checking against the mockup:** `packages/firmware/core/tests/golden.rs`
-drives the firmware through the boot and tap timelines of
-`tools/mockup-capture`. It scores every face against the golden frame by mean
+drives the firmware through the timelines of `tools/mockup-capture` (boot,
+tap, throw, menu). It scores every face against the golden frame by mean
 difference in panel levels after a 3×3 blur, which forgives sub-pixel edge
 placement but not missing, misplaced or mis-sized content. With
 `SMOKEBOMB_GOLDEN_SHEETS=<dir>` it also writes golden, firmware and difference
@@ -299,6 +300,46 @@ images side by side.
 **Hardware note:** glyphs are read from flash every time they're drawn. On the
 nRF54L15 the QSPI flash can be memory-mapped (XIP), which makes that a plain
 memory read; otherwise add a glyph cache.
+
+### Smoke
+
+`smoke.rs` is the mockup's particle system (SIM_SPEC part D), ported
+statement for statement.
+- **Particles** live on the unit cube's surface and slide over it: gravity
+  pulls them downhill, curl noise stirs them, and at an edge they carry on
+  over the next face. Each frame they're stamped additively with the pack's
+  sprites, and a particle near an edge is also stamped on the neighbouring
+  face, so smoke wraps round the die.
+- **The throw** drives it (SIM_SPEC C5): shaking builds a held cloud banked
+  over the face centres; the throw tops it up to 380; the landing (the die
+  stopping, under 1°/s) lets it drain with a top-up and embers; a max or dud
+  adds its gold ring or fizzle once the smoke has cleared. The boot bursts a
+  cloud off the top face. Opening the menu or restarting clears it.
+- **Gravity** comes from `orientation::Gravity`: the gyro turns the estimate
+  with the die every sample and the accelerometer corrects it when it reads
+  about 1 g. Shaking and free fall swamp the accelerometer, and the smoke
+  must keep falling the right way through both.
+- **Time:** the smoke has its own clock, the sum of its steps, like the
+  mockup's `now`. A tick that comes on time counts as exactly 1/60 s.
+- **Random numbers** come from mulberry32, the generator the capture tool
+  seeds the mockup with, drawn in the mockup's order. Seeded from the TRNG at
+  boot; the golden test seeds it as the mockup was and replays the boot burst
+  particle for particle.
+- **Cost:** a full cloud is ~500 particles and ~4M sprite pixels a tick at
+  96×96, about 8 ms on a desktop (the core is built with `opt-level = 3`
+  even in dev builds for this). Stamps skip their invisible outer ring and
+  read opacity from a table by squared distance. SIM_SPEC H1 plans half
+  resolution (48×48) on hardware; even that is ~1M pixels a tick, so the
+  hardware budget still needs measuring on the nRF54L15.
+
+**Checking against the mockup:** the boot burst is compared frame by frame
+like the other screens (it matches to within 0.21 levels as the last,
+faintest smoke fades). Shake and throw smoke can't match particle for
+particle, because the mockup draws the shake's jitter and the tumble from
+the same random stream, so those frames are compared statistically, on a
+seeded world model: the whole die's mean level against the mockup's (within
+1.5 levels; the right amount of smoke at the right times), and each face as
+8×8 blocks of mean level (a looser guard against smoke in the wrong places).
 
 ### Faces
 
@@ -466,7 +507,8 @@ Each workflow is filtered by path for pull requests and runs in full on
 - Postcard framing for BLE messages (`PhoneToDie` / `DieToPhone` are defined
   but not yet serialised)
 - Persisting settings, `prev_hash` and the owner name to flash
-- The offline smoke render pipeline and real asset packs
+- Smoke at half resolution for the hardware frame budget, and reduced-motion
+  particle counts (the firmware has no reduced-motion setting yet)
 - Server: auth (argon2 + JWT), roll upload/storage, sessions API, theme
   purchase, factory attestation for device registration
 - Mobile: real BLE and NFC, Ktor client, persistence, DFU

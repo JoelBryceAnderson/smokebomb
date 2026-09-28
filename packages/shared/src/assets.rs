@@ -1,9 +1,10 @@
 //! Layout of the asset pack stored in the 64 MB QSPI flash.
 //!
 //! The pack holds everything the firmware draws from flash: Space Grotesk
-//! bitmaps at every size the screens use, smoke sprites (with the particle
-//! system), and the legacy placeholder smoke clips. Theme-store downloads use
-//! the same format, so the server, the phone and the die all agree on it.
+//! bitmaps at every size the screens use, and the smoke sprites the particle
+//! system stamps (SIM_SPEC decision H1: a theme is a sprite set plus
+//! parameters). Theme-store downloads use the same format, so the server, the
+//! phone and the die all agree on it.
 //!
 //! ```text
 //! offset 0     PackHeader                   (16 bytes)
@@ -12,9 +13,8 @@
 //! ```
 //!
 //! Section kinds:
-//! - [`SectionKind::Clips`]: `u16 clip_count, u16 reserved`, then
-//!   [`ClipEntry`] × clip_count. Clip frame offsets are absolute within the
-//!   pack; each frame is `FACE_COUNT * FRAME_BYTES`, 4bpp packed.
+//! - [`SectionKind::Sprites`]: `u16 sprite_count, u16 reserved`, then
+//!   [`SpriteEntry`] × sprite_count.
 //! - [`SectionKind::Font`]: one weight at one size. [`FontHeader`], then
 //!   [`GlyphEntry`] × glyph_count (sorted by codepoint), then [`KernEntry`] ×
 //!   kern_count at `kern_offset` (sorted by left, then right), then 8-bit
@@ -22,11 +22,10 @@
 //!   section start. Sizes are in panel pixels, fixed point with 6 fractional
 //!   bits (`_q6`).
 
-use crate::types::FACE_COUNT;
-
 pub const PACK_MAGIC: [u8; 4] = *b"SMKB";
-/// v2: section table (fonts + clips). v1 was a bare clip table.
-pub const PACK_VERSION: u16 = 2;
+/// v3: fonts + smoke sprites. v2 also carried placeholder smoke clips, and
+/// v1 was a bare clip table; the firmware ignores older packs.
+pub const PACK_VERSION: u16 = 3;
 
 /// Size of the external QSPI flash reserved for the asset pack.
 pub const QSPI_CAPACITY: u32 = 64 * 1024 * 1024;
@@ -37,13 +36,13 @@ pub const PANEL_HEIGHT: usize = 96;
 pub const BITS_PER_PIXEL: usize = 4;
 /// One panel frame: two pixels per byte, high nibble first.
 pub const FRAME_BYTES: usize = PANEL_WIDTH * PANEL_HEIGHT * BITS_PER_PIXEL / 8;
-/// All six faces for one animation frame.
-pub const CUBE_FRAME_BYTES: usize = FRAME_BYTES * FACE_COUNT;
 
 pub const HEADER_LEN: usize = 16;
 pub const SECTION_ENTRY_LEN: usize = 16;
-pub const CLIP_ENTRY_LEN: usize = 16;
-pub const CLIPS_HEADER_LEN: usize = 4;
+pub const SPRITES_HEADER_LEN: usize = 4;
+/// Samples in a sprite's radial profile, centre to edge inclusive.
+pub const SPRITE_PROFILE_LEN: usize = 65;
+pub const SPRITE_ENTRY_LEN: usize = 68;
 pub const FONT_HEADER_LEN: usize = 24;
 pub const GLYPH_ENTRY_LEN: usize = 16;
 pub const KERN_ENTRY_LEN: usize = 8;
@@ -54,30 +53,68 @@ pub const Q6: f32 = 64.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u16)]
 pub enum SectionKind {
-    Clips = 1,
+    // 1 was the retired placeholder clips.
     Font = 2,
+    Sprites = 3,
 }
 
 impl SectionKind {
     pub const fn from_u16(v: u16) -> Option<SectionKind> {
         match v {
-            1 => Some(SectionKind::Clips),
             2 => Some(SectionKind::Font),
+            3 => Some(SectionKind::Sprites),
             _ => None,
         }
     }
 }
 
-/// Well-known clip slots the firmware looks up by id.
+/// The particle kinds, each with its own sprite (SIM_SPEC D3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u16)]
-pub enum ClipId {
-    SmokeIdle = 0,
-    SmokeShake = 1,
-    SmokeThrow = 2,
-    Reveal = 3,
-    MaxBurst = 4,
-    Dud = 5,
+#[repr(u8)]
+pub enum SpriteKind {
+    Smoke = 0,
+    Ember = 1,
+    Gold = 2,
+    Fizzle = 3,
+}
+
+impl SpriteKind {
+    pub const ALL: [SpriteKind; 4] = [
+        SpriteKind::Smoke,
+        SpriteKind::Ember,
+        SpriteKind::Gold,
+        SpriteKind::Fizzle,
+    ];
+}
+
+/// A round smoke stamp: its grey value (the brightest channel of the
+/// mockup's colour) and its opacity from the centre (`profile[0]`) to the
+/// edge (`profile[64]`), 0–255, linear in radius. Stamps are drawn additively.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpriteEntry {
+    pub kind: u8,
+    pub value: u8,
+    pub profile: [u8; SPRITE_PROFILE_LEN],
+}
+
+impl SpriteEntry {
+    pub fn encode(&self) -> [u8; SPRITE_ENTRY_LEN] {
+        let mut b = [0u8; SPRITE_ENTRY_LEN];
+        b[0] = self.kind;
+        b[1] = self.value;
+        b[2..2 + SPRITE_PROFILE_LEN].copy_from_slice(&self.profile);
+        b
+    }
+
+    pub fn decode(b: &[u8; SPRITE_ENTRY_LEN]) -> SpriteEntry {
+        let mut profile = [0u8; SPRITE_PROFILE_LEN];
+        profile.copy_from_slice(&b[2..2 + SPRITE_PROFILE_LEN]);
+        SpriteEntry {
+            kind: b[0],
+            value: b[1],
+            profile,
+        }
+    }
 }
 
 fn u16_at(b: &[u8], i: usize) -> u16 {
@@ -149,48 +186,6 @@ impl SectionEntry {
             offset: u32_at(b, 4),
             len: u32_at(b, 8),
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ClipEntry {
-    pub id: u16,
-    pub frame_count: u16,
-    pub fps: u8,
-    pub flags: u8,
-    /// Absolute byte offset of the first frame within the pack.
-    pub offset: u32,
-}
-
-impl ClipEntry {
-    pub const FLAG_LOOP: u8 = 1 << 0;
-
-    pub fn encode(&self) -> [u8; CLIP_ENTRY_LEN] {
-        let mut b = [0u8; CLIP_ENTRY_LEN];
-        b[0..2].copy_from_slice(&self.id.to_le_bytes());
-        b[2..4].copy_from_slice(&self.frame_count.to_le_bytes());
-        b[4] = self.fps;
-        b[5] = self.flags;
-        b[8..12].copy_from_slice(&self.offset.to_le_bytes());
-        b
-    }
-
-    pub fn decode(b: &[u8; CLIP_ENTRY_LEN]) -> ClipEntry {
-        ClipEntry {
-            id: u16_at(b, 0),
-            frame_count: u16_at(b, 2),
-            fps: b[4],
-            flags: b[5],
-            offset: u32_at(b, 8),
-        }
-    }
-
-    pub fn frame_offset(&self, frame: u16) -> u32 {
-        self.offset + frame as u32 * CUBE_FRAME_BYTES as u32
-    }
-
-    pub fn looping(&self) -> bool {
-        self.flags & Self::FLAG_LOOP != 0
     }
 }
 
@@ -311,10 +306,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn budget() {
-        // 64 MB holds ~2400 six-face frames: ~80 s of smoke at 30 fps.
+    fn frame_size() {
         assert_eq!(FRAME_BYTES, 4608);
-        assert!(QSPI_CAPACITY as usize / CUBE_FRAME_BYTES > 2400);
     }
 
     #[test]
@@ -332,14 +325,15 @@ mod tests {
             len: 1234,
         };
         assert_eq!(SectionEntry::decode(&s.encode()), s);
-        let c = ClipEntry {
-            id: 2,
-            frame_count: 40,
-            fps: 30,
-            flags: ClipEntry::FLAG_LOOP,
-            offset: 64,
+        let mut profile = [0u8; SPRITE_PROFILE_LEN];
+        profile[0] = 255;
+        profile[29] = 115;
+        let sp = SpriteEntry {
+            kind: SpriteKind::Ember as u8,
+            value: 249,
+            profile,
         };
-        assert_eq!(ClipEntry::decode(&c.encode()), c);
+        assert_eq!(SpriteEntry::decode(&sp.encode()), sp);
         let f = FontHeader {
             weight: 700,
             canvas_px: 94,
