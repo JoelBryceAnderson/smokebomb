@@ -40,6 +40,7 @@ export function App() {
   const [docked, setDocked] = useState(false);
   const [ble, setBle] = useState(false);
   const [reduced, setReduced] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const [multiTurn, setMultiTurn] = useState(false);
   const shaking = useRef(false);
 
   useEffect(() => {
@@ -90,6 +91,11 @@ export function App() {
           onRotate={(yaw, pitch) => send({ type: "rotate", yaw, pitch })}
           swipeToTip={menuOpen}
           onTip={tip}
+          multiTurn={multiTurn}
+          onSpin={(axis, angle) =>
+            send({ type: "spin", axis, angle, right: die.current?.viewerRight() ?? [1, 0, 0] })
+          }
+          onSpinEnd={() => send({ type: "spin_end" })}
         />
         {state.protocolMismatch && (
           <div className="banner" role="alert">
@@ -105,7 +111,7 @@ export function App() {
         </div>
         <p className="hint">
           {menuOpen
-            ? "Menu: swipe or use the tip pad to turn to the next screen · hold to save"
+            ? "Menu: swipe or use the tip pad to turn to the next screen · Ctrl-drag to turn several · hold to save"
             : "Drag to turn the die · press and hold a face to touch it · arrow keys tip it"}
         </p>
       </main>
@@ -153,6 +159,14 @@ export function App() {
               </button>
             ))}
           </div>
+          <label className="check">
+            <input type="checkbox" checked={multiTurn} onChange={(e) => setMultiTurn(e.target.checked)} />
+            Multi-turn swipes in the menu
+          </label>
+          <p className="muted">
+            Or hold Ctrl (⌘ on a Mac) while you drag: the die follows your finger across as many screens as you like and
+            settles on the nearest one when you let go. Each screen passed is one step.
+          </p>
         </section>
 
         <section>

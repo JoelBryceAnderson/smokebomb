@@ -15,21 +15,34 @@
 //! the die turns and classifies the accumulated rotation against the menu
 //! [`Frame`]. Progress (angle turned ÷ 90°) drives the content slide, which in
 //! the mockup follows the same ease-out curve as the rotation.
+//!
+//! One turn can pass several faces: turning the die 180° in one go counts as
+//! two tips, and turning back part of the way takes steps off again. The turn
+//! ends when the die comes to rest on a face, and counts the faces it moved.
+//! Whatever a turn leaves over (the die rarely stops exactly square) carries
+//! into the next one, so the count follows the die's real orientation even
+//! through slow turns with stops on the way.
 
-use libm::{fabsf, sqrtf};
+use libm::{fabsf, roundf, sqrtf};
 use smokebomb_hal::Face;
 
 /// Below this the die counts as still (deg/s).
 const STILL_DPS: f32 = 8.0;
-/// Above this a turn has started (deg/s).
-const START_DPS: f32 = 30.0;
+/// Above this a turn has started (deg/s). Low, so a slow turn counts too.
+const START_DPS: f32 = 12.0;
 /// Stillness needed before tips are recognised (after the menu opens, or
 /// after the die is snapped toward the viewer).
 const ARM_MS: u64 = 120;
-/// Angle at which the direction is decided, and the least that counts as a
-/// completed tip when the turn stops.
+/// Angle at which the direction is decided.
 const DECIDE_DEG: f32 = 8.0;
-const COMPLETE_DEG: f32 = 60.0;
+/// A turn that stops within this many quarter turns of a face ends there
+/// (30°: a quick tip that stops at 60° counts, as before).
+const SETTLE: f32 = 1.0 / 3.0;
+/// A turn ends once the die has been still this long, so a hand (or a
+/// pointer) that stops briefly mid-turn doesn't end it early.
+const SETTLE_STILL_MS: u64 = 200;
+/// A turn that stops between faces for this long ends at the nearest face.
+const SETTLE_MS: u64 = 1_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TipDir {
@@ -37,6 +50,17 @@ pub enum TipDir {
     Down,
     Left,
     Right,
+}
+
+impl TipDir {
+    pub const fn opposite(self) -> TipDir {
+        match self {
+            TipDir::Up => TipDir::Down,
+            TipDir::Down => TipDir::Up,
+            TipDir::Left => TipDir::Right,
+            TipDir::Right => TipDir::Left,
+        }
+    }
 }
 
 /// The menu's frame in die coordinates: unit vectors toward the viewer
@@ -97,6 +121,16 @@ impl Frame {
         }
     }
 
+    /// The frame after `steps` tips in `dir` (negative steps go the other way).
+    pub fn stepped(&self, dir: TipDir, steps: i32) -> Frame {
+        let d = if steps < 0 { dir.opposite() } else { dir };
+        let mut f = *self;
+        for _ in 0..steps.unsigned_abs() {
+            f = f.after(d);
+        }
+        f
+    }
+
     /// Which way `face`'s surface moves during `dir`, as a unit vector in
     /// its unrotated canvas (x right, y down); zero for faces on the axis.
     /// The mockup slides menu content along it (`faceMotionDir`).
@@ -130,14 +164,20 @@ impl Frame {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TipUpdate {
     None,
-    /// A tip is under way: its direction and how far it has turned (0–1).
+    /// A turn is under way: its direction, and how far it has turned in
+    /// quarter turns. Past 1 it has passed a face; below 0 it has come back
+    /// past where it started.
     Turning {
         dir: TipDir,
         progress: f32,
     },
-    /// A tip finished.
-    Done(TipDir),
-    /// The die moved but didn't complete a tip.
+    /// A turn came to rest `steps` faces along `dir` (negative: the other
+    /// way).
+    Done {
+        dir: TipDir,
+        steps: i32,
+    },
+    /// The die moved but came back to the face it started on.
     Cancelled,
 }
 
@@ -146,8 +186,18 @@ pub struct TipTracker {
     armed: bool,
     still_since: Option<u64>,
     turning: bool,
+    /// Rotation since the last face was counted, including any leftover
+    /// (degrees, die axes).
     theta: [f32; 3],
+    /// Rotation since this turn started; picks the turn's direction.
+    fresh: [f32; 3],
     dir: Option<TipDir>,
+    /// When the die stopped mid-turn.
+    paused_since: Option<u64>,
+    /// What the last turn left over, about the frame's right and up axes
+    /// (degrees). Those are the viewer's right and the sky, which stay put
+    /// as the frame turns, so the leftover stays meaningful.
+    leftover: (f32, f32),
 }
 
 impl TipTracker {
@@ -164,11 +214,9 @@ impl TipTracker {
         self.armed
     }
 
-    pub fn turning(&self) -> Option<(TipDir, f32)> {
-        match (self.turning, self.dir) {
-            (true, Some(d)) => Some((d, (norm(self.theta) / 90.0).min(1.0))),
-            _ => None,
-        }
+    /// Signed progress in quarter turns along `dir`'s axis.
+    fn progress(&self, dir: TipDir, frame: &Frame) -> f32 {
+        dot(self.theta, frame.axis(dir)) / 90.0
     }
 
     /// Feed one gyro sample (milli-deg/s, die axes) covering `dt_s` seconds.
@@ -197,16 +245,18 @@ impl TipTracker {
                 return (false, TipUpdate::None);
             }
             self.turning = true;
-            self.theta = [0.0; 3];
+            let (r, u) = self.leftover;
+            self.theta = core::array::from_fn(|i| r * frame.right[i] + u * frame.up[i]);
+            self.fresh = [0.0; 3];
             self.dir = None;
         }
 
-        for (t, w) in self.theta.iter_mut().zip(w) {
+        for ((t, f), w) in self.theta.iter_mut().zip(&mut self.fresh).zip(w) {
             *t += w * dt_s;
+            *f += w * dt_s;
         }
-        let angle = norm(self.theta);
-        if self.dir.is_none() && angle >= DECIDE_DEG {
-            let (r, u) = (dot(self.theta, frame.right), dot(self.theta, frame.up));
+        if self.dir.is_none() && norm(self.fresh) >= DECIDE_DEG {
+            let (r, u) = (dot(self.fresh, frame.right), dot(self.fresh, frame.up));
             self.dir = Some(if fabsf(r) >= fabsf(u) {
                 if r < 0.0 {
                     TipDir::Up
@@ -221,21 +271,45 @@ impl TipTracker {
         }
 
         if still {
-            let result = match self.dir {
-                Some(d) if angle >= COMPLETE_DEG => TipUpdate::Done(d),
-                _ => TipUpdate::Cancelled,
+            let paused = now - *self.paused_since.get_or_insert(now);
+            let settled = match self.dir {
+                _ if paused < SETTLE_STILL_MS => None,
+                None => Some((TipUpdate::Cancelled, [0.0; 3])),
+                Some(dir) => {
+                    let p = self.progress(dir, frame);
+                    let steps = roundf(p);
+                    if fabsf(p - steps) <= SETTLE || paused >= SETTLE_MS {
+                        let counted = frame.axis(dir).map(|a| a * steps * 90.0);
+                        Some((
+                            match steps as i32 {
+                                0 => TipUpdate::Cancelled,
+                                steps => TipUpdate::Done { dir, steps },
+                            },
+                            counted,
+                        ))
+                    } else {
+                        None // stopped between faces: wait
+                    }
+                }
             };
-            self.turning = false;
-            self.theta = [0.0; 3];
-            self.dir = None;
-            return (false, result);
+            if let Some((result, counted)) = settled {
+                let left: [f32; 3] = core::array::from_fn(|i| self.theta[i] - counted[i]);
+                self.leftover = (dot(left, frame.right), dot(left, frame.up));
+                self.turning = false;
+                self.theta = [0.0; 3];
+                self.dir = None;
+                self.paused_since = None;
+                return (false, result);
+            }
+        } else {
+            self.paused_since = None;
         }
         match self.dir {
             Some(dir) => (
                 false,
                 TipUpdate::Turning {
                     dir,
-                    progress: (angle / 90.0).min(1.0),
+                    progress: self.progress(dir, frame),
                 },
             ),
             None => (false, TipUpdate::None),
@@ -326,13 +400,17 @@ mod tests {
     /// Simulate a 90° turn about `axis` over 0.42 s with the mockup's
     /// ease-out, then rest.
     fn turn(t: &mut TipTracker, f: &Frame, axis: [f32; 3]) -> std::vec::Vec<TipUpdate> {
+        turn_by(t, f, axis, 90.0)
+    }
+
+    fn turn_by(t: &mut TipTracker, f: &Frame, axis: [f32; 3], degrees: f32) -> std::vec::Vec<TipUpdate> {
         let mut out = std::vec::Vec::new();
         let dt = 1.0 / 60.0;
         let mut now = 1_000u64;
         let mut prev = 0.0;
         for i in 1..=40 {
             let u = ((i as f32 * dt) / 0.42).min(1.0);
-            let angle = 90.0 * (1.0 - (1.0 - u).powi(3));
+            let angle = degrees * (1.0 - (1.0 - u).powi(3));
             let rate = (angle - prev) / dt;
             prev = angle;
             let g = axis.map(|a| (a * rate * 1000.0) as i32);
@@ -356,7 +434,10 @@ mod tests {
         for dir in [TipDir::Up, TipDir::Down, TipDir::Left, TipDir::Right] {
             let mut t = armed();
             let updates = turn(&mut t, &f, f.axis(dir));
-            assert!(updates.contains(&TipUpdate::Done(dir)), "{dir:?}: {updates:?}");
+            assert!(
+                updates.contains(&TipUpdate::Done { dir, steps: 1 }),
+                "{dir:?}: {updates:?}"
+            );
             let max_progress = updates
                 .iter()
                 .filter_map(|u| match u {
@@ -366,6 +447,88 @@ mod tests {
                 .fold(0.0, f32::max);
             assert!(max_progress > 0.9, "{dir:?}: {max_progress}");
         }
+    }
+
+    #[test]
+    fn a_long_turn_counts_every_face_it_passes() {
+        let f = frame();
+        let mut t = armed();
+        let updates = turn_by(&mut t, &f, f.axis(TipDir::Left), 270.0);
+        assert!(updates.contains(&TipUpdate::Done {
+            dir: TipDir::Left,
+            steps: 3
+        }));
+        let max = updates
+            .iter()
+            .filter_map(|u| match u {
+                TipUpdate::Turning { progress, .. } => Some(*progress),
+                _ => None,
+            })
+            .fold(0.0, f32::max);
+        assert!(max > 2.9, "{max}");
+        assert_eq!(f.stepped(TipDir::Left, 3), f.after(TipDir::Right));
+        assert_eq!(f.stepped(TipDir::Left, -1), f.after(TipDir::Right));
+    }
+
+    #[test]
+    fn stopping_between_faces_waits_then_settles_on_the_nearest() {
+        let f = frame();
+        let mut t = armed();
+        let dt = 1.0 / 60.0;
+        // 135° about the Left axis over 0.5 s, then still.
+        let g = f.axis(TipDir::Left).map(|a| (a * 270.0 * 1000.0) as i32);
+        let mut now = 300;
+        for _ in 0..30 {
+            now += 17;
+            t.update(g, dt, now, &f);
+        }
+        now += 17;
+        let (_, first) = t.update([0; 3], dt, now, &f);
+        assert!(
+            matches!(first, TipUpdate::Turning { .. }),
+            "waits between faces: {first:?}"
+        );
+        let (_, later) = t.update([0; 3], dt, now + SETTLE_MS, &f);
+        assert!(
+            matches!(
+                later,
+                TipUpdate::Done {
+                    dir: TipDir::Left,
+                    ..
+                }
+            ),
+            "{later:?}"
+        );
+    }
+
+    /// Three 40° turns with long stops: each alone is nearer no face than the
+    /// start, but together they are a face and a bit.
+    #[test]
+    fn leftovers_carry_into_the_next_turn() {
+        let f = frame();
+        let mut t = armed();
+        let dt = 1.0 / 60.0;
+        let axis = f.axis(TipDir::Left);
+        let mut now = 300;
+        let mut all = std::vec::Vec::new();
+        for _ in 0..3 {
+            for _ in 0..10 {
+                now += 17;
+                all.push(t.update(axis.map(|a| (a * 240.0 * 1000.0) as i32), dt, now, &f).1);
+            }
+            for _ in 0..90 {
+                now += 17;
+                all.push(t.update([0; 3], dt, now, &f).1);
+            }
+        }
+        let steps: i32 = all
+            .iter()
+            .map(|u| match u {
+                TipUpdate::Done { steps, .. } => *steps,
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(steps, 1, "{all:?}");
     }
 
     #[test]
@@ -379,6 +542,47 @@ mod tests {
             last = t.update(g, dt, 300 + i * 17, &f).1;
         }
         assert!(matches!(last, TipUpdate::Turning { .. }));
-        assert_eq!(t.update([0; 3], dt, 600, &f).1, TipUpdate::Cancelled);
+        assert!(matches!(
+            t.update([0; 3], dt, 600, &f).1,
+            TipUpdate::Turning { .. }
+        ));
+        assert_eq!(
+            t.update([0; 3], dt, 600 + SETTLE_STILL_MS, &f).1,
+            TipUpdate::Cancelled
+        );
+    }
+
+    /// A turn made in small nudges with short stops (a slow hand, or a
+    /// browser sending sparse pointer moves) still counts every face.
+    #[test]
+    fn a_turn_in_nudges_counts_every_face() {
+        let f = frame();
+        let mut t = armed();
+        let dt = 1.0 / 60.0;
+        let axis = f.axis(TipDir::Up);
+        let mut now = 300;
+        let mut last = TipUpdate::None;
+        // 20 nudges of 13.5° (270° in all), each followed by 150 ms still.
+        for _ in 0..20 {
+            for _ in 0..3 {
+                now += 17;
+                let g = axis.map(|a| (a * 270.0 * 1000.0) as i32); // 4.5° per frame
+                last = t.update(g, dt, now, &f).1;
+            }
+            for _ in 0..9 {
+                now += 17;
+                last = t.update([0; 3], dt, now, &f).1;
+            }
+        }
+        assert!(matches!(last, TipUpdate::Turning { .. }), "{last:?}");
+        let done = (0..15).map(|_| {
+            now += 17;
+            t.update([0; 3], dt, now, &f).1
+        });
+        let done: std::vec::Vec<_> = done.collect();
+        assert!(done.contains(&TipUpdate::Done {
+            dir: TipDir::Up,
+            steps: 3
+        }));
     }
 }

@@ -315,7 +315,7 @@ mod tests {
 
     use smokebomb_firmware::board;
     use smokebomb_hal::Face;
-    use smokebomb_hal_simulator::world::{TipDir, DEFAULT_VIEWER_RIGHT};
+    use smokebomb_hal_simulator::world::{SpinAxis, TipDir, DEFAULT_VIEWER_RIGHT};
 
     impl Rig {
         fn new() -> Self {
@@ -360,6 +360,67 @@ mod tests {
             assert!(self.world.tip(dir, DEFAULT_VIEWER_RIGHT));
             self.run(0.6);
         }
+
+        /// A multi-turn drag: spin to `quarters` faces (fractional is fine,
+        /// pausing on the way), then let go.
+        fn spin(&mut self, axis: SpinAxis, quarters: f32) {
+            let steps = 30;
+            for i in 1..=steps {
+                let angle = quarters * std::f32::consts::FRAC_PI_2 * i as f32 / steps as f32;
+                assert!(self.world.spin(axis, angle, DEFAULT_VIEWER_RIGHT));
+                self.run(DT);
+                if i == steps / 2 {
+                    self.run(0.4); // a pause between faces
+                }
+            }
+            self.run(0.2);
+            self.world.end_spin();
+            self.run(0.8);
+        }
+    }
+
+    /// A slow drag with long stops (a busy browser sends pointer moves this
+    /// sparsely): still three values, and one tick per face, not per nudge.
+    #[test]
+    fn a_stop_start_multi_turn_counts_faces_and_ticks_once_per_face() {
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.sim.lock().haptics.clear();
+        for i in 1..=30 {
+            let angle = -3.0 * std::f32::consts::FRAC_PI_2 * i as f32 / 30.0;
+            assert!(rig.world.spin(SpinAxis::Pitch, angle, DEFAULT_VIEWER_RIGHT));
+            rig.run(0.45);
+        }
+        rig.world.end_spin();
+        rig.run(1.5);
+        assert_eq!(rig.fw.menu_draft().unwrap().count, 4);
+        let ticks: Vec<_> = rig.sim.lock().haptics.drain(..).collect();
+        assert_eq!(ticks.len(), 3, "one per face passed: {ticks:?}");
+    }
+
+    #[test]
+    fn a_multi_turn_moves_as_many_steps_as_faces() {
+        use smokebomb_firmware::smokebomb_core::menu::Page;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        // Two faces left: two pages on (How many dice → Settings).
+        rig.spin(SpinAxis::Yaw, -2.2);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Settings);
+        // Back one and a bit: settles one face back (Which die).
+        rig.spin(SpinAxis::Yaw, 1.3);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Die);
+        // Three faces up: d20 → d100 → Pass the Pot → d4.
+        rig.spin(SpinAxis::Pitch, -3.0);
+        let draft = rig.fw.menu_draft().unwrap();
+        assert_eq!(draft.die, smokebomb_shared::DieKind::D4);
+        // The firmware's front face is the one really facing the viewer.
+        let front = rig.fw.menu_front().unwrap();
+        let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
+        let n = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(front);
+        assert!(n.dot(toward_viewer) > 0.99, "{front:?} is not in front");
     }
 
     #[test]

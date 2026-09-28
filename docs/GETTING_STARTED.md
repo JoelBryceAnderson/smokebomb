@@ -49,6 +49,12 @@ In the browser:
   the menu is open so does a swipe on the die. In the menu, ▲/▼ change the
   value and ◀/▶ change the page (SIM_SPEC C3). The firmware reads tips from
   the gyro, the way the real die will.
+- **Turn several screens at once:** in the menu, hold Ctrl (⌘ on a Mac)
+  while you drag, or tick **Multi-turn swipes in the menu** (for touch
+  screens). The die follows the drag about one axis, across as many screens
+  as you like, and settles on the nearest one when you let go. Each screen it
+  passes is one step: two screens left is two pages on, three screens up is
+  three values on.
 - **Drag** on the die to turn it in your hand.
 - **Face up** sets the die down with that screen on top.
 - **Press and hold a screen** for the menu: the ring fills, the menu opens

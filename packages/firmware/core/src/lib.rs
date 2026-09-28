@@ -51,6 +51,12 @@ pub const TICK_HZ: u32 = 60;
 /// Low-pass factor for the gravity estimate, per tick.
 const UP_FILTER: f32 = 0.25;
 
+/// The IMU delivers one sample per tick at its output data rate (the
+/// simulator likewise produces one per tick). Gyro rates are integrated over
+/// this sample period rather than the wall clock, so a late or bunched tick
+/// doesn't lose rotation.
+const IMU_SAMPLE_S: f32 = 1.0 / TICK_HZ as f32;
+
 /// How long a screen must be held to open the menu (SIM_SPEC C3).
 pub const MENU_HOLD_MS: u64 = 800;
 /// The hold ring appears once a touch is clearly a hold, not a tap.
@@ -66,6 +72,8 @@ struct MenuSession {
     tips: TipTracker,
     last_input: u64,
     turning: Option<(TipDir, f32)>,
+    /// The face the turn last passed (nearest whole progress), for haptics.
+    detent: i32,
 }
 
 pub struct Firmware<P: Platform> {
@@ -90,7 +98,6 @@ pub struct Firmware<P: Platform> {
     touch_face: Face,
     menu_hold_fired: bool,
     menu: Option<MenuSession>,
-    last_imu_ms: Option<u64>,
     up_face: Face,
     last_roll: Option<SignedRoll>,
     docked: bool,
@@ -121,7 +128,6 @@ impl<P: Platform> Firmware<P> {
             touch_face: Face::PosZ,
             menu_hold_fired: false,
             menu: None,
-            last_imu_ms: None,
             up_face: Face::PosY,
             last_roll: None,
             docked: false,
@@ -182,9 +188,7 @@ impl<P: Platform> Firmware<P> {
             if let Some(m) = self.motion.update(&sample, now) {
                 let _ = events.push(Event::Motion(m));
             }
-            let dt = self.last_imu_ms.map_or(0, |t| now - t) as f32 / 1000.0;
-            self.last_imu_ms = Some(now);
-            self.menu_tips(&sample, dt, now)?;
+            self.menu_tips(&sample, IMU_SAMPLE_S, now)?;
         }
         if let Some(m) = &self.menu {
             if m.turning.is_none() && now - m.last_input >= MENU_IDLE_MS {
@@ -239,16 +243,23 @@ impl<P: Platform> Firmware<P> {
         }
         match update {
             TipUpdate::Turning { dir, progress } => {
-                if m.turning.is_none() {
+                // A tick each time the nearest face changes (45° into each
+                // face passed): once for a quick tip, as the mockup's buzz
+                // at its start, and once per face on a long turn, however
+                // many stops it makes on the way.
+                let detent = libm::floorf(progress + 0.5) as i32;
+                if detent != m.detent {
                     self.hw.haptics.play(smokebomb_hal::HapticEffect::MenuTip)?;
-                    m.last_input = now;
                 }
+                m.detent = detent;
                 m.turning = Some((dir, progress));
+                m.last_input = now;
             }
-            TipUpdate::Done(dir) => {
-                m.draft = m.draft.tipped(dir);
-                m.frame = m.frame.after(dir);
+            TipUpdate::Done { dir, steps } => {
+                m.draft = m.draft.stepped(dir, steps);
+                m.frame = m.frame.stepped(dir, steps);
                 m.turning = None;
+                m.detent = 0;
                 m.last_input = now;
             }
             TipUpdate::Cancelled => m.turning = None,
@@ -343,6 +354,7 @@ impl<P: Platform> Firmware<P> {
                     tips: TipTracker::new(),
                     last_input: now,
                     turning: None,
+                    detent: 0,
                 });
                 self.ui.menu_opened(now);
             }
@@ -463,7 +475,9 @@ impl<P: Platform> Firmware<P> {
 
 /// One face while the menu is open (C3). The menu shows on the front face;
 /// during a tip the old page slides off against the turn and fades while
-/// the new one slides in from the leading edge of the face coming round.
+/// the new one slides in from the leading edge of the face coming round. On
+/// a turn past several faces the slide runs between the two faces the die
+/// is between, each showing the page it stands for.
 fn draw_menu_face<A: smokebomb_hal::AssetStore>(
     c: &mut Ctx<A>,
     m: &MenuSession,
@@ -475,14 +489,18 @@ fn draw_menu_face<A: smokebomb_hal::AssetStore>(
 ) {
     let battery = battery as f32 / 100.0;
     let front = m.frame.front_face();
-    if let Some((dir, u)) = m.turning {
-        let (mx, my) = m.frame.motion_dir(face, dir);
+    if let Some((dir, progress)) = m.turning {
+        // `k` whole faces passed, and `u` of the way to the next.
+        let k = libm::floorf(progress);
+        let u = progress - k;
+        let (frame, draft) = (m.frame.stepped(dir, k as i32), m.draft.stepped(dir, k as i32));
+        let (mx, my) = frame.motion_dir(face, dir);
         let d = screens::TIP_SLIDE;
-        if face == front {
-            screens::draw_menu(c, &m.draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
+        if face == frame.front_face() {
+            screens::draw_menu(c, &draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
         }
-        if face == m.frame.next_front(dir) {
-            let next = m.draft.tipped(dir);
+        if face == frame.next_front(dir) {
+            let next = draft.tipped(dir);
             let (ox, oy) = (mx * (1.0 - u) * d, my * (1.0 - u) * d);
             screens::draw_menu(c, &next, battery, ox, oy, u, 1.0);
         }

@@ -57,6 +57,23 @@ struct Tumble {
     segment: u32,
 }
 
+/// Which axis a free spin turns about, as the menu's tips do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpinAxis {
+    /// About vertical: left and right tips.
+    Yaw,
+    /// About the viewer's right: up and down tips.
+    Pitch,
+}
+
+/// A spin that follows the pointer (the simulator's multi-turn gesture).
+struct Spin {
+    from: Quat,
+    axis: Vec3,
+    angle: f32,
+    target: f32,
+}
+
 struct Turn {
     start: f64,
     duration: f64,
@@ -72,6 +89,7 @@ pub struct World {
     throw_when_ready: bool,
     tumble: Option<Tumble>,
     turn: Option<Turn>,
+    spin: Option<Spin>,
     /// The viewer's right in world space (horizontal). Tips use it as the
     /// up/down axis; the menu snap turns the held face toward the viewer.
     viewer_right: Vec3,
@@ -101,6 +119,7 @@ impl World {
             throw_when_ready: false,
             tumble: None,
             turn: None,
+            spin: None,
             viewer_right: DEFAULT_VIEWER_RIGHT,
             docked: false,
             reduced_motion: false,
@@ -130,6 +149,7 @@ impl World {
         if self.tumble.is_some() {
             return;
         }
+        self.spin = None;
         self.docked = false;
         self.turn = None;
         self.shake_start.get_or_insert(self.time);
@@ -175,6 +195,54 @@ impl World {
             hop: true,
         });
         true
+    }
+
+    /// Spin the die about a tip axis by `angle` radians from where the spin
+    /// began, following the pointer: as many faces as you like, in one
+    /// gesture. Signs match [`World::tip`]: positive yaw is a right tip,
+    /// negative pitch an up tip. Returns false if the die is busy with
+    /// something else.
+    pub fn spin(&mut self, axis: SpinAxis, angle: f32, right: Vec3) -> bool {
+        if self.spin.is_none() {
+            if self.busy() || self.docked {
+                return false;
+            }
+            let axis = match axis {
+                SpinAxis::Yaw => Vec3::Y,
+                SpinAxis::Pitch => {
+                    let r = right.try_normalize().unwrap_or(self.viewer_right);
+                    self.viewer_right = r;
+                    r
+                }
+            };
+            self.spin = Some(Spin {
+                from: self.pose.rotation,
+                axis,
+                angle: 0.0,
+                target: 0.0,
+            });
+        }
+        if let Some(s) = &mut self.spin {
+            s.target = angle;
+        }
+        true
+    }
+
+    /// Let go of a spin: the die settles on the nearest face.
+    pub fn end_spin(&mut self) {
+        let Some(s) = self.spin.take() else {
+            return;
+        };
+        let quarter = std::f32::consts::FRAC_PI_2;
+        let settled = (s.target / quarter).round() * quarter;
+        let to = (Quat::from_axis_angle(s.axis, settled) * s.from).normalize();
+        self.turn = Some(Turn {
+            start: self.time,
+            duration: if self.reduced_motion { 0.12 } else { 0.25 },
+            from: self.pose.rotation,
+            to,
+            hop: false,
+        });
     }
 
     /// Turn the die so `face` looks at the viewer, squared up to the view
@@ -245,6 +313,7 @@ impl World {
 
     pub fn set_docked(&mut self, docked: bool) {
         if docked {
+            self.spin = None;
             self.shake_start = None;
             self.throw_when_ready = false;
             self.tumble = None;
@@ -254,7 +323,7 @@ impl World {
     }
 
     fn busy(&self) -> bool {
-        self.tumble.is_some() || self.turn.is_some() || self.shake_start.is_some()
+        self.tumble.is_some() || self.turn.is_some() || self.shake_start.is_some() || self.spin.is_some()
     }
 
     /// Advance by `dt` seconds; returns what the IMU reads afterwards.
@@ -330,6 +399,13 @@ impl World {
                 self.pose.position.y = 0.0;
                 self.turn = None;
             }
+        }
+
+        if let Some(s) = &mut self.spin {
+            // Follow the pointer closely but smoothly, so the gyro sees a
+            // turn rather than jumps.
+            s.angle += (s.target - s.angle) * (1.0 - (-25.0 * dt as f32).exp());
+            self.pose.rotation = (Quat::from_axis_angle(s.axis, s.angle) * s.from).normalize();
         }
 
         if self.docked {
@@ -500,6 +576,33 @@ mod tests {
             .map(|s| (s.gyro_mdps[1] as f32 / 1000.0) * DT as f32)
             .sum();
         assert!((deg.abs() - 90.0).abs() < 1.0, "{deg}");
+    }
+
+    #[test]
+    fn a_spin_follows_the_pointer_and_settles_on_the_nearest_face() {
+        let mut w = World::new();
+        let before = w.pose().rotation;
+        // Two and a bit faces to the left, in steps like pointer moves.
+        for i in 1..=20 {
+            assert!(w.spin(
+                SpinAxis::Yaw,
+                -2.3 * std::f32::consts::FRAC_PI_2 * i as f32 / 20.0,
+                Vec3::X
+            ));
+            w.step(DT);
+        }
+        let samples = run(&mut w, 0.5);
+        let mid = w.pose().rotation * before.inverse();
+        assert!((mid.to_axis_angle().1 - 2.3 * std::f32::consts::FRAC_PI_2).abs() < 0.05);
+        assert!(samples.iter().all(|s| s.gyro_mdps[1] <= 0), "one way only");
+        w.end_spin();
+        run(&mut w, 0.5);
+        let (axis, angle) = (w.pose().rotation * before.inverse()).to_axis_angle();
+        assert!(
+            (angle - std::f32::consts::PI).abs() < 1e-3,
+            "settles two faces on: {angle}"
+        );
+        assert!(axis.y.abs() > 0.99);
     }
 
     #[test]
