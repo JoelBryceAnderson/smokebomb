@@ -1,0 +1,66 @@
+name: CI · Server
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "packages/server/**"
+      - "packages/shared/**"
+      - "packages/firmware/core/**"
+      - "packages/firmware/hal/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-server.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  server:
+    name: Test + lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: smokebomb
+          POSTGRES_PASSWORD: smokebomb
+          POSTGRES_DB: smokebomb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smokebomb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Enables the database-backed tests, which also apply every migration
+      # to a fresh database (migration dry-run).
+      DATABASE_URL: postgres://smokebomb:smokebomb@localhost:5432/smokebomb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt -p smokebomb-server --check
+      - name: Clippy
+        run: cargo clippy -p smokebomb-server --all-targets -- -D warnings
+      - name: Test
+        run: cargo test -p smokebomb-server
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit

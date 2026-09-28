@@ -1,0 +1,14 @@
+# Local PostgreSQL for server development: `nx run server:db-up`
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: smokebomb
+      POSTGRES_PASSWORD: smokebomb
+      POSTGRES_DB: smokebomb
+    ports:
+      - "5432:5432"
+    volumes:
+      - smokebomb-pg:/var/lib/postgresql/data
+volumes:
+  smokebomb-pg:

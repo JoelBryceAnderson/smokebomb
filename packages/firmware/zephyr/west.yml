@@ -1,0 +1,13 @@
+# nRF Connect SDK manifest. Pin the SDK revision the firmware is tested against.
+manifest:
+  remotes:
+    - name: ncs
+      url-base: https://github.com/nrfconnect
+  projects:
+    - name: sdk-nrf
+      remote: ncs
+      path: nrf
+      revision: v3.1.0
+      import: true
+  self:
+    path: smokebomb

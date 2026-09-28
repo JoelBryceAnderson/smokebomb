@@ -1,0 +1,57 @@
+name: CI · Mobile
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "packages/mobile/**"
+      - ".github/workflows/ci-mobile.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: packages/mobile
+
+jobs:
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Unit tests
+        run: ./gradlew :shared:testDebugUnitTest
+      - name: Assemble debug APK
+        run: ./gradlew :composeApp:assembleDebug
+
+  ios:
+    name: iOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Shared tests (iOS simulator)
+        run: ./gradlew :shared:iosSimulatorArm64Test
+      - name: Link Compose framework
+        run: ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd iosApp && xcodegen generate
+      - name: Build app (simulator, unsigned)
+        working-directory: packages/mobile/iosApp
+        run: |
+          xcodebuild -project iosApp.xcodeproj -target iosApp -configuration Debug \
+            -sdk iphonesimulator -arch arm64 CODE_SIGNING_ALLOWED=NO build

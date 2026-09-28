@@ -1,0 +1,21 @@
+[package]
+name = "smokebomb-firmware"
+description = "Firmware image: wires the core to a concrete HAL chosen by feature"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Desktop simulator (std, mock peripherals)
+simulator = ["dep:smokebomb-hal-simulator"]
+# Production board (no_std, Zephyr)
+nrf54l15 = ["dep:smokebomb-hal-nrf54l15"]
+
+[dependencies]
+smokebomb-core.workspace = true
+smokebomb-hal.workspace = true
+smokebomb-hal-simulator = { workspace = true, optional = true }
+smokebomb-hal-nrf54l15 = { workspace = true, optional = true }
