@@ -85,7 +85,13 @@ async fn register_device_and_verify_simulated_rolls() {
     // Roll with the firmware's own engine and check the server agrees.
     let mut engine = RollEngine::new(&mut se).unwrap();
     let roll = engine
-        .roll(&mut SimRng, &mut se, smokebomb_shared::DieKind::D20, 2, 1_000)
+        .roll(
+            &mut SimRng::default(),
+            &mut se,
+            smokebomb_shared::DieKind::D20,
+            2,
+            1_000,
+        )
         .unwrap();
     let mut body = json!({
         "device_serial": serial,
@@ -111,7 +117,7 @@ async fn register_device_and_verify_simulated_rolls() {
     // Pass the Pot: signed as raw d6 values, chained to the previous roll.
     let pot = engine
         .roll(
-            &mut SimRng,
+            &mut SimRng::default(),
             &mut se,
             smokebomb_shared::DieKind::PassThePot,
             3,

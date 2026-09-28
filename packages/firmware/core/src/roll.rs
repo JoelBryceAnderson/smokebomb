@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn values_in_range() {
-        let mut rng = SimRng;
+        let mut rng = SimRng::default();
         for die in DieKind::ALL {
             for _ in 0..200 {
                 let v = uniform(&mut rng, die.sides()).unwrap();
@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn rolls_are_signed_and_chained() {
-        let mut rng = SimRng;
+        let mut rng = SimRng::default();
         let mut se = SimSecureElement::new();
         let mut engine = RollEngine::new(&mut se).unwrap();
 

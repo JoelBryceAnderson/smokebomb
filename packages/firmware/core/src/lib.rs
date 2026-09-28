@@ -11,11 +11,16 @@
 
 pub mod animation;
 pub mod display;
+pub mod font;
+pub mod gfx;
 pub mod menu;
 pub mod motion;
 pub mod orientation;
+pub mod pack;
 pub mod roll;
+pub mod screens;
 pub mod state;
+pub mod ui;
 
 use heapless::Vec;
 use smokebomb_hal::{
@@ -26,11 +31,16 @@ use smokebomb_shared::{DieKind, SignedRoll};
 
 use animation::AnimationPlayer;
 use display::Framebuffer;
+use font::Fonts;
+use gfx::{Layer, Painter, Transform};
 use menu::Settings;
 use motion::MotionDetector;
 use orientation::TextOrientation;
+use pack::PackIndex;
 use roll::RollEngine;
+use screens::Ctx;
 use state::{Command, Event, Mode, StateMachine};
+use ui::{FaceContent, Ui};
 
 /// Main loop rate. The mockup animates at display rate (~60 Hz); panels
 /// accept at most 100 Hz (SIM_SPEC B1).
@@ -39,8 +49,8 @@ pub const TICK_HZ: u32 = 60;
 /// Low-pass factor for the gravity estimate, per tick.
 const UP_FILTER: f32 = 0.25;
 
-/// How long a face must be held to open the menu.
-pub const MENU_HOLD_MS: u64 = 1_500;
+/// How long a screen must be held to open the menu (SIM_SPEC C3).
+pub const MENU_HOLD_MS: u64 = 800;
 
 pub struct Firmware<P: Platform> {
     hw: Peripherals<P>,
@@ -49,11 +59,15 @@ pub struct Firmware<P: Platform> {
     settings: Settings,
     roller: RollEngine,
     player: AnimationPlayer,
+    fonts: Fonts,
+    ui: Ui,
     frames: [Framebuffer; smokebomb_hal::FACE_COUNT],
+    layer: Layer,
     /// Packed 4bpp scratch for the panel and for streaming assets.
     panel: FrameBytes,
-    /// Filtered gravity-up direction in die coordinates (milli-g).
-    up: [f32; 3],
+    /// Filtered gravity-up direction in die coordinates (milli-g); `None`
+    /// until the first IMU sample.
+    up: Option<[f32; 3]>,
     orientation: TextOrientation,
     touch_since: Option<u64>,
     menu_hold_fired: bool,
@@ -64,7 +78,9 @@ pub struct Firmware<P: Platform> {
 
 impl<P: Platform> Firmware<P> {
     pub fn new(mut hw: Peripherals<P>) -> HalResult<Self> {
-        let player = AnimationPlayer::load(&mut hw.assets);
+        let pack = PackIndex::load(&mut hw.assets);
+        let player = AnimationPlayer::load(&mut hw.assets, &pack);
+        let fonts = Fonts::load(&mut hw.assets, &pack);
         let roller = RollEngine::new(&mut hw.secure_element)?;
         hw.display.set_enabled(true)?;
         Ok(Self {
@@ -74,13 +90,16 @@ impl<P: Platform> Firmware<P> {
             settings: Settings::default(),
             roller,
             player,
+            fonts,
+            ui: Ui::new(),
             frames: [Framebuffer::new(); smokebomb_hal::FACE_COUNT],
+            layer: Layer::new(),
             panel: [0; FRAME_BYTES],
-            up: [0.0, 0.0, 1000.0],
+            up: None,
             orientation: TextOrientation::new(),
             touch_since: None,
             menu_hold_fired: false,
-            up_face: Face::PosZ,
+            up_face: Face::PosY,
             last_roll: None,
             docked: false,
         })
@@ -106,6 +125,10 @@ impl<P: Platform> Firmware<P> {
         &self.orientation
     }
 
+    pub fn booting(&self) -> bool {
+        self.ui.booting()
+    }
+
     /// One pass of the main loop: sample inputs, advance the state machine,
     /// execute its commands, render and present.
     pub fn tick(&mut self) -> HalResult<()> {
@@ -114,10 +137,11 @@ impl<P: Platform> Firmware<P> {
 
         if let Some(sample) = self.hw.imu.read()? {
             let raw = orientation::up_from(&sample);
-            for (u, r) in self.up.iter_mut().zip(raw) {
+            let up = self.up.get_or_insert(raw);
+            for (u, r) in up.iter_mut().zip(raw) {
                 *u += (r - *u) * UP_FILTER;
             }
-            self.orientation.update(self.up);
+            self.orientation.update(*up);
             if let Some(face) = motion::up_face(&sample) {
                 self.up_face = face;
             }
@@ -126,7 +150,9 @@ impl<P: Platform> Firmware<P> {
             }
         }
 
-        self.poll_touch(now, &mut events)?;
+        if self.poll_touch(now, &mut events)? {
+            self.ui.touch(now);
+        }
 
         let battery = self.hw.power.battery()?;
         if battery.docked != self.docked {
@@ -139,26 +165,35 @@ impl<P: Platform> Firmware<P> {
         let mut rx = [0u8; 64];
         while self.hw.ble.receive(&mut rx)?.is_some() {}
 
+        let before = *self.sm.mode();
         let _ = events.push(Event::Tick);
         for event in events {
+            if event == Event::Tap {
+                self.ui.tap(now, self.sm.mode());
+            }
             let commands = self.sm.handle(event, now);
             for cmd in commands {
                 self.execute(cmd)?;
             }
         }
+        let after = *self.sm.mode();
+        self.ui.tick(now, &before, &after, self.up_face, self.docked);
 
         self.render(now)?;
         Ok(())
     }
 
-    fn poll_touch(&mut self, now: u64, events: &mut Vec<Event, 8>) -> HalResult<()> {
+    /// Returns true when a touch starts.
+    fn poll_touch(&mut self, now: u64, events: &mut Vec<Event, 8>) -> HalResult<bool> {
         let mask = self.hw.touch.read()?;
         // Grip rejection: touches while the die is moving are ignored.
         let usable = mask != 0 && self.motion.is_still();
+        let mut started = false;
         match (usable, self.touch_since) {
             (true, None) => {
                 self.touch_since = Some(now);
                 self.menu_hold_fired = false;
+                started = true;
             }
             (true, Some(since)) if !self.menu_hold_fired && now - since >= MENU_HOLD_MS => {
                 self.menu_hold_fired = true;
@@ -172,7 +207,7 @@ impl<P: Platform> Firmware<P> {
             }
             _ => {}
         }
-        Ok(())
+        Ok(started)
     }
 
     fn execute(&mut self, cmd: Command) -> HalResult<()> {
@@ -189,7 +224,6 @@ impl<P: Platform> Firmware<P> {
                     self.hw.clock.now_ms(),
                 )?;
                 if is_max(&signed, self.settings.die) {
-                    self.player.play(smokebomb_shared::assets::ClipId::MaxBurst);
                     self.hw
                         .haptics
                         .play(smokebomb_hal::HapticEffect::MaxCelebration)?;
@@ -207,37 +241,60 @@ impl<P: Platform> Firmware<P> {
     }
 
     fn render(&mut self, now: u64) -> HalResult<()> {
-        let animating = self
-            .player
-            .render(&mut self.hw.assets, &mut self.frames, &mut self.panel, now)?;
-        if !animating {
-            for fb in self.frames.iter_mut() {
-                fb.clear();
-            }
-            match self.sm.mode() {
-                Mode::Reveal { .. } => {
-                    if let Some(roll) = &self.last_roll {
-                        display::draw_result(&mut self.frames, &self.orientation, self.up_face, &roll.record);
+        let mode = *self.sm.mode();
+        let up = self.up_face;
+        let label = screens::setup_label(self.settings.die, self.settings.count);
+        let Self {
+            frames,
+            layer,
+            fonts,
+            hw,
+            ui,
+            orientation,
+            last_roll,
+            settings,
+            ..
+        } = self;
+        let record = last_roll.as_ref().map(|r| &r.record);
+
+        for face in Face::ALL {
+            let fb = &mut frames[face.index()];
+            fb.clear();
+            let content = ui.content(now, face, up, &mode, record.is_some());
+            let rot = orientation.quarter(face);
+            let mut painter = Painter::new(fb, layer, Transform::quarter(rot));
+            let mut c = Ctx {
+                painter: &mut painter,
+                fonts,
+                assets: &mut hw.assets,
+            };
+            match content {
+                FaceContent::Blank => {}
+                FaceContent::Boot { t, top } => screens::draw_boot(&mut c, face.index(), top, t),
+                FaceContent::Wake { alpha } => screens::draw_wake_label(&mut c, &label, alpha),
+                FaceContent::Result { alpha } => {
+                    if let Some(r) = record {
+                        screens::draw_result(&mut c, r, display::FG, alpha);
                     }
                 }
-                Mode::Menu(page) => {
-                    let face = self.up_face;
-                    menu::render(
-                        &mut self.frames[face.index()],
-                        *page,
-                        &self.settings,
-                        self.orientation.quarter(face),
-                    )
+                // Placeholders until the menu and Nest screens are built.
+                FaceContent::Menu if face == up => {
+                    if let Mode::Menu(page) = mode {
+                        menu::render(fb_of(&mut painter), page, settings, rot);
+                    }
                 }
-                Mode::Nest => {
-                    // TODO: analog clock + pixel shifting for burn-in mitigation.
-                    let pct = self.hw.power.battery()?.percent;
-                    let face = self.up_face;
-                    let rot = self.orientation.quarter(face);
-                    self.frames[face.index()].draw_number(pct as u16, 6, display::FG, rot);
+                FaceContent::Nest if face == up => {
+                    let pct = hw.power.battery()?.percent;
+                    fb_of(&mut painter).draw_number(pct as u16, 6, display::FG, rot);
                 }
-                _ => {}
+                FaceContent::Menu | FaceContent::Nest => {}
             }
+        }
+
+        // Placeholder smoke on top, until the particle system lands.
+        if !self.ui.booting() {
+            self.player
+                .render(&mut self.hw.assets, &mut self.frames, &mut self.panel, now)?;
         }
         for face in Face::ALL {
             self.frames[face.index()].quantize(&mut self.panel);
@@ -245,6 +302,10 @@ impl<P: Platform> Firmware<P> {
         }
         self.hw.display.flush()
     }
+}
+
+fn fb_of<'a>(painter: &'a mut Painter<'_>) -> &'a mut Framebuffer {
+    painter.framebuffer()
 }
 
 /// Every die shows its top value (N > 2); Pass the Pot has no max (SIM_SPEC C6).

@@ -146,7 +146,7 @@ Colors used on screen:
 Glow: the mockup draws text with a soft glow (shadow blur of 18 canvas units for big numbers, 8 for small text, 10–14 for icons and menus). After downsampling this becomes a faint gray halo of about 1–3 panel px. Reproduce it as a 1–2 px low-level halo, or omit it.
 
 **Font:** Space Grotesk. Weight 700 for numbers, values and titles; 600 for labels. Firmware needs bitmap cuts at the panel-px sizes below.
-- The mockup only loads weights 400, 500 and 700, so its "600" labels actually render at **700**. The golden frames (below) show 700. Decide whether the firmware cuts a 600 or matches the mockup (G14).
+- The mockup only loads weights 400, 500 and 700, so its "600" labels actually render at **700**, and so does the firmware (decision H8).
 - Glyphs Space Grotesk lacks (▲ ▼) fall back to a system font in the mockup, so they vary by machine.
 
 ### B2. Text orientation
@@ -547,10 +547,10 @@ Differences found when this document was checked against the mockup source (2026
 | G11 | Conventions, A2 | Canvas spans "the whole face"; lit area 17.26 mm | Canvas spans ±1 scene unit (26.5 mm); the mockup draws the lit area at 17.18 mm |
 | G12 | A5, C2, C3, C6, D2 | Unspecified | Portrait = aspect < 0.75; tap definition; menu open clears particles and results; dim restore is instant and triggered by any press; gold eases at 2.5/s; edge-crossing formula; dt ≤ 0.05 s; Pass the Pot has no max/dud; a quick press throws |
 | G13 | A5 | — | Note on three.js r128 colour and light semantics when porting |
-| G14 | B1 | Labels in weight 600 | The mockup never loads 600, so labels render at 700. Open: cut 600 bitmaps, or match the mockup |
+| G14 | B1 | Labels in weight 600 | The mockup never loads 600, so labels render at 700. Decided: match the mockup (H8) |
 | G15 | C2 | — | Default setup is a single d20 |
 
-**Golden frames.** `tools/mockup-capture` runs the pinned mockup headless (seeded randomness, virtual time) and saves each face's 96×96 output at fixed moments in nine scenarios: boot, tap, throw, quick throw, Pass the Pot, menu, menu settings, restart and Nest. These are the reference for decision H4. The captures confirm G1 (the wake label is lit on the face-down screen).
+**Golden frames.** `tools/mockup-capture` runs the pinned mockup headless (seeded randomness, virtual time) and saves each face's 96×96 output at fixed moments in nine scenarios: boot, tap, throw, quick throw, Pass the Pot, menu, menu settings, restart and Nest. These are the reference for decision H4; `packages/firmware/core/tests/golden.rs` scores the firmware against them. The captures confirm G1 (the wake label is lit on the face-down screen).
 
 Everything else was checked and matches: all canvas → panel-px conversions, timings, the boot sequence (the top face's start value of 6 is an explicit override of the per-face table), the menu layout, the particle formulas, and every die, Nest and case dimension.
 
@@ -567,3 +567,4 @@ Decided 2026-09-28.
 | H5 | **Normal results through smoke** | **Keep the mockup:** the result fades in from 0.35 s after landing while smoke drains. Only max/dud effects wait for clear air. |
 | H6 | **Pass the Pot in the signed roll** | **Sign the raw d6 value** (1 → ←, 2 → P, 3 → →, 4–6 → •), exactly as the mockup draws it. Requires roll format v2 and a 10-dice limit. |
 | H7 | **Menu frame on hardware when the held face points up.** "Front" and "up" coincide, so right/up are undefined. | **Hardware question, still open.** Doesn't block the simulator, where the mockup's snap becomes a camera move instead of a die rotation. |
+| H8 | **Label weight** (G14) | **700 everywhere, matching what the mockup renders.** The firmware ships one Space Grotesk cut (Bold). |

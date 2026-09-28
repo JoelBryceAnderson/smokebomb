@@ -1,0 +1,301 @@
+//! Screen content, ported from the mockup's drawing code (SIM_SPEC C1, C2,
+//! C6). Coordinates are mockup canvas units relative to the face centre;
+//! times are seconds.
+
+use core::fmt::Write as _;
+
+use heapless::String;
+use libm::{floorf, powf, roundf, sinf};
+use smokebomb_hal::AssetStore;
+use smokebomb_shared::{DieKind, PotFace, RollRecord};
+
+use crate::display::FG;
+use crate::font::{fit_px, Align, Fonts};
+use crate::gfx::{Painter, Style};
+
+/// The lit area's half-size in canvas units.
+pub const ACTIVE: f32 = 83.0;
+
+/// Everything a screen needs to draw one face.
+pub struct Ctx<'a, 'p, A: AssetStore> {
+    pub painter: &'a mut Painter<'p>,
+    pub fonts: &'a mut Fonts,
+    pub assets: &'a mut A,
+}
+
+impl<A: AssetStore> Ctx<'_, '_, A> {
+    fn text(&mut self, text: &str, x: f32, y: f32, px: u16, style: Style) {
+        self.fonts
+            .draw(self.assets, self.painter, text, x, y, px, Align::Center, style);
+    }
+}
+
+fn smoothstep(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
+// ---------- boot (C1) ----------
+
+/// Pip slots, in units of the pip grid offset.
+const PIP_TL: (f32, f32) = (-1.0, -1.0);
+const PIP_BR: (f32, f32) = (1.0, 1.0);
+const PIP_TR: (f32, f32) = (1.0, -1.0);
+const PIP_BL: (f32, f32) = (-1.0, 1.0);
+const PIP_C: (f32, f32) = (0.0, 0.0);
+const PIP_ML: (f32, f32) = (-1.0, 0.0);
+const PIP_MR: (f32, f32) = (1.0, 0.0);
+
+/// Slot order per value: each step slides existing pips and grows or
+/// shrinks the rest.
+fn pips(value: u8) -> &'static [(f32, f32)] {
+    match value {
+        1 => &[PIP_C],
+        2 => &[PIP_TL, PIP_BR],
+        3 => &[PIP_TL, PIP_BR, PIP_C],
+        4 => &[PIP_TL, PIP_BR, PIP_TR, PIP_BL],
+        5 => &[PIP_TL, PIP_BR, PIP_TR, PIP_BL, PIP_C],
+        _ => &[PIP_TL, PIP_BR, PIP_TR, PIP_BL, PIP_ML, PIP_MR],
+    }
+}
+
+/// Start value per face index (opposite faces sum to 7).
+const FACE_START: [u8; 6] = [3, 4, 1, 6, 2, 5];
+const BOOT_STEP: f32 = 0.34;
+const BOOT_STEPS: u32 = 5;
+const BOOT_FADE: f32 = 0.4;
+pub const LOOP_END: f32 = 0.25 + BOOT_STEP * BOOT_STEPS as f32;
+/// Whole boot sequence, seconds.
+pub const BOOT_DURATION: f32 = LOOP_END + 4.25;
+/// The lone centre pip waits this long before it bursts.
+pub const BURST_AT: f32 = 0.75;
+const PIP_GRID: f32 = ACTIVE * 0.46;
+const PIP_RADIUS: f32 = ACTIVE * 0.15;
+const PIP_GLOW: f32 = 10.0;
+
+fn draw_pips<A: AssetStore>(c: &mut Ctx<A>, from: u8, to: u8, t: f32, alpha: f32, scale: f32) {
+    let (a, b) = (pips(from), pips(to));
+    let e = smoothstep(t);
+    for i in 0..a.len().max(b.len()) {
+        let pa = a.get(i).copied().unwrap_or(PIP_C);
+        let pb = b.get(i).copied().unwrap_or(PIP_C);
+        let sa = if i < a.len() { 1.0 } else { 0.0 };
+        let sb = if i < b.len() { 1.0 } else { 0.0 };
+        let sc = (sa + (sb - sa) * e) * scale;
+        if sc <= 0.01 {
+            continue;
+        }
+        let x = (pa.0 + (pb.0 - pa.0) * e) * PIP_GRID;
+        let y = (pa.1 + (pb.1 - pa.1) * e) * PIP_GRID;
+        let style = Style::new(FG, alpha * (sc * 1.5).min(1.0), PIP_GLOW);
+        c.painter.fill_circle(x, y, PIP_RADIUS * sc, style);
+    }
+}
+
+/// One face of the boot animation. `t` is seconds since boot, `index` the
+/// face index, `top` whether this face was on top when boot started.
+pub fn draw_boot<A: AssetStore>(c: &mut Ctx<A>, index: usize, top: bool, t: f32) {
+    // A slight stagger around the cube.
+    let t = t - if top { 0.0 } else { index as f32 * 0.05 };
+    if t < 0.0 {
+        return;
+    }
+    if top && t >= LOOP_END {
+        draw_boot_finale(c, t - LOOP_END);
+        return;
+    }
+    // The top face starts on 6 so the loop lands it on 5.
+    let v0 = if top { 6 } else { FACE_START[index] };
+    let val = |k: u32| ((v0 as u32 - 1 + k) % 6 + 1) as u8;
+    let appear = (t / 0.25).min(1.0);
+    let steps_t = t - 0.25;
+    let fade = ((steps_t - BOOT_STEP * BOOT_STEPS as f32) / BOOT_FADE).clamp(0.0, 1.0);
+    if steps_t < 0.0 {
+        draw_pips(c, v0, v0, 0.0, appear, appear);
+        return;
+    }
+    let k = (floorf(steps_t / BOOT_STEP) as u32).min(BOOT_STEPS);
+    let local = if k >= BOOT_STEPS {
+        1.0
+    } else {
+        ((steps_t - k as f32 * BOOT_STEP) / 0.22).min(1.0)
+    };
+    let from = val(k.min(BOOT_STEPS - 1));
+    let to = val((k + 1).min(BOOT_STEPS));
+    let from = if k >= BOOT_STEPS { to } else { from };
+    draw_pips(c, from, to, local, 1.0 - fade, 1.0 - 0.6 * fade);
+}
+
+/// Top face after the loop: corner pips shoot outward, the centre pip
+/// breathes and bursts, and the name emerges.
+fn draw_boot_finale<A: AssetStore>(c: &mut Ctx<A>, u: f32) {
+    if u < 0.35 {
+        let e = powf(u / 0.35, 2.0);
+        let d = PIP_GRID * (1.0 + 1.4 * e);
+        let style = Style::new(FG, 1.0 - e, PIP_GLOW);
+        for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            c.painter
+                .fill_circle(x * d, y * d, PIP_RADIUS * (1.0 - 0.4 * e), style);
+        }
+    }
+    if u < BURST_AT + 0.15 {
+        let b = ((u - BURST_AT) / 0.15).max(0.0);
+        let sc = if u < BURST_AT {
+            1.0 + 0.07 * sinf(u * core::f32::consts::PI * 4.0)
+        } else {
+            1.0 + b * 1.2
+        };
+        c.painter
+            .fill_circle(0.0, 0.0, PIP_RADIUS * sc, Style::new(FG, 1.0 - b, PIP_GLOW));
+    }
+    let la = ((u - 1.65) / 0.6).clamp(0.0, 1.0)
+        * if u < 3.8 {
+            1.0
+        } else {
+            (1.0 - (u - 3.8) / 0.4).max(0.0)
+        };
+    if la > 0.0 {
+        let px = fit_px("SMOKEBOMB", 28, 142.0);
+        c.text("SMOKEBOMB", 0.0, 2.0, px, Style::new(FG, la, 14.0));
+    }
+}
+
+// ---------- setup label (C2) ----------
+
+/// The setup as the die shows it: `d20`, `3d6`, `Pass the Pot`, `Pass the Pot ×2`.
+pub fn setup_label(die: DieKind, count: u8) -> String<24> {
+    let mut s = String::new();
+    let _ = match (die, count) {
+        (DieKind::PassThePot, 1) => write!(s, "Pass the Pot"),
+        (DieKind::PassThePot, n) => write!(s, "Pass the Pot ×{n}"),
+        (d, 1) => write!(s, "{}", d.wire_name()),
+        (d, n) => write!(s, "{n}{}", d.wire_name()),
+    };
+    s
+}
+
+/// The wake/setup label, centred, at `alpha` (already including the 85%).
+pub fn draw_wake_label<A: AssetStore>(c: &mut Ctx<A>, label: &str, alpha: f32) {
+    c.text(
+        label,
+        0.0,
+        0.0,
+        fit_px(label, 50, 150.0),
+        Style::new(FG, alpha, 8.0),
+    );
+}
+
+// ---------- results (C6) ----------
+
+/// Big number size by character count (canvas px).
+fn big_size(chars: usize) -> f32 {
+    match chars {
+        0..=2 => 94.0,
+        3 => 66.0,
+        4 => 52.0,
+        5 | 6 => 40.0,
+        _ => 32.0,
+    }
+}
+
+/// A roll's result: every face except the one facing down shows this.
+pub fn draw_result<A: AssetStore>(c: &mut Ctx<A>, record: &RollRecord, value: u8, alpha: f32) {
+    let label = setup_label(record.die, record.values.len() as u8);
+    if !record.die.is_numeric() {
+        draw_pot_tokens(c, &record.values, value, alpha);
+        c.text(
+            &label,
+            0.0,
+            54.0,
+            fit_px(&label, 22, 150.0),
+            Style::new(value, alpha, 8.0),
+        );
+        return;
+    }
+
+    let mut big: String<8> = String::new();
+    let _ = write!(big, "{}", record.total());
+    let mut parts: String<48> = String::new();
+    if record.values.len() > 1 {
+        for (i, v) in record.values.iter().enumerate() {
+            let _ = write!(parts, "{}{v}", if i > 0 { "+" } else { "" });
+        }
+        if parts.len() > 18 {
+            parts.clear();
+        }
+    }
+    let has_parts = !parts.is_empty();
+    let px = roundf(big_size(big.len()) * if has_parts { 0.85 } else { 1.0 }) as u16;
+    c.text(
+        &big,
+        0.0,
+        if has_parts { 0.0 } else { -12.0 },
+        px,
+        Style::new(value, alpha, 18.0),
+    );
+    c.text(
+        &label,
+        0.0,
+        if has_parts { 56.0 } else { 54.0 },
+        fit_px(&label, 22, 150.0),
+        Style::new(value, alpha, 8.0),
+    );
+    if has_parts {
+        let px = if parts.len() > 10 { 14 } else { 17 };
+        c.text(&parts, 0.0, -60.0, px, Style::new(value, alpha * 0.7, 8.0));
+    }
+}
+
+/// Pass the Pot glyphs in a row: arrows pass left or right, the pot glyph
+/// feeds the pot, a dot keeps.
+fn draw_pot_tokens<A: AssetStore>(c: &mut Ctx<A>, values: &[u8], value: u8, alpha: f32) {
+    let n = values.len();
+    let sz = match n {
+        1 => 64.0,
+        2 => 50.0,
+        _ => 40.0,
+    };
+    let gap = sz * 1.15;
+    let y = -12.0;
+    let style = Style::new(value, alpha, 14.0);
+    for (i, &v) in values.iter().enumerate() {
+        let x = (i as f32 - (n as f32 - 1.0) / 2.0) * gap;
+        match PotFace::from_raw(v) {
+            PotFace::Keep => c.painter.fill_circle(x, y, sz * 0.13, style),
+            PotFace::Pot => {
+                let w = sz * 0.8;
+                let rim = y - sz * 0.05;
+                c.painter
+                    .stroke_polyline(&[(x - w * 0.55, rim), (x + w * 0.55, rim)], sz * 0.09, style);
+                c.painter
+                    .stroke_arc(x, rim, w * 0.45, 0.0, core::f32::consts::PI, sz * 0.09, style);
+                c.painter.fill_circle(x, y - sz * 0.32, sz * 0.11, style);
+            }
+            dir @ (PotFace::Left | PotFace::Right) => {
+                let d = if dir == PotFace::Right { 1.0 } else { -1.0 };
+                let (l, h) = (sz * 0.36, sz * 0.2);
+                let shaft = [(x - d * l, y), (x + d * l, y)];
+                let head = [(x + d * (l - h), y - h), (x + d * l, y), (x + d * (l - h), y + h)];
+                c.painter.stroke_paths(&[&shaft, &head], sz * 0.1, style);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_labels_match_the_mockup() {
+        assert_eq!(setup_label(DieKind::D20, 1).as_str(), "d20");
+        assert_eq!(setup_label(DieKind::D6, 3).as_str(), "3d6");
+        assert_eq!(setup_label(DieKind::PassThePot, 1).as_str(), "Pass the Pot");
+        assert_eq!(setup_label(DieKind::PassThePot, 2).as_str(), "Pass the Pot ×2");
+    }
+
+    #[test]
+    fn boot_timing_matches_the_spec() {
+        assert!((LOOP_END - 1.95).abs() < 1e-6);
+        assert!((BOOT_DURATION - 6.2).abs() < 1e-6);
+    }
+}

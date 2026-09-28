@@ -7,6 +7,7 @@ members = [
     "packages/firmware/hal",
     "packages/firmware/hal/simulator",
     "packages/firmware/hal/nrf54l15",
+    "packages/firmware/assets-build",
     "packages/simulator/server",
     "packages/server",
 ]
@@ -38,6 +39,7 @@ smokebomb-core = { path = "packages/firmware/core" }
 smokebomb-hal-simulator = { path = "packages/firmware/hal/simulator" }
 smokebomb-hal-nrf54l15 = { path = "packages/firmware/hal/nrf54l15" }
 smokebomb-firmware = { path = "packages/firmware", default-features = false }
+smokebomb-assets-build = { path = "packages/firmware/assets-build" }
 
 # no_std-friendly
 heapless = { version = "0.8", features = ["serde"] }
@@ -48,6 +50,10 @@ p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 
 # std / host
 anyhow = "1"
+flate2 = "1"
+fontdue = "0.9"
+png = "0.17"
+rustybuzz = "0.20"
 axum = { version = "0.8", features = ["ws"] }
 getrandom = "0.2"
 glam = "0.33"
@@ -64,6 +70,10 @@ uuid = { version = "1", features = ["serde", "v4"] }
 
 [profile.release]
 lto = "thin"
+
+# Build scripts rasterize the font pack; keep them fast in debug builds.
+[profile.dev.build-override]
+opt-level = 3
 
 # Firmware images: size matters more than speed.
 [profile.firmware]

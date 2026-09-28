@@ -6,13 +6,12 @@
 //! packs it at 4 bits per pixel for the panel. Six buffers are 54 KB, within
 //! the nRF54L15's 256 KB of RAM.
 //!
-//! Real typography (Space Grotesk bitmaps from QSPI) replaces the built-in
-//! 3x5 digits later.
+//! Screens draw into these through [`crate::gfx`]; the built-in 3x5 digits
+//! below remain only for the placeholder menu and Nest screens.
 
-use smokebomb_hal::{Face, FrameBytes, FACE_COUNT, PANEL_HEIGHT, PANEL_WIDTH};
-use smokebomb_shared::RollRecord;
+use smokebomb_hal::{FrameBytes, PANEL_HEIGHT, PANEL_WIDTH};
 
-use crate::orientation::{Quarter, TextOrientation};
+use crate::orientation::Quarter;
 
 pub const PIXELS: usize = PANEL_WIDTH * PANEL_HEIGHT;
 
@@ -61,6 +60,22 @@ impl Framebuffer {
         if x < PANEL_WIDTH && y < PANEL_HEIGHT {
             let p = &mut self.buf[y * PANEL_WIDTH + x];
             *p = p.saturating_add(value);
+        }
+    }
+
+    /// Source-over blend of `value` at opacity `alpha` (0–1).
+    pub fn blend(&mut self, x: usize, y: usize, value: f32, alpha: f32) {
+        let p = &mut self.buf[y * PANEL_WIDTH + x];
+        let a = alpha.clamp(0.0, 1.0);
+        *p = (*p as f32 + (value - *p as f32) * a + 0.5) as u8;
+    }
+
+    /// Add a packed 4bpp frame on top (level `l` → `l * 17`), saturating.
+    pub fn add_packed(&mut self, packed: &FrameBytes) {
+        for (i, px) in self.buf.iter_mut().enumerate() {
+            let b = packed[i / 2];
+            let level = if i % 2 == 0 { b >> 4 } else { b & 0x0f };
+            *px = px.saturating_add(level * 17);
         }
     }
 
@@ -173,22 +188,6 @@ const DIGITS: [[u8; 5]; 10] = [
     [0b111, 0b101, 0b111, 0b101, 0b111],
     [0b111, 0b101, 0b111, 0b001, 0b111],
 ];
-
-/// Placeholder result screen: the total on every face except the one facing
-/// down (SIM_SPEC C6, B3), upright on each face. Layout, fonts and the parts
-/// line come with the renderer.
-pub fn draw_result(
-    frames: &mut [Framebuffer; FACE_COUNT],
-    orientation: &TextOrientation,
-    up: Face,
-    record: &RollRecord,
-) {
-    for face in Face::ALL {
-        if face != up.opposite() {
-            frames[face.index()].draw_number(record.total(), 6, FG, orientation.quarter(face));
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

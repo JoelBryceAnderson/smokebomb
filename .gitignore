@@ -25,6 +25,9 @@ xcuserdata/
 DerivedData/
 *.xcworkspace/
 
+# Golden-frame contact sheets are regenerated on demand (the .bin frames are committed)
+tools/mockup-capture/golden/**/sheet.png
+
 # Env / OS
 .env
 .env.*
