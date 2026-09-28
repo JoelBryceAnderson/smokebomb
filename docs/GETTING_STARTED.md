@@ -58,8 +58,8 @@ In the browser:
 - **Drag** on the die to turn it in your hand.
 - **Face up** sets the die down with that screen on top.
 - **Press and hold a screen** for the menu: the ring fills, the menu opens
-  and the die turns that screen toward you. Hold again to save; throwing or
-  leaving it for 25 s discards the changes.
+  and the die turns that screen toward you. Tap on a Settings item to change it. Hold again to save and
+  return to the roll; throwing or leaving it for 25 s discards the changes.
 - **On charging nest** docks the die; it settles upright.
 - **Reduced motion** shortens the tumble and tips, as in the mockup.
 

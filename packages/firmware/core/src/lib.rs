@@ -364,7 +364,7 @@ impl<P: Platform> Firmware<P> {
                 // at its start, and once per face on a long turn, however
                 // many stops it makes on the way.
                 let detent = libm::floorf(progress + 0.5) as i32;
-                if detent != m.detent {
+                if detent != m.detent && self.settings.haptics_on() {
                     self.hw.haptics.play(smokebomb_hal::HapticEffect::MenuTip)?;
                 }
                 m.detent = detent;
@@ -412,9 +412,11 @@ impl<P: Platform> Firmware<P> {
             (false, Some(_)) => {
                 // Letting go after a hold that saved the menu shows the
                 // setup like a tap does (the mockup's pointer-up); letting go
-                // after the hold that opened it doesn't.
+                // after the hold that opened it doesn't. A tap inside the
+                // menu changes the selected setting, or restarts the die.
                 if !self.menu_hold_fired || self.menu.is_none() {
-                    let _ = events.push(Event::Tap);
+                    let restart = self.menu.as_ref().is_some_and(|m| m.draft.restart_selected());
+                    let _ = events.push(if restart { Event::Restart } else { Event::Tap });
                 }
                 self.touch_since = None;
             }
@@ -439,7 +441,11 @@ impl<P: Platform> Firmware<P> {
     /// while a tick runs, and everything in one tick must agree on when it is.
     fn execute(&mut self, cmd: Command, now: u64) -> HalResult<()> {
         match cmd {
-            Command::Haptic(effect) => self.hw.haptics.play(effect)?,
+            Command::Haptic(effect) => {
+                if self.settings.haptics_on() {
+                    self.hw.haptics.play(effect)?;
+                }
+            }
             Command::Roll => {
                 let signed = self.roller.roll(
                     &mut self.hw.rng,
@@ -449,7 +455,7 @@ impl<P: Platform> Firmware<P> {
                     now,
                 )?;
                 self.pending_special = special(&signed, self.settings.die);
-                if self.pending_special == Some(Special::Max) {
+                if self.pending_special == Some(Special::Max) && self.settings.haptics_on() {
                     self.hw
                         .haptics
                         .play(smokebomb_hal::HapticEffect::MaxCelebration)?;
@@ -474,22 +480,46 @@ impl<P: Platform> Firmware<P> {
                 });
                 self.ui.menu_opened(now);
             }
+            Command::MenuTap => {
+                if let Some(m) = &mut self.menu {
+                    let next = m.draft.tapped();
+                    if next != m.draft && self.settings.haptics_on() {
+                        self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
+                    }
+                    m.draft = next;
+                    m.last_input = now;
+                }
+            }
+            // The draft is dropped: a restart saves nothing.
+            Command::MenuRestart => {
+                if self.menu.take().is_some() {
+                    self.smoke.clear();
+                    self.pending_special = None;
+                    self.ui.restart(now);
+                }
+            }
             Command::MenuClose { save } => {
                 if let Some(m) = self.menu.take() {
-                    if save && m.draft.restart_selected() {
-                        self.smoke.clear();
-                        self.pending_special = None;
-                        self.ui.restart(now);
-                    } else {
-                        if save {
-                            m.draft.commit(&mut self.settings);
-                        }
-                        self.ui.menu_closed(now, m.frame.front_face(), m.draft, save);
+                    if save {
+                        m.draft.commit(&mut self.settings);
+                        self.apply_settings()?;
                     }
+                    self.ui.menu_closed(now, m.frame.front_face(), m.draft, save);
                 }
             }
         }
         Ok(())
+    }
+
+    /// Push saved settings to the hardware they control. The rest (smoke,
+    /// large text, sleep, night mode, verified rolls) are stored and not
+    /// acted on yet.
+    fn apply_settings(&mut self) -> HalResult<()> {
+        let level = (self.settings.brightness_pct() as u16 * 255 / 100) as u8;
+        for face in Face::ALL {
+            self.hw.display.set_brightness(face, level)?;
+        }
+        self.hw.ble.set_advertising(self.settings.bluetooth_on())
     }
 
     fn render(&mut self, now: u64) -> HalResult<()> {

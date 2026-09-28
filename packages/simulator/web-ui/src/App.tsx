@@ -114,7 +114,7 @@ export function App() {
         </div>
         <p className="hint">
           {menuOpen
-            ? "Menu: swipe or use the tip pad to turn to the next screen · hold F and drag to turn several · hold to save"
+            ? "Menu: swipe or use the tip pad to turn to the next screen · hold F and drag to turn several · tap to change a setting · hold to save"
             : "Drag to turn the die · press and hold a face to touch it · arrow keys tip it"}
         </p>
       </main>

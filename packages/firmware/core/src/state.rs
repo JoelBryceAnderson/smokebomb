@@ -8,6 +8,7 @@
 //!    └──────────────── timeout / Handled ── Reveal ◀──────────── roll ◀────────────┘
 //!
 //!   Idle/Reveal ── LongPress ──▶ Menu ── LongPress (save) / MenuTimeout ──▶ Idle
+//!                                 ├──── Tap: change the setting / Restart ──▶ Menu / Idle
 //!                                 └──── Shaking / FreeFall (discard) ──▶ Shaking / Airborne
 //!   any ── Docked(true) ──▶ Nest ── Docked(false) ──▶ Idle
 //! ```
@@ -49,6 +50,8 @@ pub enum Event {
     Tap,
     /// Touch held for [`crate::MENU_HOLD_MS`].
     LongPress,
+    /// A tap in the menu while Restart is selected.
+    Restart,
     Docked(bool),
     /// No menu input for [`crate::MENU_IDLE_MS`].
     MenuTimeout,
@@ -65,6 +68,10 @@ pub enum Command {
     MenuClose {
         save: bool,
     },
+    /// A tap in the menu: change the selected setting.
+    MenuTap,
+    /// Leave the menu without saving and restart the die.
+    MenuRestart,
 }
 
 pub type Commands = Vec<Command, 4>;
@@ -111,6 +118,14 @@ impl StateMachine {
             (Menu, Event::LongPress) => {
                 emit(MenuClose { save: true });
                 emit(Haptic(HapticEffect::MenuSave));
+                Some(Idle)
+            }
+            (Menu, Event::Tap) => {
+                emit(MenuTap);
+                None
+            }
+            (Menu, Event::Restart) => {
+                emit(MenuRestart);
                 Some(Idle)
             }
             (Menu, Event::MenuTimeout) => {
@@ -214,6 +229,26 @@ mod tests {
         let cmds = feed(&mut sm, &[Event::Motion(Motion::Handled), Event::LongPress]);
         assert_eq!(*sm.mode(), Mode::Idle);
         assert!(cmds.contains(&Command::MenuClose { save: true }));
+    }
+
+    #[test]
+    fn a_tap_in_the_menu_changes_a_setting_and_stays() {
+        let mut sm = StateMachine::new();
+        feed(&mut sm, &[Event::LongPress]);
+        let cmds = feed(&mut sm, &[Event::Tap]);
+        assert_eq!(*sm.mode(), Mode::Menu);
+        assert!(cmds.contains(&Command::MenuTap));
+        assert!(!cmds.contains(&Command::MenuClose { save: true }));
+    }
+
+    #[test]
+    fn restart_leaves_the_menu_without_saving() {
+        let mut sm = StateMachine::new();
+        feed(&mut sm, &[Event::LongPress]);
+        let cmds = feed(&mut sm, &[Event::Restart]);
+        assert_eq!(*sm.mode(), Mode::Idle);
+        assert!(cmds.contains(&Command::MenuRestart));
+        assert!(!cmds.iter().any(|c| matches!(c, Command::MenuClose { .. })));
     }
 
     #[test]

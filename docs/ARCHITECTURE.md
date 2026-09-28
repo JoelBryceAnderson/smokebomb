@@ -167,9 +167,12 @@ against recorded throws on real hardware.
 Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
 
 - **Draft.** The menu works on a `Draft` (`menu.rs`): page, die, count and
-  the Settings item. Only a hold saves it into `Settings`. Holding on
-  Restart restarts the die instead; a throw, docking or 25 s without a tip
-  discards the draft.
+  the Settings item and each item's chosen option. On the Settings page a tap
+  steps the selected item to its next value. Only a hold saves the draft into
+  `Settings`, and a hold always saves and returns to the roll. A tap on
+  Restart restarts the die without saving; a throw, docking or 25 s without a
+  tip discards the draft. Saving applies brightness, haptics-off and
+  Bluetooth; the other items are stored and not acted on yet.
 - **Tips** (`tips.rs`). The menu keeps a `Frame`: the front face (the held
   one) and the sky and viewer's-right axes in die coordinates. A
   `TipTracker` waits for the die to be still for 120 ms after the menu
