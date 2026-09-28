@@ -1,0 +1,17 @@
+[package]
+name = "smokebomb-core"
+description = "Platform-independent firmware logic: state machine, rolls, rendering, animation playback"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+heapless.workspace = true
+smokebomb-hal.workspace = true
+smokebomb-shared.workspace = true
+
+[dev-dependencies]
+smokebomb-hal-simulator.workspace = true
+p256.workspace = true

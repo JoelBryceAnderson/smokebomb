@@ -1,0 +1,7 @@
+[advisories]
+ignore = [
+    # rsa (Marvin attack) is pulled into Cargo.lock by sqlx's MySQL driver,
+    # which is never compiled: sqlx is built with the postgres feature only
+    # (`cargo tree -i rsa` prints nothing). No fixed rsa release exists.
+    "RUSTSEC-2023-0071",
+]

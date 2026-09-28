@@ -1,0 +1,73 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/shared",
+    "packages/firmware",
+    "packages/firmware/core",
+    "packages/firmware/hal",
+    "packages/firmware/hal/simulator",
+    "packages/firmware/hal/nrf54l15",
+    "packages/simulator/server",
+    "packages/server",
+]
+# `cargo run --features=simulator` from the repo root launches the simulator.
+# The backend server is left out so `cargo run` has exactly one binary to
+# pick; build it with `-p smokebomb-server` or `--workspace`.
+default-members = [
+    "packages/shared",
+    "packages/firmware",
+    "packages/firmware/core",
+    "packages/firmware/hal",
+    "packages/firmware/hal/simulator",
+    "packages/firmware/hal/nrf54l15",
+    "packages/simulator/server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+smokebomb-shared = { path = "packages/shared" }
+smokebomb-hal = { path = "packages/firmware/hal" }
+smokebomb-core = { path = "packages/firmware/core" }
+smokebomb-hal-simulator = { path = "packages/firmware/hal/simulator" }
+smokebomb-hal-nrf54l15 = { path = "packages/firmware/hal/nrf54l15" }
+smokebomb-firmware = { path = "packages/firmware", default-features = false }
+
+# no_std-friendly
+heapless = { version = "0.8", features = ["serde"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+sha2 = { version = "0.10", default-features = false }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
+
+# std / host
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+getrandom = "0.2"
+hex = "0.4"
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[profile.release]
+lto = "thin"
+
+# Firmware images: size matters more than speed.
+[profile.firmware]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = true

@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "mobile",
+  "projectType": "application",
+  "tags": ["scope:mobile", "lang:kotlin"],
+  "targets": {
+    "build-android": {
+      "executor": "nx:run-commands",
+      "options": { "command": "./gradlew :composeApp:assembleDebug", "cwd": "{projectRoot}" }
+    },
+    "build-ios": {
+      "executor": "nx:run-commands",
+      "options": { "command": "./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64", "cwd": "{projectRoot}" }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "./gradlew :shared:allTests :composeApp:testDebugUnitTest", "cwd": "{projectRoot}" }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "server",
+  "projectType": "application",
+  "tags": ["scope:server", "lang:rust"],
+  "implicitDependencies": ["shared"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "inputs": ["rust", "{projectRoot}/migrations/**"],
+      "options": { "command": "cargo build -p smokebomb-server --release", "cwd": "{workspaceRoot}" }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "inputs": ["rust", "{projectRoot}/migrations/**"],
+      "cache": false,
+      "options": { "command": "cargo test -p smokebomb-server", "cwd": "{workspaceRoot}" }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "inputs": ["rust"],
+      "options": { "command": "cargo clippy -p smokebomb-server --all-targets -- -D warnings", "cwd": "{workspaceRoot}" }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "continuous": true,
+      "options": { "command": "cargo run -p smokebomb-server", "cwd": "{workspaceRoot}" }
+    },
+    "db-up": {
+      "executor": "nx:run-commands",
+      "options": { "command": "docker compose -f packages/server/docker-compose.yml up -d", "cwd": "{workspaceRoot}" }
+    }
+  }
+}

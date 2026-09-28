@@ -1,0 +1,18 @@
+{
+  "name": "smokebomb",
+  "private": true,
+  "description": "Smokebomb monorepo: firmware, simulator, server, mobile",
+  "workspaces": [
+    "packages/simulator/web-ui"
+  ],
+  "scripts": {
+    "sim": "nx run simulator-server:serve",
+    "graph": "nx graph"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "nx": "^23.2.1"
+  }
+}
