@@ -295,6 +295,7 @@ Mockup input: a swipe of more than 36 px (by dominant direction), or the arrow k
   - Haptic **28 ms**, a pulse, and the landing-style flash.
   - The menu fades out over 0.3 s (scale 1 → 1.12, ring flashing out).
   - Then the **success screen** shows on that face (C4), and the other faces show the wake label for 2.2 s.
+  - Letting go afterwards counts as a tap, so the wake label runs until 3 s after the release (C2, G16).
 - **Discard:** any of the following closes the menu without saving (the wake label still shows for 2.2 s, unless a throw follows):
   - Escape,
   - a throw or shake,
@@ -549,6 +550,7 @@ Differences found when this document was checked against the mockup source (2026
 | G13 | A5 | — | Note on three.js r128 colour and light semantics when porting |
 | G14 | B1 | Labels in weight 600 | The mockup never loads 600, so labels render at 700. Decided: match the mockup (H8) |
 | G15 | C2 | — | Default setup is a single d20 |
+| G16 | C3 | Unspecified | Letting go after the saving hold is a tap (wake label for 3 s from the release). The 0.8 s hold completes on the 49th frame at 60 Hz (the mockup's clock sums float frame times), so the firmware waits for *more than* 0.8 s |
 
 **Golden frames.** `tools/mockup-capture` runs the pinned mockup headless (seeded randomness, virtual time) and saves each face's 96×96 output at fixed moments in nine scenarios: boot, tap, throw, quick throw, Pass the Pot, menu, menu settings, restart and Nest. These are the reference for decision H4; `packages/firmware/core/tests/golden.rs` scores the firmware against them. The captures confirm G1 (the wake label is lit on the face-down screen).
 
@@ -566,5 +568,5 @@ Decided 2026-09-28.
 | H4 | **Fidelity target** for firmware rendering | **Native 96×96 rendering, compared against captured mockup frames within a tolerance.** Pixel-identical output isn't a goal: the firmware can't afford the mockup's 256×256 canvas-and-downsample pipeline. |
 | H5 | **Normal results through smoke** | **Keep the mockup:** the result fades in from 0.35 s after landing while smoke drains. Only max/dud effects wait for clear air. |
 | H6 | **Pass the Pot in the signed roll** | **Sign the raw d6 value** (1 → ←, 2 → P, 3 → →, 4–6 → •), exactly as the mockup draws it. Requires roll format v2 and a 10-dice limit. |
-| H7 | **Menu frame on hardware when the held face points up.** "Front" and "up" coincide, so right/up are undefined. | **Hardware question, still open.** Doesn't block the simulator, where the mockup's snap becomes a camera move instead of a die rotation. |
+| H7 | **Menu frame on hardware when the held face points up.** "Front" and "up" coincide, so right/up are undefined. | **Hardware question, still open.** The firmware takes the frame from the held face and gravity once the die has been still for 120 ms after the menu opens, and falls back to an arbitrary perpendicular "up" if the held face points up. The simulator turns the die like the mockup's snap, so it never hits the fallback. |
 | H8 | **Label weight** (G14) | **700 everywhere, matching what the mockup renders.** The firmware ships one Space Grotesk cut (Bold). |

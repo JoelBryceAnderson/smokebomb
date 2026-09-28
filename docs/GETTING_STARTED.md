@@ -34,8 +34,8 @@ built last. If it's older than the server, the browser shows a banner saying
 the page is out of date, and the server logs a warning at startup and when an
 old page connects. Rebuild the UI and hard-reload the page.
 
-The screens are dark at rest for now: the boot animation and wake label arrive
-with the behaviour work. Throw the die to see a result.
+The die boots with the mockup's pip animation, then shows its setup. Throw it
+to see a result; hold a screen to open the menu.
 
 In the browser:
 
@@ -47,11 +47,13 @@ In the browser:
 - **Tip to an adjacent screen:** the pad does a quick quarter-turn that brings
   a neighbouring screen to the front. The arrow keys do the same, and while
   the menu is open so does a swipe on the die. In the menu, ▲/▼ change the
-  value and ◀/▶ change the page (SIM_SPEC C3). The current placeholder
-  firmware doesn't recognise tips yet.
+  value and ◀/▶ change the page (SIM_SPEC C3). The firmware reads tips from
+  the gyro, the way the real die will.
 - **Drag** on the die to turn it in your hand.
 - **Face up** sets the die down with that screen on top.
-- **Press and hold a screen** to touch it (for the menu).
+- **Press and hold a screen** for the menu: the ring fills, the menu opens
+  and the die turns that screen toward you. Hold again to save; throwing or
+  leaving it for 25 s discards the changes.
 - **On charging nest** docks the die; it settles upright.
 - **Reduced motion** shortens the tumble and tips, as in the mockup.
 
@@ -87,7 +89,7 @@ simulator`. Set `PORT` to use a port other than 3000.
 ## Firmware
 
 ```sh
-cargo test -p smokebomb-core                 # state machine, motion, rolls, rendering, end-to-end throw
+cargo test -p smokebomb-core                 # state machine, motion, rolls, menu, rendering, golden frames
 npx nx run firmware:test                     # core + HAL crates
 npx nx run firmware:lint                     # clippy for host, simulator board and nRF board
 cargo fw                                     # no_std build for the nRF54L15 (thumbv8m.main-none-eabihf)
@@ -122,7 +124,7 @@ SMOKEBOMB_GOLDEN_SHEETS=target/golden-sheets cargo test -p smokebomb-core --test
 ```
 
 It prints each face's score (mean difference in panel levels after a slight
-blur; below 0.2 passes). CI uploads the sheets as the `golden-sheets`
+blur; up to 0.25 passes). CI uploads the sheets as the `golden-sheets`
 artifact.
 
 To rebuild the asset pack (fonts + placeholder clips) as a file for flashing:

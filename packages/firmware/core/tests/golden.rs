@@ -15,17 +15,21 @@ use std::path::{Path, PathBuf};
 
 use smokebomb_core::Firmware;
 use smokebomb_hal::{Face, FACE_COUNT, FRAME_BYTES};
+use smokebomb_hal_simulator::world::{TipDir, World, DEFAULT_VIEWER_RIGHT};
 use smokebomb_hal_simulator::{imu_script, SimHandle, SimPlatform};
 
 const FPS: f64 = 60.0;
 const PIXELS: usize = 96 * 96;
 type Levels = [u8; PIXELS];
 
-/// Blurred MAE a face may have, in panel levels (0–15). Current worst case
-/// is ~0.16 on the 94 px result number: the same glyphs in the same place,
-/// with slightly different anti-aliasing from the browser's canvas. Content
-/// that is missing, misplaced by a pixel or mis-sized scores well above this.
-const MAX_BLURRED_MAE: f32 = 0.2;
+/// Blurred MAE a face may have, in panel levels (0–15). Current worst cases
+/// are ~0.16 on the 94 px result number and ~0.20 on text turned a quarter
+/// (the success screen on a sideways face): the same glyphs in the same
+/// place, anti-aliased differently by the browser's canvas, which rasterises
+/// inside the rotated context where the firmware turns finished glyphs.
+/// Content that is missing, misplaced by a pixel (≈ 1.0) or mis-sized scores
+/// well above this.
+const MAX_BLURRED_MAE: f32 = 0.25;
 
 fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tools/mockup-capture/golden")
@@ -52,26 +56,64 @@ struct Run {
     sim: SimHandle,
     fw: Firmware<SimPlatform>,
     frame: u64,
+    /// The simulator's die, for scenarios where it moves in the hand (the
+    /// menu). Without it the IMU follows `imu_script`.
+    world: Option<World>,
+    /// A tip to start once the current frame is drawn: the mockup starts a
+    /// tip from the frame before its first step, as it does the menu snap.
+    pending_tip: Option<TipDir>,
 }
 
 impl Run {
     /// The mockup loads with +Y up.
     fn new() -> Self {
+        Self::start(None)
+    }
+
+    /// Driven by the simulator's world model, like the simulator itself.
+    fn with_world() -> Self {
+        Self::start(Some(World::new()))
+    }
+
+    fn start(world: Option<World>) -> Self {
         let sim = SimHandle::new();
         {
             let mut s = sim.lock();
             s.manual_time_ms = Some(0);
             s.imu_resting = imu_script::resting(Face::PosY);
+            // The mockup's stand-in battery level.
+            s.battery_percent = 78;
         }
         let fw = Firmware::new(sim.peripherals()).unwrap();
-        let mut run = Self { sim, fw, frame: 0 };
+        let mut run = Self {
+            sim,
+            fw,
+            frame: 0,
+            world,
+            pending_tip: None,
+        };
         run.step();
         run
     }
 
     fn step(&mut self) {
-        self.sim.lock().manual_time_ms = Some((self.frame as f64 * 1000.0 / FPS).round() as u64);
+        let menu_before = self.fw.menu_front();
+        {
+            let mut s = self.sim.lock();
+            s.manual_time_ms = Some((self.frame as f64 * 1000.0 / FPS).round() as u64);
+            if let Some(w) = &mut self.world {
+                // World time matches frame time: frame 0 is at t = 0.
+                s.imu_resting = w.step(if self.frame == 0 { 0.0 } else { 1.0 / FPS });
+            }
+        }
         self.fw.tick().unwrap();
+        // As the simulator server does: turn the held face to the viewer.
+        if let (None, Some(face), Some(w)) = (menu_before, self.fw.menu_front(), &mut self.world) {
+            w.snap_to_viewer(face);
+        }
+        if let (Some(dir), Some(w)) = (self.pending_tip.take(), &mut self.world) {
+            assert!(w.tip(dir, DEFAULT_VIEWER_RIGHT), "die busy");
+        }
         self.frame += 1;
     }
 
@@ -98,6 +140,20 @@ impl Run {
         self.sim.lock().touch_mask = 1 << Face::PosZ.index();
         self.step();
         self.sim.lock().touch_mask = 0;
+    }
+
+    /// The mockup's `pressDie()`: a finger on the screen facing the viewer.
+    fn press(&mut self) {
+        self.sim.lock().touch_mask = 1 << Face::PosZ.index();
+    }
+
+    fn release(&mut self) {
+        self.sim.lock().touch_mask = 0;
+    }
+
+    fn tip(&mut self, dir: TipDir) {
+        assert!(self.world.is_some(), "tips need the world model");
+        self.pending_tip = Some(dir);
     }
 
     fn faces(&self) -> [Levels; FACE_COUNT] {
@@ -197,8 +253,16 @@ fn compare(scenario: &str, rows: &[Row], checkpoints: &[Checkpoint]) -> Vec<Stri
 /// An input sent at a mockup time.
 type Input = fn(&mut Run);
 
-fn run_scenario(scenario: &str, checkpoints: &[Checkpoint], mut inputs: Vec<(f64, Input)>) -> Vec<String> {
-    let mut run = Run::new();
+fn run_scenario(scenario: &str, checkpoints: &[Checkpoint], inputs: Vec<(f64, Input)>) -> Vec<String> {
+    run_scenario_on(Run::new(), scenario, checkpoints, inputs)
+}
+
+fn run_scenario_on(
+    mut run: Run,
+    scenario: &str,
+    checkpoints: &[Checkpoint],
+    mut inputs: Vec<(f64, Input)>,
+) -> Vec<String> {
     let mut rows = Vec::new();
     inputs.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut inputs = inputs.into_iter().peekable();
@@ -307,6 +371,102 @@ fn result_screen_matches_the_mockup() {
 }
 
 const THROW_AT: f64 = 10.4;
+
+fn checkpoints(times: &[(f64, &'static str)], skip: &'static [(Face, &'static str)]) -> Vec<Checkpoint> {
+    times
+        .iter()
+        .map(|&(t, name)| Checkpoint { t, name, skip })
+        .collect()
+}
+
+#[test]
+fn menu_matches_the_mockup() {
+    // Hold +Z: the ring fills, the menu opens and the die turns to the
+    // viewer. Tip left (page), up (value: d100), left, left, right, right,
+    // then hold to save: success on the front face, the label elsewhere.
+    let times: &[(f64, &str)] = &[
+        (9.1, "9.10"),
+        (9.3, "9.30"),
+        (9.5, "9.50"),
+        (9.7, "9.70"),
+        (9.85, "9.85"),
+        (10.0, "10.00"),
+        (10.2, "10.20"),
+        (10.7, "10.70"),
+        (10.85, "10.85"),
+        (11.1, "11.10"),
+        (11.35, "11.35"),
+        (11.7, "11.70"),
+        (12.8, "12.80"),
+        (13.9, "13.90"),
+        (14.3, "14.30"),
+        (14.6, "14.60"),
+        (14.9, "14.90"),
+        (15.0, "15.00"),
+        (15.2, "15.20"),
+        (15.5, "15.50"),
+        (15.9, "15.90"),
+        (16.3, "16.30"),
+        (17.2, "17.20"),
+    ];
+    let inputs: Vec<(f64, Input)> = vec![
+        (9.0, Run::press),
+        (10.3, Run::release),
+        (10.6, |r| r.tip(TipDir::Left)),
+        (11.2, |r| r.tip(TipDir::Up)),
+        (11.8, |r| r.tip(TipDir::Left)),
+        (12.3, |r| r.tip(TipDir::Left)),
+        (12.9, |r| r.tip(TipDir::Right)),
+        (13.4, |r| r.tip(TipDir::Right)),
+        (14.0, Run::press),
+        (14.85, Run::release),
+    ];
+    // After the tip up, −X faces down: the mockup lights it for the save
+    // flash and the setup label; the firmware keeps it dark (H2).
+    const DOWN: &[(Face, &str)] = &[(Face::NegX, "face-down stays dark (H2); the mockup lights it (G1)")];
+    let mut cps = checkpoints(times, &[]);
+    for cp in cps.iter_mut().filter(|cp| cp.t > 14.8) {
+        cp.skip = DOWN;
+    }
+    let failures = run_scenario_on(Run::with_world(), "menu", &cps, inputs);
+    assert!(
+        failures.is_empty(),
+        "faces too far from the mockup:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn menu_settings_match_the_mockup() {
+    // The mockup opens this one with its Menu button; a hold that ends when
+    // the button is pressed gets the firmware to the same place.
+    let mut times: Vec<(f64, &str)> = vec![(10.0, "10.00")];
+    let names = [
+        "item1", "item2", "item3", "item4", "item5", "item6", "item7", "item8", "item9",
+    ];
+    for (i, name) in names.iter().enumerate() {
+        times.push((10.1 + 0.5 * i as f64 + 0.45, name));
+    }
+    let mut inputs: Vec<(f64, Input)> = vec![
+        (8.2, Run::press),
+        (9.3, Run::release),
+        (9.5, |r| r.tip(TipDir::Right)),
+    ];
+    for i in 0..9 {
+        inputs.push((10.1 + 0.5 * i as f64, |r| r.tip(TipDir::Up)));
+    }
+    let failures = run_scenario_on(
+        Run::with_world(),
+        "menuSettings",
+        &checkpoints(&times, &[]),
+        inputs,
+    );
+    assert!(
+        failures.is_empty(),
+        "faces too far from the mockup:\n{}",
+        failures.join("\n")
+    );
+}
 
 #[test]
 fn scripted_throw_reveals_when_the_mockup_does() {

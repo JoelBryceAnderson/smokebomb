@@ -11,6 +11,9 @@
 //! acceleration is synthesized per phase so the firmware sees a physically
 //! plausible hand shake, free fall and impacts: the mockup's stylised bounce
 //! (a 21 mm hop over 1.25 s) implies almost no acceleration by itself.
+//!
+//! It lives in the HAL crate so the firmware's tests can drive the same
+//! motions the simulator does.
 
 use glam::{Quat, Vec3};
 use smokebomb_hal::{Face, ImuSample};
@@ -22,6 +25,11 @@ const IMPACT_MG: f32 = 3000.0;
 const AIRBORNE_ABOVE: f32 = 0.05;
 /// The firmware needs a few shake samples before a release reads as a throw.
 const MIN_SHAKE_S: f64 = 0.05;
+/// The simulator's camera sits along (0.55, 0.62, 1) looking at the die
+/// (SIM_SPEC A5); this is its right, (1, 0, −0.55) normalised.
+pub const DEFAULT_VIEWER_RIGHT: Vec3 = Vec3::new(0.876_356, 0.0, -0.481_996);
+/// How long the menu takes to turn the held face toward the viewer.
+const SNAP_S: f64 = 0.35;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pose {
@@ -64,6 +72,9 @@ pub struct World {
     throw_when_ready: bool,
     tumble: Option<Tumble>,
     turn: Option<Turn>,
+    /// The viewer's right in world space (horizontal). Tips use it as the
+    /// up/down axis; the menu snap turns the held face toward the viewer.
+    viewer_right: Vec3,
     docked: bool,
     reduced_motion: bool,
     rng: u64,
@@ -90,6 +101,7 @@ impl World {
             throw_when_ready: false,
             tumble: None,
             turn: None,
+            viewer_right: DEFAULT_VIEWER_RIGHT,
             docked: false,
             reduced_motion: false,
             rng: u64::from_le_bytes(seed) | 1,
@@ -150,6 +162,9 @@ impl World {
             TipDir::Right => (Vec3::Y, std::f32::consts::FRAC_PI_2),
         };
         let axis = axis.try_normalize().unwrap_or(Vec3::X);
+        if matches!(dir, TipDir::Up | TipDir::Down) {
+            self.viewer_right = axis;
+        }
         let to = Quat::from_axis_angle(axis, angle) * self.pose.rotation;
         let duration = if self.reduced_motion { 0.15 } else { 0.42 };
         self.turn = Some(Turn {
@@ -160,6 +175,46 @@ impl World {
             hop: true,
         });
         true
+    }
+
+    /// Turn the die so `face` looks at the viewer, squared up to the view
+    /// (the mockup's `alignedQuat` plus its fix-up turn when the menu opens).
+    /// On the real die the person does this; the simulator does it for them.
+    pub fn snap_to_viewer(&mut self, face: Face) {
+        if self.busy() || self.docked {
+            return;
+        }
+        let r = self.viewer_right;
+        let front = r.cross(Vec3::Y);
+        let basis = Quat::from_mat3(&glam::Mat3::from_cols(r, Vec3::Y, front));
+        let local = glam::Mat3::from_quat(basis.inverse() * self.pose.rotation);
+        let sx = snap_axis(local.x_axis);
+        let mut sy = snap_axis(local.y_axis);
+        if sx.dot(sy).abs() > 0.5 {
+            sy = snap_axis(local.z_axis.cross(local.x_axis));
+        }
+        let snapped = Quat::from_mat3(&glam::Mat3::from_cols(sx, sy, sx.cross(sy)));
+        let aligned = basis * snapped;
+        let n = aligned * face_normal(face);
+        let half = std::f32::consts::FRAC_PI_2;
+        let fix = if n.dot(front) >= 0.9 {
+            Quat::IDENTITY
+        } else if n.y.abs() > 0.9 {
+            Quat::from_axis_angle(r, if n.y > 0.0 { half } else { -half })
+        } else if n.dot(r) > 0.9 {
+            Quat::from_rotation_y(-half)
+        } else if n.dot(r) < -0.9 {
+            Quat::from_rotation_y(half)
+        } else {
+            Quat::from_rotation_y(std::f32::consts::PI)
+        };
+        self.turn = Some(Turn {
+            start: self.time,
+            duration: SNAP_S,
+            from: self.pose.rotation,
+            to: (fix * aligned).normalize(),
+            hop: false,
+        });
     }
 
     /// Turn the die in the hand by world-axis angles (the mockup's drag:
@@ -356,6 +411,19 @@ pub fn face_normal(face: Face) -> Vec3 {
     }
 }
 
+/// The unit axis nearest `v`, with its sign.
+fn snap_axis(v: Vec3) -> Vec3 {
+    let a = v.abs();
+    let sign = |x: f32| if x < 0.0 { -1.0 } else { 1.0 };
+    if a.x >= a.y && a.x >= a.z {
+        Vec3::X * sign(v.x)
+    } else if a.y >= a.z {
+        Vec3::Y * sign(v.y)
+    } else {
+        Vec3::Z * sign(v.z)
+    }
+}
+
 fn ease_out_cubic(x: f32) -> f32 {
     1.0 - (1.0 - x).powi(3)
 }
@@ -443,40 +511,28 @@ mod tests {
         assert!(s.accel_mg[2] < -990, "{s:?}");
     }
 
-    /// The real firmware, fed only by this world's IMU, rolls after a throw.
     #[test]
-    fn firmware_rolls_from_a_simulated_throw() {
-        use smokebomb_firmware::board;
-        use smokebomb_firmware::smokebomb_core::state::Mode;
-
-        let sim = board::SimHandle::new();
-        sim.lock().manual_time_ms = Some(0);
-        let mut fw = board::boot(&sim).unwrap();
-        let mut w = World::new();
-        let mut t = 0.0;
-        let mut tick = |w: &mut World, fw: &mut board::Firmware| {
-            t += DT;
-            let imu = w.step(DT);
-            {
-                let mut s = sim.lock();
-                s.imu_resting = imu;
-                s.manual_time_ms = Some((t * 1000.0) as u64);
+    fn snap_turns_the_held_face_to_the_viewer() {
+        let front = DEFAULT_VIEWER_RIGHT.cross(Vec3::Y);
+        for face in Face::ALL {
+            let mut w = World::new();
+            w.rotate(0.9, 0.3);
+            w.snap_to_viewer(face);
+            run(&mut w, 0.5);
+            let q = w.pose().rotation;
+            assert!((q * face_normal(face)).dot(front) > 0.999, "{face:?}");
+            // Squared up: every die axis lies along a viewer axis.
+            for n in [Vec3::X, Vec3::Y, Vec3::Z] {
+                let v = q * n;
+                assert!(
+                    v.dot(front)
+                        .abs()
+                        .max(v.y.abs())
+                        .max(v.dot(DEFAULT_VIEWER_RIGHT).abs())
+                        > 0.999
+                );
             }
-            fw.tick().unwrap();
-        };
-        for _ in 0..30 {
-            tick(&mut w, &mut fw);
         }
-        w.start_shake();
-        for _ in 0..30 {
-            tick(&mut w, &mut fw);
-        }
-        w.end_shake(true);
-        for _ in 0..150 {
-            tick(&mut w, &mut fw);
-        }
-        assert!(matches!(fw.mode(), Mode::Reveal { .. }), "{:?}", fw.mode());
-        assert!(fw.last_roll().is_some());
     }
 
     #[test]

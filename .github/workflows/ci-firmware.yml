@@ -78,6 +78,8 @@ jobs:
         run: npx nx run simulator-web-ui:build
       - name: Clippy
         run: cargo clippy -p smokebomb-simulator --all-targets -- -D warnings
+      - name: Test (world model + firmware end to end)
+        run: cargo test -p smokebomb-simulator
       - name: Build simulator
         run: cargo build --features=simulator
       - name: Smoke test

@@ -7,6 +7,7 @@
 
 pub mod assets;
 pub mod imu_script;
+pub mod world;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -61,7 +62,7 @@ impl Default for SimState {
             imu_script: VecDeque::new(),
             touch_mask: 0,
             docked: false,
-            battery_percent: 87,
+            battery_percent: 78,
             ble_connected: false,
             ble_tx: VecDeque::new(),
             ble_rx: VecDeque::new(),

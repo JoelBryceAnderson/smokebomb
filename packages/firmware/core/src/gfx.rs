@@ -379,6 +379,31 @@ impl<'a> Painter<'a> {
         });
     }
 
+    /// Filled triangle (the menu's ▲ and ▼, which the font doesn't have).
+    pub fn fill_triangle(&mut self, p: [(f32, f32); 3], style: Style) {
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for (x, y) in p {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+        self.shape((x0, y0, x1, y1), style, |x, y| {
+            let mut d = f32::MAX;
+            for i in 0..3 {
+                d = d.min(segment_distance(x, y, p[i], p[(i + 1) % 3]));
+            }
+            let side = |a: (f32, f32), b: (f32, f32)| (b.0 - a.0) * (y - a.1) - (b.1 - a.1) * (x - a.0);
+            let s = [side(p[0], p[1]), side(p[1], p[2]), side(p[2], p[0])];
+            let inside = s.iter().all(|&v| v >= 0.0) || s.iter().all(|&v| v <= 0.0);
+            if inside {
+                -d
+            } else {
+                d
+            }
+        });
+    }
+
     /// Rectangle outline centred on the edge, like canvas `strokeRect`.
     pub fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, width: f32, style: Style) {
         let (cx, cy, hx, hy, lw) = (x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0, width / 2.0);
