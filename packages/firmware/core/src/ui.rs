@@ -134,7 +134,7 @@ impl Ui {
     /// The boot's smoke burst is due: the top face, once per boot.
     pub fn take_boot_burst(&mut self, now: u64) -> Option<Face> {
         let b = self.boot.as_mut()?;
-        if b.burst || now - b.start < BURST_MS {
+        if b.burst || now.saturating_sub(b.start) < BURST_MS {
             return None;
         }
         b.burst = true;

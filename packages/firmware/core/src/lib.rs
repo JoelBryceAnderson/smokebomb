@@ -297,7 +297,7 @@ impl<P: Platform> Firmware<P> {
     /// when the tick came on time (a millisecond clock would otherwise make
     /// steps of 16 and 17 ms), the measured gap when it didn't.
     fn frame_dt(&mut self, now: u64) -> f32 {
-        let elapsed = self.last_tick_ms.map_or(0, |last| now - last);
+        let elapsed = self.last_tick_ms.map_or(0, |last| now.saturating_sub(last));
         self.last_tick_ms = Some(now);
         let nominal = 1000.0 / TICK_HZ as f32;
         match elapsed {
