@@ -146,6 +146,8 @@ Colors used on screen:
 Glow: the mockup draws text with a soft glow (shadow blur of 18 canvas units for big numbers, 8 for small text, 10–14 for icons and menus). After downsampling this becomes a faint gray halo of about 1–3 panel px. Reproduce it as a 1–2 px low-level halo, or omit it.
 
 **Font:** Space Grotesk. Weight 700 for numbers, values and titles; 600 for labels. Firmware needs bitmap cuts at the panel-px sizes below.
+- The mockup only loads weights 400, 500 and 700, so its "600" labels actually render at **700**. The golden frames (below) show 700. Decide whether the firmware cuts a 600 or matches the mockup (G14).
+- Glyphs Space Grotesk lacks (▲ ▼) fall back to a system font in the mockup, so they vary by machine.
 
 ### B2. Text orientation
 - **Side faces:** text is upright relative to gravity.
@@ -210,6 +212,7 @@ The boot is interrupted by a throw or by opening the menu.
   - Fades in over 0.35 s and out over 0.6 s, at 85% alpha.
   - Font 700, size `fitPx(label, 50)`: at most 50 canvas (28.9 px), shrinking so the label fits 150 canvas (87 px) wide.
 - **Setup changes, the end of boot, and closing the menu** (saved *or* discarded): the wake label shows for **2.2 s**.
+- **Default setup** at power-on: a single d20 (`d20`).
 - **Label formats:**
   - `d20`
   - `3d6`
@@ -544,6 +547,10 @@ Differences found when this document was checked against the mockup source (2026
 | G11 | Conventions, A2 | Canvas spans "the whole face"; lit area 17.26 mm | Canvas spans ±1 scene unit (26.5 mm); the mockup draws the lit area at 17.18 mm |
 | G12 | A5, C2, C3, C6, D2 | Unspecified | Portrait = aspect < 0.75; tap definition; menu open clears particles and results; dim restore is instant and triggered by any press; gold eases at 2.5/s; edge-crossing formula; dt ≤ 0.05 s; Pass the Pot has no max/dud; a quick press throws |
 | G13 | A5 | — | Note on three.js r128 colour and light semantics when porting |
+| G14 | B1 | Labels in weight 600 | The mockup never loads 600, so labels render at 700. Open: cut 600 bitmaps, or match the mockup |
+| G15 | C2 | — | Default setup is a single d20 |
+
+**Golden frames.** `tools/mockup-capture` runs the pinned mockup headless (seeded randomness, virtual time) and saves each face's 96×96 output at fixed moments in nine scenarios: boot, tap, throw, quick throw, Pass the Pot, menu, menu settings, restart and Nest. These are the reference for decision H4. The captures confirm G1 (the wake label is lit on the face-down screen).
 
 Everything else was checked and matches: all canvas → panel-px conversions, timings, the boot sequence (the top face's start value of 6 is an explicit override of the per-face table), the menu layout, the particle formulas, and every die, Nest and case dimension.
 

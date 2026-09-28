@@ -45,8 +45,9 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
+        // The mockup's default setup: a single d20.
         Self {
-            die: DieKind::D6,
+            die: DieKind::D20,
             count: 1,
             brightness: 200,
         }

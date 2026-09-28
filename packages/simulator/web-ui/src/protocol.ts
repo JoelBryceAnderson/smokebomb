@@ -4,6 +4,7 @@ export const FACE_COUNT = 6;
 export const PANEL_SIZE = 96;
 export const FRAME_BYTES = (PANEL_SIZE * PANEL_SIZE) / 2; // 4bpp
 export const FRAME_PACKET_TAG = 0x01;
+export const POSE_PACKET_TAG = 0x02;
 
 /** Face order matches three.js BoxGeometry material order and the firmware `Face` enum. */
 export const FACE_NAMES = ["+X", "−X", "+Y", "−Y", "+Z", "−Z"] as const;
@@ -12,7 +13,8 @@ export interface RollView {
   device_serial: string;
   counter: number;
   uptime_ms: number;
-  die_sides: number;
+  /** `d4` … `d100` or `pass_the_pot` */
+  die: string;
   values: number[];
   total: number;
   digest: string;
@@ -25,21 +27,37 @@ export type ServerEvent =
   | { type: "haptic"; effect: string }
   | ({ type: "roll" } & RollView);
 
-export type Gesture = "pick_up" | "shake" | "throw";
+export type TipDirection = "up" | "down" | "left" | "right";
 
 export type ClientMessage =
   | { type: "touch"; face: number; pressed: boolean }
-  | { type: "orient"; up: number }
-  | { type: "imu"; accel: [number, number, number]; gyro: [number, number, number] }
-  | { type: "gesture"; kind: Gesture; land?: number }
+  | { type: "shake_start" }
+  | { type: "shake_end"; throw: boolean }
+  | { type: "tip"; dir: TipDirection; right: [number, number, number] }
+  | { type: "rotate"; yaw: number; pitch: number }
+  | { type: "place_face_up"; face: number }
   | { type: "dock"; docked: boolean }
-  | { type: "ble"; connected: boolean };
+  | { type: "ble"; connected: boolean }
+  | { type: "reduced_motion"; on: boolean };
+
+export interface Pose {
+  /** Die body → world rotation, x y z w. */
+  rotation: [number, number, number, number];
+  /** Scene units. */
+  position: [number, number, number];
+}
 
 /** Split a binary frame packet into six packed 4bpp panel frames. */
-export function decodeFramePacket(buf: ArrayBuffer): Uint8Array[] | null {
-  const bytes = new Uint8Array(buf);
+export function decodeFramePacket(bytes: Uint8Array): Uint8Array[] | null {
   if (bytes[0] !== FRAME_PACKET_TAG || bytes.length !== 1 + FRAME_BYTES * FACE_COUNT) return null;
   return Array.from({ length: FACE_COUNT }, (_, i) =>
     bytes.subarray(1 + i * FRAME_BYTES, 1 + (i + 1) * FRAME_BYTES),
   );
+}
+
+export function decodePosePacket(buf: ArrayBuffer): Pose | null {
+  if (buf.byteLength !== 1 + 7 * 4 || new Uint8Array(buf)[0] !== POSE_PACKET_TAG) return null;
+  const view = new DataView(buf, 1);
+  const f = (i: number) => view.getFloat32(i * 4, true);
+  return { rotation: [f(0), f(1), f(2), f(3)], position: [f(4), f(5), f(6)] };
 }

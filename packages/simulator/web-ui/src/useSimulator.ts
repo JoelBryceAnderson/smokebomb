@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ClientMessage, decodeFramePacket, RollView, ServerEvent } from "./protocol";
+import {
+  ClientMessage,
+  decodeFramePacket,
+  decodePosePacket,
+  FRAME_PACKET_TAG,
+  Pose,
+  RollView,
+  ServerEvent,
+} from "./protocol";
 
 export interface SimulatorState {
   connected: boolean;
@@ -8,11 +16,18 @@ export interface SimulatorState {
   lastHaptic: { effect: string; at: number } | null;
 }
 
+export interface Streams {
+  /** Six packed 4bpp frames, at up to the firmware rate. */
+  onFrames(faces: Uint8Array[]): void;
+  /** The die's pose from the server's world model, every tick it moves. */
+  onPose(pose: Pose): void;
+}
+
 /**
- * WebSocket link to the simulator server. Frames bypass React state and go
- * straight to `onFrames` (called at up to 30 Hz).
+ * WebSocket link to the simulator server. Frames and poses bypass React state
+ * and go straight to the 3D view.
  */
-export function useSimulator(onFrames: (faces: Uint8Array[]) => void) {
+export function useSimulator(streams: Streams) {
   const [state, setState] = useState<SimulatorState>({
     connected: false,
     mode: "—",
@@ -20,8 +35,8 @@ export function useSimulator(onFrames: (faces: Uint8Array[]) => void) {
     lastHaptic: null,
   });
   const socket = useRef<WebSocket | null>(null);
-  const framesCb = useRef(onFrames);
-  framesCb.current = onFrames;
+  const cb = useRef(streams);
+  cb.current = streams;
 
   useEffect(() => {
     let closed = false;
@@ -40,8 +55,14 @@ export function useSimulator(onFrames: (faces: Uint8Array[]) => void) {
       };
       ws.onmessage = (msg) => {
         if (msg.data instanceof ArrayBuffer) {
-          const faces = decodeFramePacket(msg.data);
-          if (faces) framesCb.current(faces);
+          const bytes = new Uint8Array(msg.data);
+          if (bytes[0] === FRAME_PACKET_TAG) {
+            const faces = decodeFramePacket(bytes);
+            if (faces) cb.current.onFrames(faces);
+          } else {
+            const pose = decodePosePacket(msg.data);
+            if (pose) cb.current.onPose(pose);
+          }
           return;
         }
         const ev = JSON.parse(msg.data as string) as ServerEvent;

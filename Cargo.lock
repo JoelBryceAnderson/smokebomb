@@ -549,6 +549,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.33.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35b4e837a1d133645d1dcf283e146a4b9901e390a1c13545f959cfed3a72f24f"
+
+[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1651,6 +1657,7 @@ dependencies = [
  "anyhow",
  "axum",
  "getrandom 0.2.17",
+ "glam",
  "hex",
  "serde",
  "serde_json",

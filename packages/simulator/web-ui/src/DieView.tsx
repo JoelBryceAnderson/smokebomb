@@ -1,110 +1,212 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { FACE_COUNT, PANEL_SIZE } from "./protocol";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { PANEL_SIZE, Pose, TipDirection } from "./protocol";
 
-/** Outward normal of each face in the die's body frame (BoxGeometry order). */
-export const FACE_NORMALS = [
-  new THREE.Vector3(1, 0, 0),
-  new THREE.Vector3(-1, 0, 0),
-  new THREE.Vector3(0, 1, 0),
-  new THREE.Vector3(0, -1, 0),
-  new THREE.Vector3(0, 0, 1),
-  new THREE.Vector3(0, 0, -1),
+// Mockup scale (SIM_SPEC A1): 1 scene unit = 13.25 mm, 34 mm die, 2.5 mm edges.
+const MM = 1 / 13.25;
+export const HALF = 17 * MM; // 1.283 u
+const EDGE_RADIUS = 2.5 * MM;
+/** Growth factor from the mockup's earlier 29.4 mm body; camera distances use it. */
+const K = HALF / 1.11;
+/** Glass window: 24 mm square, 2.52 mm corners (half-size 0.906 u, radius 0.19 u). */
+const WINDOW_HALF = 0.906;
+const WINDOW_RADIUS = 0.19;
+
+// Each face's mesh rotation, as in the mockup, so canvas axes match the
+// firmware's `orientation::BASES`.
+const FACE_DEFS: { n: [number, number, number]; rot: [number, number, number] }[] = [
+  { n: [1, 0, 0], rot: [0, Math.PI / 2, 0] },
+  { n: [-1, 0, 0], rot: [0, -Math.PI / 2, 0] },
+  { n: [0, 1, 0], rot: [-Math.PI / 2, 0, 0] },
+  { n: [0, -1, 0], rot: [Math.PI / 2, 0, 0] },
+  { n: [0, 0, 1], rot: [0, 0, 0] },
+  { n: [0, 0, -1], rot: [0, Math.PI, 0] },
 ];
 
+// Screen texture (SIM_SPEC A3): 444 px spanning ±1 u; the 96×96 panel fills
+// the centred 288 px at 3 px per pixel; the glass's ink mask rounds it (42 px).
+const OUT_T = 444;
+const OUT_PX = 3;
+const OUT_OFF = (OUT_T - PANEL_SIZE * OUT_PX) / 2;
+const MASK_RADIUS = 42;
+
 export interface DieViewHandle {
-  /** Paint six packed 4bpp frames onto the cube faces. */
+  /** Paint six packed 4bpp frames onto the faces. */
   drawFrames(faces: Uint8Array[]): void;
-  /** Animate the cube to a new orientation (body -> world). */
-  setOrientation(q: THREE.Quaternion, tumble?: boolean): void;
+  setPose(pose: Pose): void;
+  /** The viewer's right in world space (the axis for up/down tips). */
+  viewerRight(): [number, number, number];
 }
 
 interface Props {
   onTouch(face: number, pressed: boolean): void;
+  /** Drag deltas in radians: yaw about world Y, pitch about world X. */
+  onRotate(yaw: number, pitch: number): void;
+  /** While the menu is open, a swipe tips the die instead of turning it (as in the mockup). */
+  swipeToTip: boolean;
+  onTip(dir: TipDirection): void;
 }
 
-// OLED phosphor tint for full-brightness pixels.
-const TINT = [236, 244, 255];
+/** Swipe distance that counts as a tip (SIM_SPEC C3). */
+const SWIPE_PX = 36;
 
-export const DieView = forwardRef<DieViewHandle, Props>(function DieView({ onTouch }, ref) {
+function roundRectPath(c: CanvasRenderingContext2D | THREE.Path, x: number, y: number, w: number, h: number, r: number) {
+  c.moveTo(x + r, y);
+  c.lineTo(x + w - r, y);
+  c.quadraticCurveTo(x + w, y, x + w, y + r);
+  c.lineTo(x + w, y + h - r);
+  c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  c.lineTo(x + r, y + h);
+  c.quadraticCurveTo(x, y + h, x, y + h - r);
+  c.lineTo(x, y + r);
+  c.quadraticCurveTo(x, y, x + r, y);
+}
+
+export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
+  { onTouch, onRotate, swipeToTip, onTip },
+  ref,
+) {
   const mountRef = useRef<HTMLDivElement>(null);
   const api = useRef<DieViewHandle | null>(null);
-  const touchCb = useRef(onTouch);
-  touchCb.current = onTouch;
+  const cbs = useRef({ onTouch, onRotate, swipeToTip, onTip });
+  cbs.current = { onTouch, onRotate, swipeToTip, onTip };
 
   useImperativeHandle(ref, () => ({
     drawFrames: (f) => api.current?.drawFrames(f),
-    setOrientation: (q, t) => api.current?.setOrientation(q, t),
+    setPose: (p) => api.current?.setPose(p),
+    viewerRight: () => api.current?.viewerRight() ?? [1, 0, 0],
   }));
 
   useEffect(() => {
     const mount = mountRef.current!;
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.8;
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d0d10);
-    const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
-    camera.position.set(3.2, 2.6, 3.8);
+    // Placeholder studio; the mockup's exact softbox environment comes with the visual pass.
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enablePan = false;
-    controls.minDistance = 3;
-    controls.maxDistance = 9;
+    const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+    const look = new THREE.Vector3();
 
-    // One canvas texture per OLED panel.
-    const panels = Array.from({ length: FACE_COUNT }, () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = canvas.height = PANEL_SIZE;
-      const ctx = canvas.getContext("2d")!;
-      const image = ctx.createImageData(PANEL_SIZE, PANEL_SIZE);
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.magFilter = THREE.NearestFilter;
-      texture.colorSpace = THREE.SRGBColorSpace;
-      return { ctx, image, texture };
-    });
-    const materials = panels.map((p) => new THREE.MeshBasicMaterial({ map: p.texture }));
-    const die = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 1.6), materials);
-    const bezel = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(1.62, 1.62, 1.62)),
-      new THREE.LineBasicMaterial({ color: 0x3a3a44 }),
-    );
-    die.add(bezel);
+    const die = new THREE.Group();
     scene.add(die);
+    // Stealth black finish (SIM_SPEC A4).
+    const shell = new THREE.Mesh(
+      new RoundedBoxGeometry(HALF * 2, HALF * 2, HALF * 2, 6, EDGE_RADIUS),
+      new THREE.MeshStandardMaterial({ color: 0x232428, metalness: 0.9, roughness: 0.38 }),
+    );
+    die.add(shell);
 
-    let target = die.quaternion.clone();
-    let tumbleUntil = 0;
+    const windowShape = new THREE.Shape();
+    roundRectPath(windowShape, -WINDOW_HALF, -WINDOW_HALF, WINDOW_HALF * 2, WINDOW_HALF * 2, WINDOW_RADIUS);
+    const windowGeo = new THREE.ShapeGeometry(windowShape, 12);
+    // UVs span the full ±1 u face square, like the mockup's face canvas.
+    const pos = windowGeo.attributes.position;
+    const uv = windowGeo.attributes.uv;
+    for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + 1) / 2, (pos.getY(i) + 1) / 2);
+
+    const faces = FACE_DEFS.map((d) => {
+      const out = document.createElement("canvas");
+      out.width = out.height = OUT_T;
+      const ctx = out.getContext("2d")!;
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, OUT_T, OUT_T);
+      const panel = document.createElement("canvas");
+      panel.width = panel.height = PANEL_SIZE;
+      const panelCtx = panel.getContext("2d")!;
+      const image = panelCtx.createImageData(PANEL_SIZE, PANEL_SIZE);
+      const texture = new THREE.CanvasTexture(out);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      const mesh = new THREE.Mesh(windowGeo, new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }));
+      mesh.rotation.set(...d.rot);
+      mesh.position.set(...d.n).multiplyScalar(HALF + 0.002);
+      die.add(mesh);
+      return { ctx, panel, panelCtx, image, texture, mesh };
+    });
+
+    const shadowCanvas = document.createElement("canvas");
+    shadowCanvas.width = shadowCanvas.height = 128;
+    const sg = shadowCanvas.getContext("2d")!;
+    const grad = sg.createRadialGradient(64, 64, 4, 64, 64, 64);
+    grad.addColorStop(0, "rgba(0,0,0,0.55)");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    sg.fillStyle = grad;
+    sg.fillRect(0, 0, 128, 128);
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.6 * K, 3.6 * K),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shadowCanvas), transparent: true, depthWrite: false }),
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = -HALF - 0.003;
+    scene.add(shadow);
 
     api.current = {
-      drawFrames(faces) {
-        faces.forEach((frame, i) => {
-          const { ctx, image, texture } = panels[i];
-          const px = image.data;
+      drawFrames(frames) {
+        frames.forEach((frame, i) => {
+          const f = faces[i];
+          const px = f.image.data;
           for (let b = 0; b < frame.length; b++) {
-            for (let n = 0; n < 2; n++) {
-              const level = (n === 0 ? frame[b] >> 4 : frame[b] & 0x0f) / 15;
-              const o = (b * 2 + n) * 4;
-              px[o] = TINT[0] * level;
-              px[o + 1] = TINT[1] * level;
-              px[o + 2] = TINT[2] * level;
-              px[o + 3] = 255;
-            }
+            const hi = (frame[b] >> 4) * 17;
+            const lo = (frame[b] & 0x0f) * 17;
+            const o = b * 8;
+            px[o] = px[o + 1] = px[o + 2] = hi;
+            px[o + 3] = 255;
+            px[o + 4] = px[o + 5] = px[o + 6] = lo;
+            px[o + 7] = 255;
           }
-          ctx.putImageData(image, 0, 0);
-          texture.needsUpdate = true;
+          f.panelCtx.putImageData(f.image, 0, 0);
+          const o = f.ctx;
+          o.globalCompositeOperation = "source-over";
+          o.fillStyle = "#000";
+          o.fillRect(0, 0, OUT_T, OUT_T);
+          o.imageSmoothingEnabled = false;
+          o.drawImage(f.panel, OUT_OFF, OUT_OFF, PANEL_SIZE * OUT_PX, PANEL_SIZE * OUT_PX);
+          o.globalCompositeOperation = "destination-in";
+          o.fillStyle = "#fff";
+          o.beginPath();
+          roundRectPath(o, OUT_OFF, OUT_OFF, PANEL_SIZE * OUT_PX, PANEL_SIZE * OUT_PX, MASK_RADIUS);
+          o.fill();
+          o.globalCompositeOperation = "source-over";
+          f.texture.needsUpdate = true;
         });
       },
-      setOrientation(q, tumble = false) {
-        target = q.clone();
-        tumbleUntil = tumble ? performance.now() + 900 : 0;
+      setPose({ rotation, position }) {
+        die.quaternion.set(...rotation);
+        die.position.set(...position);
+        shadow.scale.setScalar(1 - Math.min(0.35, position[1] * 0.25));
+        (shadow.material as THREE.MeshBasicMaterial).opacity = 1 - Math.min(0.6, position[1] * 0.4);
+        shadow.position.x = position[0];
+      },
+      viewerRight() {
+        const forward = new THREE.Vector3().subVectors(look, camera.position);
+        forward.y = 0;
+        forward.normalize();
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+        return [right.x, right.y, right.z];
       },
     };
 
-    // Touch: pointer down on a face presses it; dragging elsewhere orbits.
+    // Input, as in the mockup: press a face to touch it; moving more than
+    // 8 px turns the press into a drag that turns the die in the hand.
     const raycaster = new THREE.Raycaster();
-    let pressed: number | null = null;
+    let press: {
+      x: number;
+      y: number;
+      lastX: number;
+      lastY: number;
+      face: number | null;
+      dragging: boolean;
+      swiped: boolean;
+    } | null = null;
     const faceAt = (e: PointerEvent): number | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       const ndc = new THREE.Vector2(
@@ -112,67 +214,80 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView({ onTou
         -((e.clientY - rect.top) / rect.height) * 2 + 1,
       );
       raycaster.setFromCamera(ndc, camera);
-      const hit = raycaster.intersectObject(die, false)[0];
-      return hit?.face ? hit.face.materialIndex : null;
+      const hit = raycaster.intersectObjects(
+        faces.map((f) => f.mesh),
+        false,
+      )[0];
+      return hit ? faces.findIndex((f) => f.mesh === hit.object) : null;
     };
     const onDown = (e: PointerEvent) => {
+      renderer.domElement.setPointerCapture(e.pointerId);
       const face = faceAt(e);
-      if (face === null) return;
-      controls.enabled = false;
-      pressed = face;
-      touchCb.current(face, true);
+      press = { x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, face, dragging: false, swiped: false };
+      if (face !== null) cbs.current.onTouch(face, true);
     };
+    const onMove = (e: PointerEvent) => {
+      if (!press) return;
+      if (!press.dragging && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 8) {
+        press.dragging = true;
+        if (press.face !== null) cbs.current.onTouch(press.face, false);
+        press.face = null;
+      }
+      const dx = e.clientX - press.x;
+      const dy = e.clientY - press.y;
+      if (cbs.current.swipeToTip) {
+        // One tip per swipe, by dominant direction.
+        if (!press.swiped && Math.hypot(dx, dy) > SWIPE_PX) {
+          press.swiped = true;
+          cbs.current.onTip(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy < 0 ? "up" : "down");
+        }
+      } else if (press.dragging) {
+        cbs.current.onRotate((e.clientX - press.lastX) * 0.008, (e.clientY - press.lastY) * 0.008);
+      }
+      press.lastX = e.clientX;
+      press.lastY = e.clientY;
+    };
+    // Touch browsers may cancel a pointer mid-gesture; treat it as a release.
     const onUp = () => {
-      if (pressed !== null) touchCb.current(pressed, false);
-      pressed = null;
-      controls.enabled = true;
+      if (press?.face != null) cbs.current.onTouch(press.face, false);
+      press = null;
     };
-    // Capture phase so we run before OrbitControls sees the event.
-    renderer.domElement.addEventListener("pointerdown", onDown, { capture: true });
-    window.addEventListener("pointerup", onUp);
-    // Touch browsers cancel a pointer when they take over the gesture;
-    // treat that as a release so a face never stays "held".
-    window.addEventListener("pointercancel", onUp);
-    // Long-press on iOS/Android would otherwise open a context menu.
     const noMenu = (e: Event) => e.preventDefault();
+    renderer.domElement.addEventListener("pointerdown", onDown);
+    renderer.domElement.addEventListener("pointermove", onMove);
+    renderer.domElement.addEventListener("pointerup", onUp);
+    renderer.domElement.addEventListener("pointercancel", onUp);
     renderer.domElement.addEventListener("contextmenu", noMenu);
 
+    // Camera (SIM_SPEC A5): 32° FOV along (0.55, 0.62, 1), farther in portrait.
     const resize = () => {
       const { clientWidth: w, clientHeight: h } = mount;
       renderer.setSize(w, h);
       camera.aspect = w / h;
-      // The FOV is vertical; zoom out on tall viewports (iPad portrait) so
-      // the cube still fits horizontally.
-      camera.zoom = Math.min(1, camera.aspect);
+      const portrait = camera.aspect < 0.75;
+      const dist = (portrait ? 12.5 : 9.5) * K;
+      look.set(0, (portrait ? -0.1 : -0.35) * K, 0);
+      camera.position.set(0.55, 0.62, 1).normalize().multiplyScalar(dist);
+      camera.lookAt(look);
       camera.updateProjectionMatrix();
     };
     const observer = new ResizeObserver(resize);
     observer.observe(mount);
     resize();
 
-    let frame = 0;
+    let raf = 0;
     const loop = () => {
-      frame = requestAnimationFrame(loop);
-      const now = performance.now();
-      if (now < tumbleUntil) {
-        die.rotateOnAxis(new THREE.Vector3(1, 0.6, 0.3).normalize(), 0.35);
-      } else {
-        die.quaternion.slerp(target, 0.18);
-      }
-      controls.update();
+      raf = requestAnimationFrame(loop);
       renderer.render(scene, camera);
     };
     loop();
 
     return () => {
-      cancelAnimationFrame(frame);
+      cancelAnimationFrame(raf);
       observer.disconnect();
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      renderer.domElement.removeEventListener("contextmenu", noMenu);
-      controls.dispose();
       renderer.dispose();
-      panels.forEach((p) => p.texture.dispose());
+      pmrem.dispose();
+      faces.forEach((f) => f.texture.dispose());
       mount.removeChild(renderer.domElement);
     };
   }, []);

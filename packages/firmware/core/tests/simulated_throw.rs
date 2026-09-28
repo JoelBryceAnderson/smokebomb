@@ -30,7 +30,7 @@ fn scripted_throw_rolls_and_shows_result() {
     );
     let roll = fw.last_roll().expect("a roll was made");
     assert_eq!(roll.record.values.len(), 1);
-    assert!((1..=6).contains(&roll.record.values[0]));
+    assert!((1..=20).contains(&roll.record.values[0]));
 
     let s = sim.lock();
     assert!(s.haptics.contains(&smokebomb_hal::HapticEffect::LandingThud));

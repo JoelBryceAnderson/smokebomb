@@ -10,6 +10,7 @@
 //! <http://localhost:3000>.
 
 mod protocol;
+mod world;
 mod ws;
 
 use std::net::{IpAddr, SocketAddr};
@@ -31,6 +32,8 @@ use protocol::{Outbound, StatusSnapshot};
 #[derive(Clone)]
 pub struct AppState {
     pub sim: SimHandle,
+    /// The physical die. Locked briefly by the tick loop and by input.
+    pub world: Arc<std::sync::Mutex<world::World>>,
     pub out: broadcast::Sender<Outbound>,
     pub status: Arc<Mutex<StatusSnapshot>>,
 }
@@ -49,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
     let (out, _) = broadcast::channel(64);
     let state = AppState {
         sim: sim.clone(),
+        world: Arc::new(std::sync::Mutex::new(world::World::new())),
         out: out.clone(),
         status: Arc::new(Mutex::new(StatusSnapshot::default())),
     };
@@ -110,9 +114,28 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
     let mut last_seq = 0;
     let mut last_mode = String::new();
     let mut last_counter = None;
+    let mut last_pose = None;
+    let dt = period.as_secs_f64();
 
     loop {
         interval.tick().await;
+
+        // Move the die first, so the firmware reads this tick's IMU sample.
+        let (pose, imu, docked) = {
+            let mut w = state.world.lock().unwrap_or_else(|e| e.into_inner());
+            let imu = w.step(dt);
+            (w.pose(), imu, w.docked())
+        };
+        {
+            let mut s = state.sim.lock();
+            s.imu_resting = imu;
+            s.docked = docked;
+        }
+        if last_pose != Some(pose) {
+            last_pose = Some(pose);
+            let _ = state.out.send(Outbound::Binary(protocol::encode_pose(&pose)));
+        }
+
         if let Err(e) = fw.tick() {
             tracing::error!("firmware tick failed: {e:?}");
             continue;
@@ -128,7 +151,7 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
         };
         // Send errors only mean no browser is connected.
         if let Some(f) = frames {
-            let _ = state.out.send(Outbound::Frames(f));
+            let _ = state.out.send(Outbound::Binary(f));
         }
         for h in haptics {
             let _ = state.out.send(Outbound::event(protocol::Event::Haptic {
@@ -136,7 +159,12 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
             }));
         }
 
-        let mode = format!("{:?}", fw.mode());
+        // "Reveal { since_ms: 123 }" -> "Reveal"; keeps "Menu(DieType)" intact.
+        let mode = format!("{:?}", fw.mode())
+            .split(" {")
+            .next()
+            .unwrap_or_default()
+            .to_string();
         if mode != last_mode {
             last_mode.clone_from(&mode);
             let _ = state

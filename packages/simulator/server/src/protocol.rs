@@ -7,11 +7,26 @@ use smokebomb_shared::SignedRoll;
 /// First byte of a binary frame packet; followed by six 4bpp panel frames in
 /// `Face` order.
 pub const FRAME_PACKET_TAG: u8 = 0x01;
+/// First byte of a binary pose packet; followed by seven little-endian f32:
+/// rotation x, y, z, w (die body → world), then position x, y, z in scene
+/// units.
+pub const POSE_PACKET_TAG: u8 = 0x02;
 
 #[derive(Clone, Debug)]
 pub enum Outbound {
-    Frames(std::sync::Arc<Vec<u8>>),
+    Binary(std::sync::Arc<Vec<u8>>),
     Event(std::sync::Arc<String>),
+}
+
+pub fn encode_pose(pose: &crate::world::Pose) -> std::sync::Arc<Vec<u8>> {
+    let r = pose.rotation;
+    let p = pose.position;
+    let mut buf = Vec::with_capacity(1 + 7 * 4);
+    buf.push(POSE_PACKET_TAG);
+    for v in [r.x, r.y, r.z, r.w, p.x, p.y, p.z] {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    std::sync::Arc::new(buf)
 }
 
 impl Outbound {
@@ -78,7 +93,7 @@ pub struct StatusSnapshot {
     pub last_roll: Option<RollView>,
 }
 
-/// Input from the browser.
+/// Input from the browser. The die only moves through the world model.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Inbound {
@@ -87,19 +102,25 @@ pub enum Inbound {
         face: u8,
         pressed: bool,
     },
-    /// Set which face points up at rest.
-    Orient {
-        up: u8,
+    /// Start shaking in the hand (throw button pressed).
+    ShakeStart,
+    /// Stop shaking: `throw` releases the die, otherwise it's put down.
+    ShakeEnd {
+        throw: bool,
     },
-    /// Raw IMU override (becomes the resting sample).
-    Imu {
-        accel: [i16; 3],
-        gyro: [i32; 3],
+    /// Quarter-turn tip. `right` is the viewer's right in world space.
+    Tip {
+        dir: TipDirection,
+        right: [f32; 3],
     },
-    /// Canned motion; `land` picks the landing face for throws (random if absent).
-    Gesture {
-        kind: Gesture,
-        land: Option<u8>,
+    /// Turn the die in the hand: radians about world Y, then world X.
+    Rotate {
+        yaw: f32,
+        pitch: f32,
+    },
+    /// Set the die down with this face on top.
+    PlaceFaceUp {
+        face: u8,
     },
     Dock {
         docked: bool,
@@ -107,12 +128,27 @@ pub enum Inbound {
     Ble {
         connected: bool,
     },
+    ReducedMotion {
+        on: bool,
+    },
 }
 
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
-pub enum Gesture {
-    PickUp,
-    Shake,
-    Throw,
+pub enum TipDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl From<TipDirection> for crate::world::TipDir {
+    fn from(d: TipDirection) -> Self {
+        match d {
+            TipDirection::Up => Self::Up,
+            TipDirection::Down => Self::Down,
+            TipDirection::Left => Self::Left,
+            TipDirection::Right => Self::Right,
+        }
+    }
 }

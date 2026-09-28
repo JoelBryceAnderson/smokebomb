@@ -1,0 +1,737 @@
+{
+  "mockup": "tools/mockup-capture/mockup.html (artifact 8Z1hGvE7k3mf5sGfaWEJ7j, version 1790415968-5231)",
+  "fps": 60,
+  "seed": 42,
+  "viewport": {
+    "width": 640,
+    "height": 400
+  },
+  "format": "6 faces × 4608 bytes, Face order (+X −X +Y −Y +Z −Z), 4bpp packed high nibble first",
+  "scenarios": {
+    "boot": {
+      "about": "Power-on: pips, top-face burst, SMOKEBOMB, then the wake label (C1, C2)",
+      "inputs": [],
+      "checkpoints": [
+        {
+          "t": 0.1,
+          "name": "0.10",
+          "file": "0.10.bin"
+        },
+        {
+          "t": 0.25,
+          "name": "0.25",
+          "file": "0.25.bin"
+        },
+        {
+          "t": 0.5,
+          "name": "0.50",
+          "file": "0.50.bin"
+        },
+        {
+          "t": 0.8,
+          "name": "0.80",
+          "file": "0.80.bin"
+        },
+        {
+          "t": 1.2,
+          "name": "1.20",
+          "file": "1.20.bin"
+        },
+        {
+          "t": 1.6,
+          "name": "1.60",
+          "file": "1.60.bin"
+        },
+        {
+          "t": 2,
+          "name": "2.00",
+          "file": "2.00.bin"
+        },
+        {
+          "t": 2.2,
+          "name": "2.20",
+          "file": "2.20.bin"
+        },
+        {
+          "t": 2.35,
+          "name": "2.35",
+          "file": "2.35.bin"
+        },
+        {
+          "t": 2.5,
+          "name": "2.50",
+          "file": "2.50.bin"
+        },
+        {
+          "t": 2.7,
+          "name": "2.70",
+          "file": "2.70.bin"
+        },
+        {
+          "t": 3,
+          "name": "3.00",
+          "file": "3.00.bin"
+        },
+        {
+          "t": 3.6,
+          "name": "3.60",
+          "file": "3.60.bin"
+        },
+        {
+          "t": 4.2,
+          "name": "4.20",
+          "file": "4.20.bin"
+        },
+        {
+          "t": 5,
+          "name": "5.00",
+          "file": "5.00.bin"
+        },
+        {
+          "t": 5.9,
+          "name": "5.90",
+          "file": "5.90.bin"
+        },
+        {
+          "t": 6.1,
+          "name": "6.10",
+          "file": "6.10.bin"
+        },
+        {
+          "t": 6.5,
+          "name": "6.50",
+          "file": "6.50.bin"
+        },
+        {
+          "t": 7.5,
+          "name": "7.50",
+          "file": "7.50.bin"
+        },
+        {
+          "t": 8.2,
+          "name": "8.20",
+          "file": "8.20.bin"
+        },
+        {
+          "t": 8.6,
+          "name": "8.60",
+          "file": "8.60.bin"
+        }
+      ]
+    },
+    "tap": {
+      "about": "Tap a screen after boot: the setup label on every face for 3 s (C2)",
+      "inputs": [
+        {
+          "t": 9,
+          "input": "tapDie()"
+        }
+      ],
+      "checkpoints": [
+        {
+          "t": 9.1,
+          "name": "9.10",
+          "file": "9.10.bin"
+        },
+        {
+          "t": 9.3,
+          "name": "9.30",
+          "file": "9.30.bin"
+        },
+        {
+          "t": 9.6,
+          "name": "9.60",
+          "file": "9.60.bin"
+        },
+        {
+          "t": 11,
+          "name": "11.00",
+          "file": "11.00.bin"
+        },
+        {
+          "t": 11.8,
+          "name": "11.80",
+          "file": "11.80.bin"
+        },
+        {
+          "t": 12.2,
+          "name": "12.20",
+          "file": "12.20.bin"
+        }
+      ]
+    },
+    "throw": {
+      "about": "Hold the throw button 1 s (shake), release: tumble, landing, reveal, dim (C5, C6)",
+      "inputs": [
+        {
+          "t": 9,
+          "input": "pointerDown(\"#throw\")"
+        },
+        {
+          "t": 10,
+          "input": "pointerUp()"
+        }
+      ],
+      "checkpoints": [
+        {
+          "t": 9.2,
+          "name": "9.20",
+          "file": "9.20.bin"
+        },
+        {
+          "t": 9.5,
+          "name": "9.50",
+          "file": "9.50.bin"
+        },
+        {
+          "t": 9.9,
+          "name": "9.90",
+          "file": "9.90.bin"
+        },
+        {
+          "t": 10.2,
+          "name": "10.20",
+          "file": "10.20.bin"
+        },
+        {
+          "t": 10.6,
+          "name": "10.60",
+          "file": "10.60.bin"
+        },
+        {
+          "t": 11,
+          "name": "11.00",
+          "file": "11.00.bin"
+        },
+        {
+          "t": 11.25,
+          "name": "11.25",
+          "file": "11.25.bin"
+        },
+        {
+          "t": 11.3,
+          "name": "11.30",
+          "file": "11.30.bin"
+        },
+        {
+          "t": 11.45,
+          "name": "11.45",
+          "file": "11.45.bin"
+        },
+        {
+          "t": 11.6,
+          "name": "11.60",
+          "file": "11.60.bin"
+        },
+        {
+          "t": 11.8,
+          "name": "11.80",
+          "file": "11.80.bin"
+        },
+        {
+          "t": 12.1,
+          "name": "12.10",
+          "file": "12.10.bin"
+        },
+        {
+          "t": 12.5,
+          "name": "12.50",
+          "file": "12.50.bin"
+        },
+        {
+          "t": 13.5,
+          "name": "13.50",
+          "file": "13.50.bin"
+        },
+        {
+          "t": 15,
+          "name": "15.00",
+          "file": "15.00.bin"
+        },
+        {
+          "t": 17,
+          "name": "17.00",
+          "file": "17.00.bin"
+        },
+        {
+          "t": 18.6,
+          "name": "18.60",
+          "file": "18.60.bin"
+        },
+        {
+          "t": 19.2,
+          "name": "19.20",
+          "file": "19.20.bin"
+        },
+        {
+          "t": 19.8,
+          "name": "19.80",
+          "file": "19.80.bin"
+        },
+        {
+          "t": 20.5,
+          "name": "20.50",
+          "file": "20.50.bin"
+        }
+      ]
+    },
+    "quickThrow": {
+      "about": "A quick press throws without a shake (C5)",
+      "inputs": [
+        {
+          "t": 9,
+          "input": "pointerDown(\"#throw\")"
+        },
+        {
+          "t": 9.05,
+          "input": "pointerUp()"
+        }
+      ],
+      "checkpoints": [
+        {
+          "t": 9.3,
+          "name": "9.30",
+          "file": "9.30.bin"
+        },
+        {
+          "t": 10.4,
+          "name": "10.40",
+          "file": "10.40.bin"
+        },
+        {
+          "t": 10.6,
+          "name": "10.60",
+          "file": "10.60.bin"
+        },
+        {
+          "t": 11.2,
+          "name": "11.20",
+          "file": "11.20.bin"
+        },
+        {
+          "t": 12,
+          "name": "12.00",
+          "file": "12.00.bin"
+        }
+      ]
+    },
+    "passThePot": {
+      "about": "Pass the Pot ×1: set with the die chip, then throw (C6)",
+      "inputs": [
+        {
+          "t": 9,
+          "input": "click('#types button:has-text(\"Pass the Pot\")')"
+        },
+        {
+          "t": 11.5,
+          "input": "pointerDown(\"#throw\")"
+        },
+        {
+          "t": 12,
+          "input": "pointerUp()"
+        }
+      ],
+      "checkpoints": [
+        {
+          "t": 9.2,
+          "name": "9.20",
+          "file": "9.20.bin"
+        },
+        {
+          "t": 10,
+          "name": "10.00",
+          "file": "10.00.bin"
+        },
+        {
+          "t": 13.6,
+          "name": "13.60",
+          "file": "13.60.bin"
+        },
+        {
+          "t": 14.5,
+          "name": "14.50",
+          "file": "14.50.bin"
+        },
+        {
+          "t": 16,
+          "name": "16.00",
+          "file": "16.00.bin"
+        }
+      ]
+    },
+    "menu": {
+      "about": "Hold a screen: ring, menu opens; tip left (page), tip up (value), hold to save: success (C3, C4)",
+      "inputs": [
+        {
+          "t": 9,
+          "input": "pressDie()"
+        },
+        {
+          "t": 10.3,
+          "input": "pointerUp()"
+        },
+        {
+          "t": 10.6,
+          "input": "key(\"ArrowLeft\")"
+        },
+        {
+          "t": 11.2,
+          "input": "key(\"ArrowUp\")"
+        },
+        {
+          "t": 11.8,
+          "input": "key(\"ArrowLeft\")"
+        },
+        {
+          "t": 12.3,
+          "input": "key(\"ArrowLeft\")"
+        },
+        {
+          "t": 12.9,
+          "input": "key(\"ArrowRight\")"
+        },
+        {
+          "t": 13.4,
+          "input": "key(\"ArrowRight\")"
+        },
+        {
+          "t": 14,
+          "input": "pressDie()"
+        },
+        {
+          "t": 14.85,
+          "input": "pointerUp()"
+        }
+      ],
+      "checkpoints": [
+        {
+          "t": 9.1,
+          "name": "9.10",
+          "file": "9.10.bin"
+        },
+        {
+          "t": 9.3,
+          "name": "9.30",
+          "file": "9.30.bin"
+        },
+        {
+          "t": 9.5,
+          "name": "9.50",
+          "file": "9.50.bin"
+        },
+        {
+          "t": 9.7,
+          "name": "9.70",
+          "file": "9.70.bin"
+        },
+        {
+          "t": 9.85,
+          "name": "9.85",
+          "file": "9.85.bin"
+        },
+        {
+          "t": 10,
+          "name": "10.00",
+          "file": "10.00.bin"
+        },
+        {
+          "t": 10.2,
+          "name": "10.20",
+          "file": "10.20.bin"
+        },
+        {
+          "t": 10.7,
+          "name": "10.70",
+          "file": "10.70.bin"
+        },
+        {
+          "t": 10.85,
+          "name": "10.85",
+          "file": "10.85.bin"
+        },
+        {
+          "t": 11.1,
+          "name": "11.10",
+          "file": "11.10.bin"
+        },
+        {
+          "t": 11.35,
+          "name": "11.35",
+          "file": "11.35.bin"
+        },
+        {
+          "t": 11.7,
+          "name": "11.70",
+          "file": "11.70.bin"
+        },
+        {
+          "t": 12.8,
+          "name": "12.80",
+          "file": "12.80.bin"
+        },
+        {
+          "t": 13.9,
+          "name": "13.90",
+          "file": "13.90.bin"
+        },
+        {
+          "t": 14.3,
+          "name": "14.30",
+          "file": "14.30.bin"
+        },
+        {
+          "t": 14.6,
+          "name": "14.60",
+          "file": "14.60.bin"
+        },
+        {
+          "t": 14.9,
+          "name": "14.90",
+          "file": "14.90.bin"
+        },
+        {
+          "t": 15,
+          "name": "15.00",
+          "file": "15.00.bin"
+        },
+        {
+          "t": 15.2,
+          "name": "15.20",
+          "file": "15.20.bin"
+        },
+        {
+          "t": 15.5,
+          "name": "15.50",
+          "file": "15.50.bin"
+        },
+        {
+          "t": 15.9,
+          "name": "15.90",
+          "file": "15.90.bin"
+        },
+        {
+          "t": 16.3,
+          "name": "16.30",
+          "file": "16.30.bin"
+        },
+        {
+          "t": 17.2,
+          "name": "17.20",
+          "file": "17.20.bin"
+        }
+      ]
+    },
+    "menuSettings": {
+      "about": "Menu Settings page: each item (C3)",
+      "inputs": [
+        {
+          "t": 9,
+          "input": "click(\"#menu\")"
+        },
+        {
+          "t": 9.5,
+          "input": "key(\"ArrowRight\")"
+        },
+        {
+          "t": 10.1,
+          "input": "key(\"ArrowUp\")"
+        },
+        {
+          "t": 10.6,
+          "input": "key(\"ArrowUp\")"
+        },
+        {
+          "t": 11.1,
+          "input": "key(\"ArrowUp\")"
+        },
+        {
+          "t": 11.6,
+          "input": "key(\"ArrowUp\")"
+        },
+        {
+          "t": 12.1,
+          "input": "key(\"ArrowUp\")"
+        },
+        {
+          "t": 12.6,
+          "input": "key(\"ArrowUp\")"
+        },
+        {
+          "t": 13.1,
+          "input": "key(\"ArrowUp\")"
+        },
+        {
+          "t": 13.6,
+          "input": "key(\"ArrowUp\")"
+        },
+        {
+          "t": 14.1,
+          "input": "key(\"ArrowUp\")"
+        }
+      ],
+      "checkpoints": [
+        {
+          "t": 10,
+          "name": "10.00",
+          "file": "10.00.bin"
+        },
+        {
+          "t": 10.549999999999999,
+          "name": "item1",
+          "file": "item1.bin"
+        },
+        {
+          "t": 11.049999999999999,
+          "name": "item2",
+          "file": "item2.bin"
+        },
+        {
+          "t": 11.549999999999999,
+          "name": "item3",
+          "file": "item3.bin"
+        },
+        {
+          "t": 12.049999999999999,
+          "name": "item4",
+          "file": "item4.bin"
+        },
+        {
+          "t": 12.549999999999999,
+          "name": "item5",
+          "file": "item5.bin"
+        },
+        {
+          "t": 13.049999999999999,
+          "name": "item6",
+          "file": "item6.bin"
+        },
+        {
+          "t": 13.549999999999999,
+          "name": "item7",
+          "file": "item7.bin"
+        },
+        {
+          "t": 14.049999999999999,
+          "name": "item8",
+          "file": "item8.bin"
+        },
+        {
+          "t": 14.549999999999999,
+          "name": "item9",
+          "file": "item9.bin"
+        }
+      ]
+    },
+    "restart": {
+      "about": "Settings → Restart, hold: blackout, then boot again (C3, C1)",
+      "inputs": [
+        {
+          "t": 9,
+          "input": "click(\"#menu\")"
+        },
+        {
+          "t": 9.5,
+          "input": "key(\"ArrowRight\")"
+        },
+        {
+          "t": 10,
+          "input": "key(\"ArrowDown\")"
+        },
+        {
+          "t": 10.5,
+          "input": "key(\"ArrowDown\")"
+        },
+        {
+          "t": 11,
+          "input": "key(\"ArrowDown\")"
+        },
+        {
+          "t": 11.5,
+          "input": "key(\"ArrowDown\")"
+        },
+        {
+          "t": 12,
+          "input": "key(\"ArrowDown\")"
+        },
+        {
+          "t": 12.5,
+          "input": "key(\"ArrowDown\")"
+        },
+        {
+          "t": 13,
+          "input": "key(\"ArrowDown\")"
+        },
+        {
+          "t": 13.5,
+          "input": "key(\"ArrowDown\")"
+        },
+        {
+          "t": 14,
+          "input": "key(\"ArrowDown\")"
+        },
+        {
+          "t": 14.6,
+          "input": "key(\"Enter\")"
+        }
+      ],
+      "checkpoints": [
+        {
+          "t": 14.5,
+          "name": "14.50",
+          "file": "14.50.bin"
+        },
+        {
+          "t": 14.7,
+          "name": "14.70",
+          "file": "14.70.bin"
+        },
+        {
+          "t": 15.3,
+          "name": "15.30",
+          "file": "15.30.bin"
+        },
+        {
+          "t": 15.5,
+          "name": "15.50",
+          "file": "15.50.bin"
+        },
+        {
+          "t": 16,
+          "name": "16.00",
+          "file": "16.00.bin"
+        },
+        {
+          "t": 17,
+          "name": "17.00",
+          "file": "17.00.bin"
+        }
+      ]
+    },
+    "nest": {
+      "about": "Docked in the Nest: charging screen on top, clocks on the sides (C7)",
+      "inputs": [
+        {
+          "t": 1,
+          "input": "click('#views button:has-text(\"Nest\")')"
+        }
+      ],
+      "checkpoints": [
+        {
+          "t": 2,
+          "name": "2.00",
+          "file": "2.00.bin"
+        },
+        {
+          "t": 3,
+          "name": "3.00",
+          "file": "3.00.bin"
+        },
+        {
+          "t": 6,
+          "name": "6.00",
+          "file": "6.00.bin"
+        }
+      ]
+    }
+  }
+}

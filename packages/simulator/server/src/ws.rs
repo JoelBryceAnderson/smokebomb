@@ -1,11 +1,10 @@
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
-use smokebomb_hal::{Face, ImuSample};
-use smokebomb_hal_simulator::imu_script;
+use smokebomb_hal::Face;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::protocol::{Gesture, Inbound, Outbound};
+use crate::protocol::{Inbound, Outbound};
 use crate::AppState;
 
 pub async fn handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -20,7 +19,7 @@ async fn session(mut socket: WebSocket, state: AppState) {
     loop {
         tokio::select! {
             msg = rx.recv() => match msg {
-                Ok(Outbound::Frames(f)) => {
+                Ok(Outbound::Binary(f)) => {
                     if socket.send(Message::Binary(f.as_ref().clone().into())).await.is_err() { break; }
                 }
                 Ok(Outbound::Event(e)) => {
@@ -42,11 +41,12 @@ async fn session(mut socket: WebSocket, state: AppState) {
 }
 
 fn apply(state: &AppState, input: Inbound) {
-    let mut s = state.sim.lock();
+    let mut world = state.world.lock().unwrap_or_else(|e| e.into_inner());
     match input {
         Inbound::Touch { face, pressed } => {
             if let Some(f) = Face::from_index(face as usize) {
                 let bit = 1u8 << f.index();
+                let mut s = state.sim.lock();
                 s.touch_mask = if pressed {
                     s.touch_mask | bit
                 } else {
@@ -54,38 +54,19 @@ fn apply(state: &AppState, input: Inbound) {
                 };
             }
         }
-        Inbound::Orient { up } => {
-            if let Some(f) = Face::from_index(up as usize) {
-                s.imu_resting = imu_script::resting(f);
+        Inbound::ShakeStart => world.start_shake(),
+        Inbound::ShakeEnd { throw } => world.end_shake(throw),
+        Inbound::Tip { dir, right } => {
+            world.tip(dir.into(), glam::Vec3::from_array(right));
+        }
+        Inbound::Rotate { yaw, pitch } => world.rotate(yaw, pitch),
+        Inbound::PlaceFaceUp { face } => {
+            if let Some(f) = Face::from_index(face as usize) {
+                world.place_face_up(f);
             }
         }
-        Inbound::Imu { accel, gyro } => {
-            s.imu_resting = ImuSample {
-                accel_mg: accel,
-                gyro_mdps: gyro,
-            };
-        }
-        Inbound::Gesture { kind, land } => {
-            let samples = match kind {
-                Gesture::PickUp => imu_script::pick_up(),
-                Gesture::Shake => imu_script::shake(),
-                Gesture::Throw => imu_script::throw(),
-            };
-            s.imu_script.extend(samples);
-            if matches!(kind, Gesture::Throw) {
-                let face = land
-                    .and_then(|l| Face::from_index(l as usize))
-                    .unwrap_or_else(random_face);
-                s.imu_resting = imu_script::resting(face);
-            }
-        }
-        Inbound::Dock { docked } => s.docked = docked,
-        Inbound::Ble { connected } => s.ble_connected = connected,
+        Inbound::Dock { docked } => world.set_docked(docked),
+        Inbound::Ble { connected } => state.sim.lock().ble_connected = connected,
+        Inbound::ReducedMotion { on } => world.set_reduced_motion(on),
     }
-}
-
-fn random_face() -> Face {
-    let mut b = [0u8; 1];
-    let _ = getrandom::getrandom(&mut b);
-    Face::ALL[b[0] as usize % 6]
 }

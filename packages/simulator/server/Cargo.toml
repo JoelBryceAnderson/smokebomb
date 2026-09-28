@@ -21,6 +21,7 @@ required-features = ["simulator"]
 anyhow.workspace = true
 axum.workspace = true
 getrandom.workspace = true
+glam.workspace = true
 hex.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json.workspace = true

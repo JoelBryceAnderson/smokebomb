@@ -114,7 +114,7 @@ roll upload is implemented.
 
 ```json
 [
-  { "counter": 12, "die_sides": 20, "values": [17], "digest": "…", "received_at": "…" }
+  { "counter": 12, "die": "d20", "values": [17], "digest": "…", "received_at": "…" }
 ]
 ```
 
@@ -128,8 +128,8 @@ A signed roll is the hex/JSON form of `smokebomb_shared::SignedRoll`:
 | `session` | hex, 16 B, optional | Omit or send zeros for a casual roll |
 | `counter` | u32 | ATECC608 monotonic counter |
 | `uptime_ms` | u64 | Device uptime at roll time |
-| `die_sides` | 4, 6, 8, 10, 12, 20 or 100 | |
-| `values` | 1–6 integers in `1..=die_sides` | |
+| `die` | `d4`, `d6`, `d8`, `d10`, `d12`, `d20`, `d100` or `pass_the_pot` | |
+| `values` | 1–10 raw values (1–3 for `pass_the_pot`), each in `1..=sides` | Pass the Pot is signed as d6 values: 1 → ←, 2 → P, 3 → →, 4–6 → • |
 | `prev_hash` | hex, 32 B | Digest of the previous roll; all zeros for the first |
 | `signature` | hex, 64 B | ECDSA P-256 `r ‖ s` over `digest` |
 
@@ -149,7 +149,7 @@ Request: a signed roll (above).
   "device_serial": "01235b0e00000000ee",
   "counter": 0,
   "uptime_ms": 20296,
-  "die_sides": 6,
+  "die": "d6",
   "values": [3],
   "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "signature": "1436…"
@@ -171,8 +171,12 @@ Request: a signed roll (above).
 
 `valid` is `true` when the signature verifies and the chain isn't `broken`.
 `reason` explains a signature failure (`"signature does not match"`, …).
-The request fails with `400` if the device isn't registered or a field is
-malformed.
+The request fails with `400` if the device isn't registered, a field is
+malformed, the die is unknown, or the number of dice or a value is out of
+range for the die.
+
+The die is part of the signed record, so the same values claimed as a
+different die (for example Pass the Pot sent as `d6`) fail verification.
 
 ### `POST /v1/rolls` 🧪
 
