@@ -20,7 +20,6 @@
 
 use heapless::Vec;
 use smokebomb_hal::HapticEffect;
-use smokebomb_shared::assets::ClipId;
 
 use crate::motion::Motion;
 
@@ -58,8 +57,6 @@ pub enum Event {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
-    PlayClip(ClipId),
-    StopClip,
     Haptic(HapticEffect),
     Roll,
     /// Start a menu draft from the current setup.
@@ -107,7 +104,6 @@ impl StateMachine {
                 if self.mode == Menu {
                     emit(MenuClose { save: false });
                 }
-                emit(StopClip);
                 Some(Nest)
             }
 
@@ -123,48 +119,34 @@ impl StateMachine {
             }
             (Menu, Event::Motion(Motion::Shaking)) => {
                 emit(MenuClose { save: false });
-                emit(PlayClip(ClipId::SmokeShake));
                 emit(Haptic(HapticEffect::Tick));
                 Some(Shaking)
             }
             (Menu, Event::Motion(Motion::FreeFall)) => {
                 emit(MenuClose { save: false });
-                emit(PlayClip(ClipId::SmokeThrow));
                 Some(Airborne)
             }
             (Menu, _) => None,
             (Idle | Reveal { .. }, Event::LongPress) => {
-                emit(StopClip);
                 emit(Haptic(HapticEffect::MenuOpen));
                 emit(MenuOpen);
                 Some(Menu)
             }
 
             // Roll flow.
-            (Idle | Reveal { .. }, Event::Motion(Motion::Handled)) => {
-                emit(PlayClip(ClipId::SmokeIdle));
-                Some(Held)
-            }
+            (Idle | Reveal { .. }, Event::Motion(Motion::Handled)) => Some(Held),
             (Idle | Held | Reveal { .. }, Event::Motion(Motion::Shaking)) => {
-                emit(PlayClip(ClipId::SmokeShake));
                 emit(Haptic(HapticEffect::Tick));
                 Some(Shaking)
             }
-            (Held, Event::Motion(Motion::Rest)) => {
-                emit(StopClip);
-                Some(Idle)
-            }
-            (Held | Shaking, Event::Motion(Motion::FreeFall)) => {
-                emit(PlayClip(ClipId::SmokeThrow));
-                Some(Airborne)
-            }
+            (Held, Event::Motion(Motion::Rest)) => Some(Idle),
+            (Held | Shaking, Event::Motion(Motion::FreeFall)) => Some(Airborne),
             (Airborne, Event::Motion(Motion::Impact)) => {
                 emit(Haptic(HapticEffect::LandingThud));
                 Some(Settling)
             }
             // Rest after a throw, or a shake-and-place without a throw.
             (Settling | Shaking | Airborne, Event::Motion(Motion::Rest)) => {
-                emit(StopClip);
                 emit(Roll);
                 Some(Reveal { since_ms: now_ms })
             }

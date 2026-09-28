@@ -96,6 +96,8 @@ pub struct World {
     docked: bool,
     reduced_motion: bool,
     rng: u64,
+    /// Tests: the face the next throw lands on, instead of a random one.
+    next_landing: Option<Face>,
 }
 
 impl Default for World {
@@ -124,6 +126,7 @@ impl World {
             docked: false,
             reduced_motion: false,
             rng: u64::from_le_bytes(seed) | 1,
+            next_landing: None,
         }
     }
 
@@ -153,6 +156,12 @@ impl World {
         self.docked = false;
         self.turn = None;
         self.shake_start.get_or_insert(self.time);
+    }
+
+    /// Make the next throw land with `up` on top (tests replaying a mockup
+    /// throw that landed a known way).
+    pub fn set_next_landing(&mut self, up: Face) {
+        self.next_landing = Some(up);
     }
 
     /// Stop shaking; `throw` releases the die, otherwise it's put down.
@@ -424,7 +433,10 @@ impl World {
         let quarter = |r: &mut Self| (r.rand_unit() * 4.0).floor() * std::f32::consts::FRAC_PI_2;
         let (a, b, c) = (quarter(self), quarter(self), quarter(self));
         let yaw = Quat::from_rotation_y(self.rand_signed() * 0.35);
-        let to = yaw * Quat::from_rotation_x(a) * Quat::from_rotation_y(b) * Quat::from_rotation_z(c);
+        let mut to = yaw * Quat::from_rotation_x(a) * Quat::from_rotation_y(b) * Quat::from_rotation_z(c);
+        if let Some(up) = self.next_landing.take() {
+            to = yaw * Quat::from_rotation_arc(face_normal(up), Vec3::Y);
+        }
         let spin_axis = Vec3::new(self.rand_signed(), self.rand_signed(), self.rand_signed())
             .try_normalize()
             .unwrap_or(Vec3::Y);

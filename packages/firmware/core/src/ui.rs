@@ -16,10 +16,15 @@ use smokebomb_hal::Face;
 use smokebomb_shared::DieKind;
 
 use crate::menu::Draft;
-use crate::screens::BOOT_DURATION;
+use crate::screens::{BOOT_DURATION, BURST_AT, LOOP_END};
+use crate::smoke::Special;
 use crate::state::Mode;
 
 const BOOT_MS: u64 = (BOOT_DURATION * 1000.0) as u64;
+/// The top face's centre pip bursts into smoke this long into the boot.
+const BURST_MS: u64 = ((LOOP_END + BURST_AT) * 1000.0 + 0.5) as u64;
+/// A max or dud keeps the result lit at least this long (SIM_SPEC C6).
+const SPECIAL_LIT_MS: u64 = 5_000;
 /// Wake label after boot and after setup changes (C2).
 pub const WAKE_AFTER_BOOT_MS: u64 = 2_200;
 /// Wake label after a tap (C2).
@@ -45,6 +50,7 @@ pub const RESTART_BLACKOUT_MS: u64 = 800;
 struct Boot {
     start: u64,
     top: Face,
+    burst: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -55,6 +61,8 @@ pub struct Ui {
     wake: Option<(u64, u64)>,
     /// (reveal, dim) times of the shown result.
     result: Option<(u64, u64)>,
+    /// A max or dud, once its effect has started.
+    special: Option<Special>,
     menu_open_at: Option<u64>,
     /// The menu fading out: when it closed, what it showed, and where.
     menu_fade: Option<(u64, Draft, Face)>,
@@ -123,6 +131,33 @@ impl Ui {
         self.boot.is_some() || self.blackout_until.is_some()
     }
 
+    /// The boot's smoke burst is due: the top face, once per boot.
+    pub fn take_boot_burst(&mut self, now: u64) -> Option<Face> {
+        let b = self.boot.as_mut()?;
+        if b.burst || now - b.start < BURST_MS {
+            return None;
+        }
+        b.burst = true;
+        Some(b.top)
+    }
+
+    /// A result is up (revealed, possibly dimmed).
+    pub fn showing_result(&self, now: u64) -> bool {
+        self.result.is_some_and(|(reveal, _)| now >= reveal)
+    }
+
+    /// A max or dud's effect started: the result says so and stays lit.
+    pub fn set_special(&mut self, now: u64, special: Special) {
+        self.special = Some(special);
+        if let Some((reveal, dim)) = self.result {
+            self.result = Some((reveal, dim.max(now + SPECIAL_LIT_MS)));
+        }
+    }
+
+    pub fn special(&self) -> Option<Special> {
+        self.special
+    }
+
     /// Restarting: every screen is dark.
     pub fn blackout(&self) -> bool {
         self.blackout_until.is_some()
@@ -184,12 +219,20 @@ impl Ui {
     pub fn tick(&mut self, now: u64, before: &Mode, after: &Mode, up: Face, docked: bool) {
         if !self.started {
             self.started = true;
-            self.boot = Some(Boot { start: now, top: up });
+            self.boot = Some(Boot {
+                start: now,
+                top: up,
+                burst: false,
+            });
         }
         if let Some(until) = self.blackout_until {
             if now >= until {
                 self.blackout_until = None;
-                self.boot = Some(Boot { start: now, top: up });
+                self.boot = Some(Boot {
+                    start: now,
+                    top: up,
+                    burst: false,
+                });
             }
         }
 
@@ -198,15 +241,18 @@ impl Ui {
         if entered(|m| matches!(m, Mode::Shaking)) {
             self.wake = None;
             self.result = None;
+            self.special = None;
         }
         if entered(|m| matches!(m, Mode::Menu)) || entered(|m| matches!(m, Mode::Nest)) {
             self.wake = None;
             self.result = None;
+            self.special = None;
             self.success = None;
         }
         if let Mode::Reveal { since_ms } = *after {
             if !matches!(before, Mode::Reveal { .. }) {
                 self.result = Some((since_ms, since_ms + RESULT_DIM_AFTER_MS));
+                self.special = None;
             }
         }
 

@@ -551,6 +551,7 @@ Differences found when this document was checked against the mockup source (2026
 | G14 | B1 | Labels in weight 600 | The mockup never loads 600, so labels render at 700. Decided: match the mockup (H8) |
 | G15 | C2 | — | Default setup is a single d20 |
 | G16 | C3 | Unspecified | Letting go after the saving hold is a tap (wake label for 3 s from the release). The 0.8 s hold completes on the 49th frame at 60 Hz (the mockup's clock sums float frame times), so the firmware waits for *more than* 0.8 s |
+| G17 | D2 | Unspecified | A lingering particle lingers through its boundary frame: the mockup's clock is a sum of frame times that falls just short of `spawn + 0.75` there. The firmware lingers for *at least* the time |
 
 **Golden frames.** `tools/mockup-capture` runs the pinned mockup headless (seeded randomness, virtual time) and saves each face's 96×96 output at fixed moments in nine scenarios: boot, tap, throw, quick throw, Pass the Pot, menu, menu settings, restart and Nest. These are the reference for decision H4; `packages/firmware/core/tests/golden.rs` scores the firmware against them. The captures confirm G1 (the wake label is lit on the face-down screen).
 
@@ -562,7 +563,7 @@ Decided 2026-09-28.
 
 | # | Question | Decision |
 |---|---|---|
-| H1 | **Smoke rendering.** Part D is a live, gravity-reactive particle system, which can't be baked into frame sequences. It conflicted with the earlier "pre-rendered smoke in 64 MB QSPI" decision. | **Live particle simulation in firmware.** "Pre-rendered" now means *assets* in QSPI: smoke sprite stamps and Space Grotesk bitmaps. A theme is a sprite set plus parameters, not a video. On hardware the smoke layer is drawn at half resolution (48×48) to fit the frame budget (late-life sprites reach ~60 px radius; 380 of them at full resolution is ~1M pixel blends per frame). The simulator may draw it at full resolution. |
+| H1 | **Smoke rendering.** Part D is a live, gravity-reactive particle system, which can't be baked into frame sequences. It conflicted with the earlier "pre-rendered smoke in 64 MB QSPI" decision. | **Live particle simulation in firmware.** "Pre-rendered" now means *assets* in QSPI: smoke sprite stamps and Space Grotesk bitmaps. A theme is a sprite set plus parameters, not a video. On hardware the smoke layer is drawn at half resolution (48×48) to fit the frame budget (late-life sprites reach ~60 px radius; 380 of them at full resolution is ~1M pixel blends per frame). The simulator may draw it at full resolution. *Measured in the simulator:* a full cloud (shake plus landing, ~500 particles, with edge wrapping) is ~4M sprite pixels a tick at full resolution, so ~1M at half; the hardware budget still needs measuring (ARCHITECTURE, Smoke). |
 | H2 | **Face-down wake label** | **Dark.** Departs from the mockup (G1); the mockup should be updated. |
 | H3 | **Neighbour previews** in the menu | **Off**, as in the mockup. The product film should be updated. |
 | H4 | **Fidelity target** for firmware rendering | **Native 96×96 rendering, compared against captured mockup frames within a tolerance.** Pixel-identical output isn't a goal: the firmware can't afford the mockup's 256×256 canvas-and-downsample pipeline. |

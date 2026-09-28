@@ -75,6 +75,12 @@ lto = "thin"
 [profile.dev.build-override]
 opt-level = 3
 
+# The firmware core draws every panel pixel and runs the smoke particles; in
+# a plain debug build a full cloud takes ~40 ms a tick, too slow for the
+# simulator's 60 Hz. Optimise it even in dev builds (it stays debuggable).
+[profile.dev.package.smokebomb-core]
+opt-level = 3
+
 # Firmware images: size matters more than speed.
 [profile.firmware]
 inherits = "release"

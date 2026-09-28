@@ -9,7 +9,6 @@
 
 #![no_std]
 
-pub mod animation;
 pub mod display;
 pub mod font;
 pub mod gfx;
@@ -19,18 +18,18 @@ pub mod orientation;
 pub mod pack;
 pub mod roll;
 pub mod screens;
+pub mod smoke;
 pub mod state;
 pub mod tips;
 pub mod ui;
 
 use heapless::Vec;
 use smokebomb_hal::{
-    Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Peripherals, Platform, Power, Touch,
+    Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Peripherals, Platform, Power, Rng, Touch,
     FRAME_BYTES,
 };
 use smokebomb_shared::{DieKind, SignedRoll};
 
-use animation::AnimationPlayer;
 use display::Framebuffer;
 use font::Fonts;
 use gfx::{Layer, Painter, Transform};
@@ -40,6 +39,7 @@ use orientation::TextOrientation;
 use pack::PackIndex;
 use roll::RollEngine;
 use screens::Ctx;
+use smoke::{Smoke, Special};
 use state::{Command, Event, Mode, StateMachine};
 use tips::{Frame, TipDir, TipTracker, TipUpdate};
 use ui::{FaceContent, Ui};
@@ -82,17 +82,21 @@ pub struct Firmware<P: Platform> {
     motion: MotionDetector,
     settings: Settings,
     roller: RollEngine,
-    player: AnimationPlayer,
+    smoke: Smoke,
+    /// A max or dud waiting for the smoke to clear (SIM_SPEC C6).
+    pending_special: Option<Special>,
+    last_tick_ms: Option<u64>,
     fonts: Fonts,
     ui: Ui,
     frames: [Framebuffer; smokebomb_hal::FACE_COUNT],
     layer: Layer,
-    /// Packed 4bpp scratch for the panel and for streaming assets.
+    /// Packed 4bpp scratch for the panel.
     panel: FrameBytes,
     /// Filtered gravity-up direction in die coordinates (milli-g); `None`
     /// until the first IMU sample.
     up: Option<[f32; 3]>,
     orientation: TextOrientation,
+    gravity: orientation::Gravity,
     touch_since: Option<u64>,
     /// The face a touch started on (the lowest one, if several).
     touch_face: Face,
@@ -106,7 +110,7 @@ pub struct Firmware<P: Platform> {
 impl<P: Platform> Firmware<P> {
     pub fn new(mut hw: Peripherals<P>) -> HalResult<Self> {
         let pack = PackIndex::load(&mut hw.assets);
-        let player = AnimationPlayer::load(&mut hw.assets, &pack);
+        let smoke = Smoke::load(&mut hw.assets, &pack, hw.rng.next_u32()?);
         let fonts = Fonts::load(&mut hw.assets, &pack);
         let roller = RollEngine::new(&mut hw.secure_element)?;
         hw.display.set_enabled(true)?;
@@ -116,7 +120,9 @@ impl<P: Platform> Firmware<P> {
             motion: MotionDetector::new(),
             settings: Settings::default(),
             roller,
-            player,
+            smoke,
+            pending_special: None,
+            last_tick_ms: None,
             fonts,
             ui: Ui::new(),
             frames: [Framebuffer::new(); smokebomb_hal::FACE_COUNT],
@@ -124,6 +130,7 @@ impl<P: Platform> Firmware<P> {
             panel: [0; FRAME_BYTES],
             up: None,
             orientation: TextOrientation::new(),
+            gravity: orientation::Gravity::new(),
             touch_since: None,
             touch_face: Face::PosZ,
             menu_hold_fired: false,
@@ -164,6 +171,12 @@ impl<P: Platform> Firmware<P> {
         self.menu.as_ref().map(|m| m.frame.front_face())
     }
 
+    /// The particle system, for tests that replay the mockup's random
+    /// sequence.
+    pub fn smoke_mut(&mut self) -> &mut Smoke {
+        &mut self.smoke
+    }
+
     /// The menu's draft, if it's open.
     pub fn menu_draft(&self) -> Option<&Draft> {
         self.menu.as_ref().map(|m| &m.draft)
@@ -182,6 +195,10 @@ impl<P: Platform> Firmware<P> {
                 *u += (r - *u) * UP_FILTER;
             }
             self.orientation.update(*up);
+            // Smoke falls with gravity even while the die is shaken or
+            // tumbling, as in the mockup.
+            self.gravity.update(&sample, IMU_SAMPLE_S);
+            self.smoke.set_up(self.gravity.up());
             if let Some(face) = motion::up_face(&sample) {
                 self.up_face = face;
             }
@@ -224,9 +241,64 @@ impl<P: Platform> Firmware<P> {
         }
         let after = *self.sm.mode();
         self.ui.tick(now, &before, &after, self.up_face, self.docked);
+        self.update_smoke(now, &before, &after);
 
         self.render(now)?;
         Ok(())
+    }
+
+    /// Drive the smoke through the throw, in the mockup's frame order:
+    /// throw and landing first, then a step, then the boot burst.
+    fn update_smoke(&mut self, now: u64, before: &Mode, after: &Mode) {
+        let entered = |m: fn(&Mode) -> bool| !m(before) && m(after);
+        if entered(|m| matches!(m, Mode::Shaking)) {
+            self.smoke.shake_start();
+            self.pending_special = None;
+        }
+        if entered(|m| matches!(m, Mode::Airborne)) {
+            self.smoke.throw();
+            self.pending_special = None;
+        }
+        // Landed: the die has stopped after the tumble (the mockup's
+        // landing, about 0.35 s before the result shows). Shaken and set
+        // straight down counts as a throw that has landed.
+        let resting = self.motion.stopped() || matches!(after, Mode::Reveal { .. });
+        if self.smoke.shaking() && matches!(after, Mode::Reveal { .. }) {
+            self.smoke.throw();
+        }
+        if self.smoke.tumbling() && resting && !matches!(after, Mode::Airborne) {
+            self.smoke.land();
+        }
+        if entered(|m| matches!(m, Mode::Menu)) {
+            self.smoke.clear();
+        }
+        let dt = self.frame_dt(now);
+        self.smoke.step(dt);
+        if let Some(face) = self.ui.take_boot_burst(now) {
+            self.smoke.burst(face);
+        }
+        // A max or dud shows once the smoke has cleared from the result.
+        if let Some(special) = self.pending_special {
+            if self.ui.showing_result(now) && !self.smoke.has_smoke() && !self.smoke.tumbling() {
+                self.smoke.special(special);
+                self.ui.set_special(now, special);
+                self.pending_special = None;
+            }
+        }
+    }
+
+    /// Seconds since the last tick, for animation: exactly one tick period
+    /// when the tick came on time (a millisecond clock would otherwise make
+    /// steps of 16 and 17 ms), the measured gap when it didn't.
+    fn frame_dt(&mut self, now: u64) -> f32 {
+        let elapsed = self.last_tick_ms.map_or(0, |last| now - last);
+        self.last_tick_ms = Some(now);
+        let nominal = 1000.0 / TICK_HZ as f32;
+        match elapsed {
+            0 => 0.0,
+            e if (e as f32 - nominal).abs() <= 2.0 => 1.0 / TICK_HZ as f32,
+            e => e as f32 / 1000.0,
+        }
     }
 
     /// Feed the gyro to the menu's tip tracker and apply finished tips.
@@ -322,8 +394,6 @@ impl<P: Platform> Firmware<P> {
     fn execute(&mut self, cmd: Command) -> HalResult<()> {
         let now = self.hw.clock.now_ms();
         match cmd {
-            Command::PlayClip(clip) => self.player.play(clip),
-            Command::StopClip => self.player.stop(),
             Command::Haptic(effect) => self.hw.haptics.play(effect)?,
             Command::Roll => {
                 let signed = self.roller.roll(
@@ -333,7 +403,8 @@ impl<P: Platform> Firmware<P> {
                     self.settings.count,
                     self.hw.clock.now_ms(),
                 )?;
-                if is_max(&signed, self.settings.die) {
+                self.pending_special = special(&signed, self.settings.die);
+                if self.pending_special == Some(Special::Max) {
                     self.hw
                         .haptics
                         .play(smokebomb_hal::HapticEffect::MaxCelebration)?;
@@ -361,7 +432,8 @@ impl<P: Platform> Firmware<P> {
             Command::MenuClose { save } => {
                 if let Some(m) = self.menu.take() {
                     if save && m.draft.restart_selected() {
-                        self.player.stop();
+                        self.smoke.clear();
+                        self.pending_special = None;
                         self.ui.restart(now);
                     } else {
                         if save {
@@ -441,7 +513,7 @@ impl<P: Platform> Firmware<P> {
                 FaceContent::Wake { alpha } => screens::draw_wake_label(&mut c, &label, alpha),
                 FaceContent::Result { alpha } => {
                     if let Some(r) = record {
-                        screens::draw_result(&mut c, r, display::FG, alpha);
+                        screens::draw_result(&mut c, r, ui.special(), alpha);
                     }
                 }
                 FaceContent::Success { t, die, count } => {
@@ -460,11 +532,8 @@ impl<P: Platform> Firmware<P> {
             }
         }
 
-        // Placeholder smoke on top, until the particle system lands.
-        if !self.ui.booting() {
-            self.player
-                .render(&mut self.hw.assets, &mut self.frames, &mut self.panel, now)?;
-        }
+        // Smoke over everything, wrapping round the edges (SIM_SPEC D1).
+        self.smoke.draw(&mut self.frames);
         for face in Face::ALL {
             self.frames[face.index()].quantize(&mut self.panel);
             self.hw.display.write_frame(face, &self.panel)?;
@@ -520,10 +589,17 @@ fn fb_of<'a>(painter: &'a mut Painter<'_>) -> &'a mut Framebuffer {
     painter.framebuffer()
 }
 
-/// Every die shows its top value (N > 2); Pass the Pot has no max (SIM_SPEC C6).
-fn is_max(roll: &SignedRoll, die: DieKind) -> bool {
-    die.is_numeric()
-        && die.sides() > 2
-        && !roll.record.values.is_empty()
-        && roll.record.values.iter().all(|&v| v == die.sides())
+/// A max (every die shows its top value, N > 2) or a dud (every die shows
+/// 1). Pass the Pot has neither (SIM_SPEC C6).
+fn special(roll: &SignedRoll, die: DieKind) -> Option<Special> {
+    let values = &roll.record.values;
+    if !die.is_numeric() || values.is_empty() {
+        None
+    } else if die.sides() > 2 && values.iter().all(|&v| v == die.sides()) {
+        Some(Special::Max)
+    } else if values.iter().all(|&v| v == 1) {
+        Some(Special::Dud)
+    } else {
+        None
+    }
 }
