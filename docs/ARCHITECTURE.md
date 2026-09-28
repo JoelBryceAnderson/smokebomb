@@ -344,8 +344,9 @@ result (placeholder digits until the renderer lands).
   - settling upright in the Nest;
   - the mockup's snap on menu open: when the firmware reports an open menu,
     the server turns the held face squarely toward the viewer (0.35 s);
-  - multi-turn spins (simulator only): the die follows a Ctrl-drag about a
-    tip axis across any number of faces, then settles on the nearest.
+  - multi-turn spins (simulator only): with F held, the die follows a drag
+    about a tip axis across any number of faces, then settles on the
+    nearest.
 
   Each tick produces the pose the browser draws and the IMU sample the
   firmware reads, so what the firmware senses always matches what you see.

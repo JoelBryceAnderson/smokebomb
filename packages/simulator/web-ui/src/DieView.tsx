@@ -50,7 +50,7 @@ interface Props {
   /**
    * Multi-turn: in the menu, a drag spins the die about one tip axis and
    * follows the pointer across as many faces as you like; letting go settles
-   * it on the nearest face. On with the checkbox, or while Ctrl/⌘ is held.
+   * it on the nearest face. On with the checkbox, or while the F key is held.
    */
   multiTurn: boolean;
   /** Radians since the spin began: positive yaw is a right tip, negative pitch an up tip. */
@@ -220,6 +220,22 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       /** Set once a multi-turn drag has picked its axis. */
       spin: SpinAxis | null;
     } | null = null;
+    // Holding F makes a menu drag a multi-turn (see `multiTurn`). A plain
+    // key rather than a modifier: Ctrl-click is a right-click on a Mac.
+    let fHeld = false;
+    const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === "f" || e.key === "F") && !typing(e)) fHeld = true;
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "f" || e.key === "F") fHeld = false;
+    };
+    const onBlur = () => {
+      fHeld = false;
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
     const faceAt = (e: PointerEvent): number | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       const ndc = new THREE.Vector2(
@@ -257,7 +273,7 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       }
       const dx = e.clientX - press.x;
       const dy = e.clientY - press.y;
-      const multi = cbs.current.multiTurn || e.ctrlKey || e.metaKey;
+      const multi = cbs.current.multiTurn || fHeld;
       if (cbs.current.swipeToTip && press.dragging && !press.swiped && !press.spin && multi) {
         // Multi-turn: the drag's dominant direction picks the axis.
         press.spin = Math.abs(dx) > Math.abs(dy) ? "yaw" : "pitch";
@@ -313,6 +329,9 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     loop();
 
     return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
       cancelAnimationFrame(raf);
       observer.disconnect();
       renderer.dispose();
