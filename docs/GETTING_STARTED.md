@@ -48,6 +48,21 @@ terminal run:
 npm run dev -w @smokebomb/simulator-web-ui     # → http://localhost:5173 (proxies to :3000)
 ```
 
+### From an iPad (or any other device on your network)
+
+The simulator server has to run on a Mac or PC; the iPad is just the screen and
+controls. Bind to all interfaces and open the page from Safari:
+
+```sh
+HOST=0.0.0.0 cargo run --features=simulator
+# on the iPad: http://<your-mac>.local:3000  (or the Mac's IP address)
+```
+
+Drag to orbit, tap and hold a face to touch it, and use the panel for throw
+and tilt. The simulator has no authentication, so only do this on a network you
+trust. The default (`HOST` unset) accepts connections from the local machine
+only. The first time, macOS may ask whether to allow incoming connections.
+
 `cargo sim` is an alias for `cargo run -p smokebomb-simulator --features
 simulator`. Set `PORT` to use a port other than 3000.
 

@@ -12,7 +12,7 @@
 mod protocol;
 mod ws;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -79,8 +79,21 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(3000);
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    tracing::info!("simulator running on http://localhost:{port}");
+    // Loopback by default. HOST=0.0.0.0 exposes the simulator (which has no
+    // auth) to the local network, e.g. to drive it from an iPad.
+    let host: IpAddr = match std::env::var("HOST") {
+        Ok(h) => h
+            .parse()
+            .map_err(|_| anyhow::anyhow!("HOST must be an IP address, got {h:?}"))?,
+        Err(_) => IpAddr::from([127, 0, 0, 1]),
+    };
+    let addr = SocketAddr::new(host, port);
+    if host.is_loopback() {
+        tracing::info!("simulator running on http://localhost:{port}");
+    } else {
+        tracing::warn!("simulator listening on {addr} and reachable from the network (no authentication)");
+        tracing::info!("open http://<this-machine>.local:{port} from another device");
+    }
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(async {

@@ -130,11 +130,20 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView({ onTou
     // Capture phase so we run before OrbitControls sees the event.
     renderer.domElement.addEventListener("pointerdown", onDown, { capture: true });
     window.addEventListener("pointerup", onUp);
+    // Touch browsers cancel a pointer when they take over the gesture;
+    // treat that as a release so a face never stays "held".
+    window.addEventListener("pointercancel", onUp);
+    // Long-press on iOS/Android would otherwise open a context menu.
+    const noMenu = (e: Event) => e.preventDefault();
+    renderer.domElement.addEventListener("contextmenu", noMenu);
 
     const resize = () => {
       const { clientWidth: w, clientHeight: h } = mount;
       renderer.setSize(w, h);
       camera.aspect = w / h;
+      // The FOV is vertical; zoom out on tall viewports (iPad portrait) so
+      // the cube still fits horizontally.
+      camera.zoom = Math.min(1, camera.aspect);
       camera.updateProjectionMatrix();
     };
     const observer = new ResizeObserver(resize);
@@ -159,6 +168,8 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView({ onTou
       cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      renderer.domElement.removeEventListener("contextmenu", noMenu);
       controls.dispose();
       renderer.dispose();
       panels.forEach((p) => p.texture.dispose());
