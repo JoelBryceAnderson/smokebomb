@@ -22,12 +22,27 @@
 //! Whatever a turn leaves over (the die rarely stops exactly square) carries
 //! into the next one, so the count follows the die's real orientation even
 //! through slow turns with stops on the way.
+//!
+//! Real hands aren't rails. Stillness is judged on a smoothed rate, so hand
+//! tremor averages out. A turn mostly about the line of sight (a twist, a
+//! regrip) is handling, not a tip. And whenever the die comes to rest the
+//! firmware squares its frame to gravity ([`Frame::resync`]), which catches
+//! tilts, rolls and drift; only turns about vertical (left and right tips)
+//! rely on the gyro alone.
+//!
+//! The thresholds below are first guesses from the simulator and need
+//! tuning against recordings from the real IMU.
 
 use libm::{fabsf, roundf, sqrtf};
 use smokebomb_hal::Face;
 
-/// Below this the die counts as still (deg/s).
+/// Below this the die counts as still (deg/s, smoothed rate).
 const STILL_DPS: f32 = 8.0;
+/// Stillness and starts are judged on the rate averaged over this many
+/// samples (100 ms at 60 Hz): about one period of hand tremor (7–11 Hz),
+/// which mostly cancels out, and short enough that a turn that has ended is
+/// forgotten quickly.
+const RATE_WINDOW: usize = 6;
 /// Above this a turn has started (deg/s). Low, so a slow turn counts too.
 const START_DPS: f32 = 12.0;
 /// Stillness needed before tips are recognised (after the menu opens, or
@@ -40,7 +55,7 @@ const DECIDE_DEG: f32 = 8.0;
 const SETTLE: f32 = 1.0 / 3.0;
 /// A turn ends once the die has been still this long, so a hand (or a
 /// pointer) that stops briefly mid-turn doesn't end it early.
-const SETTLE_STILL_MS: u64 = 200;
+const SETTLE_STILL_MS: u64 = 150;
 /// A turn that stops between faces for this long ends at the nearest face.
 const SETTLE_MS: u64 = 1_000;
 /// Leftovers smaller than this (degrees) when a turn settles on a face are
@@ -129,6 +144,37 @@ impl Frame {
         }
     }
 
+    /// Square the frame to gravity `up` (any length), measured with the die
+    /// at rest. Returns the new frame, the up/down tips the die has made
+    /// that the gyro missed (a slow tilt onto the next face counts, as a tip
+    /// would), and whether it was rolled about the line of sight (the sky
+    /// moved to a side; no step).
+    pub fn resync(&self, up: [f32; 3]) -> (Frame, i32, bool) {
+        let sky = snap(up);
+        if sky == self.up {
+            return (*self, 0, false);
+        }
+        if fabsf(dot(sky, self.right)) < 0.5 {
+            // Tilted about the viewer's right: the tips that would do that.
+            for k in [1, -1, 2] {
+                let f = self.stepped(TipDir::Up, k);
+                if f.up == sky {
+                    return (f, k, false);
+                }
+            }
+        }
+        // Rolled: same face in front, the sky now off to one side.
+        (
+            Frame {
+                front: self.front,
+                up: sky,
+                right: cross(sky, self.front),
+            },
+            0,
+            true,
+        )
+    }
+
     /// The frame after `steps` tips in `dir` (negative steps go the other way).
     pub fn stepped(&self, dir: TipDir, steps: i32) -> Frame {
         let d = if steps < 0 { dir.opposite() } else { dir };
@@ -209,6 +255,14 @@ pub struct TipTracker {
     /// Rotation (degrees, die axes) that started the next turn on the tick
     /// the last one was counted.
     carry: Option<[f32; 3]>,
+    /// The last few angular rates (deg/s, die axes), for the average.
+    rates: [[f32; 3]; RATE_WINDOW],
+    next_rate: usize,
+    /// Rotation since the die was last still, while no turn is under way:
+    /// the start of a turn, before the smoothed rate shows it.
+    since_still: [f32; 3],
+    /// This turn is mostly about the line of sight: handling, not a tip.
+    handling: bool,
 }
 
 impl TipTracker {
@@ -228,7 +282,16 @@ impl TipTracker {
     /// End the turn `steps` faces along `dir`, keeping what's left over.
     fn settle(&mut self, dir: TipDir, steps: f32, frame: &Frame) -> TipUpdate {
         let counted = frame.axis(dir).map(|a| a * steps * 90.0);
-        let left: [f32; 3] = core::array::from_fn(|i| self.theta[i] - counted[i]);
+        let mut left: [f32; 3] = core::array::from_fn(|i| self.theta[i] - counted[i]);
+        if steps != 0.0 {
+            // Only the overshoot along the tip's own axis carries over. Its
+            // wobble off that axis happened in a frame the tip has since
+            // turned, so carried as right/up it would land on the wrong axis
+            // and pile up over tips; gravity squares what matters of it.
+            let axis = frame.axis(dir);
+            let along = dot(left, axis);
+            left = axis.map(|a| a * along);
+        }
         self.leftover = if norm(left) < NOISE_DEG {
             (0.0, 0.0)
         } else {
@@ -237,11 +300,24 @@ impl TipTracker {
         self.turning = false;
         self.theta = [0.0; 3];
         self.dir = None;
+        self.handling = false;
         self.paused_since = None;
         match steps as i32 {
             0 => TipUpdate::Cancelled,
             steps => TipUpdate::Done { dir, steps },
         }
+    }
+
+    /// Gravity has squared the frame up (see [`Frame::resync`]): leftover
+    /// tilt about the viewer's right is accounted for, and after a roll the
+    /// old leftovers mean nothing. Leftover turn about vertical stays, as
+    /// gravity can't see it.
+    pub fn resynced(&mut self, rolled: bool) {
+        self.leftover = if rolled {
+            (0.0, 0.0)
+        } else {
+            (0.0, self.leftover.1)
+        };
     }
 
     /// Signed progress in quarter turns along `dir`'s axis.
@@ -254,7 +330,11 @@ impl TipTracker {
     /// tracker becomes armed, when the caller should rebuild its frame.
     pub fn update(&mut self, gyro_mdps: [i32; 3], dt_s: f32, now: u64, frame: &Frame) -> (bool, TipUpdate) {
         let w = gyro_mdps.map(|g| g as f32 / 1000.0);
-        let speed = norm(w);
+        self.rates[self.next_rate] = w;
+        self.next_rate = (self.next_rate + 1) % RATE_WINDOW;
+        let mean: [f32; 3] =
+            core::array::from_fn(|i| self.rates.iter().map(|r| r[i]).sum::<f32>() / RATE_WINDOW as f32);
+        let speed = norm(mean);
         let still = speed < STILL_DPS;
 
         if !self.armed {
@@ -272,15 +352,32 @@ impl TipTracker {
 
         if !self.turning {
             let carry = self.carry.take();
+            if still {
+                self.since_still = [0.0; 3];
+            } else {
+                for (a, w) in self.since_still.iter_mut().zip(w) {
+                    *a += w * dt_s;
+                }
+            }
             if carry.is_none() && speed < START_DPS {
                 return (false, TipUpdate::None);
             }
             self.turning = true;
+            // Everything since the die was last still: the smoothed rate
+            // takes a few samples to show a turn has begun.
             let (r, u) = self.leftover;
-            let carry = carry.unwrap_or([0.0; 3]);
-            self.theta = core::array::from_fn(|i| r * frame.right[i] + u * frame.up[i] + carry[i]);
-            self.fresh = carry;
+            let start = match carry {
+                Some(c) => c,
+                None => core::mem::take(&mut self.since_still),
+            };
+            self.theta = core::array::from_fn(|i| r * frame.right[i] + u * frame.up[i] + start[i]);
+            self.fresh = start;
             self.dir = None;
+            self.handling = false;
+            // This sample is already in `since_still`.
+            if carry.is_none() {
+                return (false, TipUpdate::None);
+            }
         }
 
         // Moving again after resting on a face: that turn is over, even if it
@@ -303,7 +400,13 @@ impl TipTracker {
             *t += w * dt_s;
             *f += w * dt_s;
         }
-        if self.dir.is_none() && norm(self.fresh) >= DECIDE_DEG {
+        if self.dir.is_none() && !self.handling && norm(self.fresh) >= DECIDE_DEG {
+            let (r, u) = (dot(self.fresh, frame.right), dot(self.fresh, frame.up));
+            let twist = dot(self.fresh, frame.front);
+            // Mostly about the line of sight: a twist or a regrip.
+            self.handling = fabsf(twist) > fabsf(r).max(fabsf(u));
+        }
+        if self.dir.is_none() && !self.handling && norm(self.fresh) >= DECIDE_DEG {
             let (r, u) = (dot(self.fresh, frame.right), dot(self.fresh, frame.up));
             self.dir = Some(if fabsf(r) >= fabsf(u) {
                 if r < 0.0 {
@@ -557,21 +660,27 @@ mod tests {
             now += 17;
             t.update(g, dt, now, &f);
         }
-        now += 17;
-        let (_, first) = t.update([0; 3], dt, now, &f);
+        // Still, a sample at a time: it waits between faces for a while...
+        let still = |t: &mut TipTracker, now: &mut u64, n: usize| {
+            (0..n)
+                .map(|_| {
+                    *now += 17;
+                    t.update([0; 3], dt, *now, &f).1
+                })
+                .collect::<std::vec::Vec<_>>()
+        };
+        let waiting = still(&mut t, &mut now, 30);
         assert!(
-            matches!(first, TipUpdate::Turning { .. }),
-            "waits between faces: {first:?}"
+            waiting.iter().all(|u| matches!(u, TipUpdate::Turning { .. })),
+            "waits between faces: {waiting:?}"
         );
-        let (_, later) = t.update([0; 3], dt, now + SETTLE_MS, &f);
+        // ...then settles on the nearest face.
+        let later = still(&mut t, &mut now, 40);
         assert!(
-            matches!(
-                later,
-                TipUpdate::Done {
-                    dir: TipDir::Left,
-                    ..
-                }
-            ),
+            later.contains(&TipUpdate::Done {
+                dir: TipDir::Left,
+                steps: 2
+            }),
             "{later:?}"
         );
     }
@@ -648,20 +757,58 @@ mod tests {
         let f = frame();
         let mut t = armed();
         let dt = 1.0 / 60.0;
-        let g = [0, 0, 60_000]; // 60°/s for 0.2 s = 12°
+        // 60°/s for 0.2 s = 12°, about the vertical (a left tip's axis).
+        let g = f.axis(TipDir::Left).map(|a| (a * 60_000.0) as i32);
         let mut last = TipUpdate::None;
         for i in 0..12 {
             last = t.update(g, dt, 300 + i * 17, &f).1;
         }
-        assert!(matches!(last, TipUpdate::Turning { .. }));
-        assert!(matches!(
-            t.update([0; 3], dt, 600, &f).1,
-            TipUpdate::Turning { .. }
-        ));
-        assert_eq!(
-            t.update([0; 3], dt, 600 + SETTLE_STILL_MS, &f).1,
-            TipUpdate::Cancelled
+        assert!(matches!(last, TipUpdate::Turning { .. }), "{last:?}");
+        let after: std::vec::Vec<_> = (1..30)
+            .map(|i| t.update([0; 3], dt, 504 + i * 17, &f).1)
+            .collect();
+        assert!(after.contains(&TipUpdate::Cancelled), "{after:?}");
+        assert!(!after.iter().any(|u| matches!(u, TipUpdate::Done { .. })));
+    }
+
+    #[test]
+    fn a_twist_is_handling_not_a_tip() {
+        let f = frame();
+        let mut t = armed();
+        let dt = 1.0 / 60.0;
+        // 90° about the line of sight (+Z, toward the viewer).
+        let g = [0, 0, 270_000];
+        let mut seen = std::vec::Vec::new();
+        for i in 0..20 {
+            seen.push(t.update(g, dt, 300 + i * 17, &f).1);
+        }
+        for i in 0..30 {
+            seen.push(t.update([0; 3], dt, 640 + i * 17, &f).1);
+        }
+        assert!(
+            !seen
+                .iter()
+                .any(|u| matches!(u, TipUpdate::Turning { .. } | TipUpdate::Done { .. })),
+            "{seen:?}"
         );
+        assert!(seen.contains(&TipUpdate::Cancelled));
+    }
+
+    #[test]
+    fn resync_squares_the_frame_to_gravity() {
+        let f = frame(); // +Z front, +Y up
+                         // No change.
+        assert_eq!(f.resync([0.0, 980.0, 30.0]), (f, 0, false));
+        // Tilted forward onto the next face: that's an up tip.
+        let (g, steps, rolled) = f.resync([0.0, 0.0, 1000.0]);
+        assert_eq!((g, steps, rolled), (f.after(TipDir::Up), 1, false));
+        // Rolled a quarter turn: same face in front, the sky to the side.
+        let (g, steps, rolled) = f.resync([1000.0, 0.0, 0.0]);
+        assert_eq!(
+            (g.front, g.up, steps, rolled),
+            (f.front, [1.0, 0.0, 0.0], 0, true)
+        );
+        assert_eq!(g.right, cross(g.up, g.front));
     }
 
     /// A turn made in small nudges with short stops (a slow hand, or a
