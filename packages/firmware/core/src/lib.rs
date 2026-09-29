@@ -355,7 +355,7 @@ impl<P: Platform> Firmware<P> {
             // The die is still in front of the person: take the sky from
             // here (the simulator has just turned the die toward the viewer).
             let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
-            m.frame = Frame::new(m.frame.front_face(), up);
+            m.frame = Frame::new(m.frame.front_face(), up, m.frame.up);
         }
         match update {
             TipUpdate::Turning { dir, progress } => {
@@ -465,7 +465,11 @@ impl<P: Platform> Firmware<P> {
                 let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
                 self.menu = Some(MenuSession {
                     draft: Draft::new(&self.settings),
-                    frame: Frame::new(self.touch_face, up),
+                    frame: Frame::new(
+                        self.touch_face,
+                        up,
+                        orientation::sky_for(self.touch_face, self.display_quarter(self.touch_face)),
+                    ),
                     // Starts disarmed: tips count once the die is still.
                     tips: TipTracker::new(),
                     last_input: now,
