@@ -212,7 +212,8 @@ The boot is interrupted by a throw or by opening the menu.
   - In the mockup, a tap is any press on the die that moves less than 8 px and is released before the 0.8 s hold completes. There is no shorter time limit. Hardware needs its own definition.
   - Taps do nothing while the menu is open.
   - Fades in over 0.35 s and out over 0.6 s, at 85% alpha.
-  - Font 700, size `fitPx(label, 50)`: at most 50 canvas (28.9 px), shrinking so the label fits 150 canvas (87 px) wide.
+  - Font 700, size `fitPx(label, 28)` at y = +44: at most 28 canvas, shrinking so the label fits 150 canvas (87 px) wide.
+  - An **icon** sits above the name, centred at y = −21 with radius 36 canvas, in line art (2.6 canvas stroke, same glow and alpha as the text): a wireframe of the die's solid (tetrahedron d4, cube d6, octahedron d8, d10 kite, dodecahedron d12, icosahedron d20, a pair of d10 kites for d100), a banknote for Pass the Pot, a bomb for Hot Potato. The count (`3d6`, `×2`) is only in the name. Drawn in `icons.rs`; the `setup-icons` snapshot shows all of them.
 - **Setup changes, the end of boot, and closing the menu** (saved *or* discarded): the wake label shows for **2.2 s**.
 - **Default setup** at power-on: a single d20 (`d20`).
 - **Label formats:**
