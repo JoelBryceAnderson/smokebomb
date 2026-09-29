@@ -408,6 +408,15 @@ pub fn draw_menu<A: AssetStore>(
                 fit_px(&value, 18, 150.0),
                 Style::new(FG, 0.72 * alpha, 0.0),
             );
+            if let Some(detail) = m.setting_detail() {
+                c.text(
+                    detail,
+                    0.0,
+                    46.0,
+                    fit_px(detail, 18, 150.0),
+                    Style::new(FG, 0.72 * alpha, 0.0),
+                );
+            }
         } else {
             let value = m.value();
             c.text(
