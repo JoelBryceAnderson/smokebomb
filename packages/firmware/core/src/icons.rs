@@ -108,10 +108,17 @@ fn die_solid<A: AssetStore>(c: &mut Ctx<A>, die: DieKind, cx: f32, cy: f32, r: f
                 style,
             );
         }
-        // Two ten-siders, as percentile dice come in pairs.
+        // A ten-sider with a percent sign: the tens die of a percentile roll.
         _ => {
-            kite(c, cx - 0.5 * r, cy + 0.14 * r, r * 0.74, style);
-            kite(c, cx + 0.5 * r, cy - 0.14 * r, r * 0.74, style);
+            kite(c, cx - 0.42 * r, cy, r * 0.8, style);
+            let (px, py, s) = (cx + 0.72 * r, cy, r * 0.42);
+            let ring = |dx: f32, dy: f32| (px + dx * s, py + dy * s);
+            let (a, b) = (ring(-0.42, -0.62), ring(0.42, 0.62));
+            let ro = s * 0.24;
+            c.painter.stroke_arc(a.0, a.1, ro, 0.0, TAU, LINE * 0.8, style);
+            c.painter.stroke_arc(b.0, b.1, ro, 0.0, TAU, LINE * 0.8, style);
+            c.painter
+                .stroke_polyline(&[ring(0.7, -1.0), ring(-0.7, 1.0)], LINE * 0.8, style);
         }
     }
 }
