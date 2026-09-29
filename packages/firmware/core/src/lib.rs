@@ -343,6 +343,10 @@ impl<P: Platform> Firmware<P> {
         for cmd in self.potato.tick(now) {
             self.run_potato(cmd)?;
         }
+        if self.potato.is_lit() {
+            let heat = self.potato.heat(now);
+            self.smoke.smolder(SMOLDER_MIN + (SMOLDER_MAX - SMOLDER_MIN) * heat);
+        }
         let after = *self.sm.mode();
         self.update_sleep(now, input, &after)?;
         self.ui.tick(now, &before, &after, self.up_face, self.docked);
@@ -418,7 +422,7 @@ impl<P: Platform> Firmware<P> {
         match cmd {
             PotatoCommand::Ignite => {
                 self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
-                self.smoke.shake_start();
+                self.smoke.smolder(SMOLDER_MIN);
             }
             PotatoCommand::Tick => self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?,
             PotatoCommand::Boom => {
@@ -917,6 +921,11 @@ impl<P: Platform> Firmware<P> {
         self.hw.display.flush()
     }
 }
+
+/// How much of a full cloud a lit fuse's smoke may reach, at the start and
+/// at full heat: enough to build, little enough to read "PASS IT" through.
+const SMOLDER_MIN: f32 = 0.08;
+const SMOLDER_MAX: f32 = 0.3;
 
 /// What a round of Hot Potato shows on the faces.
 #[derive(Clone, Copy)]
