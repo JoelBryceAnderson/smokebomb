@@ -215,6 +215,20 @@ pub fn upright(face: Face, up: [f32; 3]) -> Option<Quarter> {
     upright_angle(b, up).map(Quarter::from_angle)
 }
 
+/// The die-coordinate direction that reads as "up" on `face` drawn with
+/// `quarter`: the inverse of `upright`. Lets a face gravity can't orient
+/// (top or bottom) say which way its content already points.
+pub fn sky_for(face: Face, quarter: Quarter) -> [f32; 3] {
+    let b = &BASES[face.index()];
+    let (s, c) = match quarter {
+        Quarter::R0 => (0.0, 1.0),
+        Quarter::R90 => (1.0, 0.0),
+        Quarter::R180 => (0.0, -1.0),
+        Quarter::R270 => (-1.0, 0.0),
+    };
+    [0, 1, 2].map(|i| s * b.x[i] + c * b.y[i])
+}
+
 /// Gravity-up in die coordinates from an accelerometer sample: at rest the
 /// sensor reads +1 g along the axis pointing at the sky.
 pub fn up_from(sample: &ImuSample) -> [f32; 3] {
@@ -269,6 +283,23 @@ mod tests {
             g.update(&s, 1.0 / 60.0);
         }
         assert!(g.up()[0] > 0.99, "{:?}", g.up());
+    }
+
+    #[test]
+    fn sky_for_inverts_upright() {
+        for face in Face::ALL {
+            for up in [
+                [0.0, 1.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, -1.0],
+            ] {
+                let Some(q) = upright(face, up) else { continue };
+                assert_eq!(sky_for(face, q), up, "{face:?} {up:?}");
+            }
+        }
     }
 
     #[test]
