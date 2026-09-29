@@ -13,6 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
+use smokebomb_core::menu::Settings;
 use smokebomb_core::Firmware;
 use smokebomb_hal::{Face, FACE_COUNT, FRAME_BYTES};
 use smokebomb_hal_simulator::world::{TipDir, World, DEFAULT_VIEWER_RIGHT};
@@ -84,7 +85,12 @@ impl Run {
             // The mockup's stand-in battery level.
             s.battery_percent = 78;
         }
-        let fw = Firmware::new(sim.peripherals()).unwrap();
+        let mut fw = Firmware::new(sim.peripherals()).unwrap();
+        // The mockup has no Mode page.
+        fw.set_settings(Settings {
+            modes: false,
+            ..Settings::default()
+        });
         let mut run = Self {
             sim,
             fw,

@@ -250,15 +250,28 @@ The boot is interrupted by a throw or by opening the menu.
 
 `fitPx(str, max, width = 150)` = `min(max, floor(width / (len * 0.58)))` in canvas units (× 0.5783 for px).
 
-**Pages** (tip left or right to change page, wrapping)
+**Pages** (tip left or right to change page, wrapping; tip up = next value, down = previous, wrapping)
 
-| # | Title | Values (tip up = next, down = previous; wraps) |
+The mockup has three pages: How many dice, Which die, Settings. The firmware adds a Mode page (extension X1, below), so what the ring holds depends on the mode.
+
+| Mode | Ring (tip left goes to the next page) | Opens on |
 |---|---|---|
-| 0 | How many dice | 1–10 (1–3 for Pass the Pot) |
-| 1 | Which die | d4, d6, d8, d10, d12, d20, d100, Pass the Pot |
-| 2 | Settings | Brightness 70%; Haptics Strong; Smoke Full; Large text Off; Sleep after 2 min; Night mode Auto; Bluetooth On; Verified rolls Off; Owner "Joel"; Restart "Hold to restart"; About "v0.1.0 · SB-0042". Values are display-only. |
+| Dice | Mode, How many dice, Which die, Settings | How many dice |
+| Pass the Pot | Mode, How many pots, Settings | How many pots |
 
-Choosing Pass the Pot while the count is above 3 clamps the count to 3.
+| Page | Title | Values |
+|---|---|---|
+| Mode | Mode | Dice, Pass the Pot |
+| Count | How many dice | 1–10 |
+| Die | Which die | d4, d6, d8, d10, d12, d20, d100 |
+| Pot | How many pots | 1–3 |
+| Settings | Settings | Brightness 70%; Haptics Strong; Smoke Full; Large text Off; Sleep after 2 min; Night mode Auto; Bluetooth On; Verified rolls Off; Owner "Joel"; Restart "Hold to restart"; About "v0.1.0 · SB-0042". Values are display-only. |
+
+- **X1, Mode page.** Mode sits one tip *right* of How many dice, so the dice flow is unchanged: hold, tip up or down for the count, one tip left for the die, hold to save.
+- **Setups are kept apart.** The dice setup (die, count) and each game's options are saved separately, so leaving Dice for Pass the Pot and coming back leaves `3d6` as it was.
+- **Pass the Pot is a mode, not a die.** It no longer appears under Which die, and the count no longer clamps. It is still rolled and signed as `pass_the_pot` (H6).
+- **Page dots** show the ring: four in Dice mode, three in a game mode.
+- **`Settings.modes` off** removes the Mode page and the die is always in Dice mode: the mockup's three-page menu. The golden frames are captured this way.
 
 **Tips**
 

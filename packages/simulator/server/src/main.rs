@@ -58,8 +58,8 @@ async fn main() -> anyhow::Result<()> {
         // the first tick still gets the real mode in its hello.
         status: Arc::new(Mutex::new(StatusSnapshot {
             mode: format!("{:?}", firmware.mode()),
-            die: firmware.settings().die.wire_name(),
-            die_count: firmware.settings().count,
+            die: firmware.settings().active().0.wire_name(),
+            die_count: firmware.settings().active().1,
             last_roll: None,
         })),
     };
@@ -212,9 +212,9 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
 
         let mut status = state.status.lock().await;
         status.mode = mode;
-        let s = fw.settings();
-        status.die = s.die.wire_name();
-        status.die_count = s.count;
+        let (die, count) = fw.settings().active();
+        status.die = die.wire_name();
+        status.die_count = count;
         if let Some(roll) = roll {
             status.last_roll = Some((&roll).into());
         }
@@ -391,6 +391,40 @@ mod tests {
     }
 
     #[test]
+    fn the_mode_page_switches_to_pass_the_pot_and_back_keeping_the_dice() {
+        use smokebomb_firmware::smokebomb_core::menu::{Page, PlayMode};
+        use smokebomb_shared::DieKind;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Set up 2d12 first.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().active(), (DieKind::D12, 2));
+
+        // Mode is one tip right of the count.
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Count);
+        rig.tip(TipDir::Right);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Mode);
+        rig.tip(TipDir::Up);
+        assert_eq!(rig.fw.menu_draft().unwrap().play, PlayMode::PassThePot);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().active(), (DieKind::PassThePot, 1));
+
+        // And back: the dice setup is still 2d12.
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Pot);
+        rig.tip(TipDir::Right);
+        rig.tip(TipDir::Down);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().active(), (DieKind::D12, 2));
+    }
+
+    #[test]
     fn holding_on_restart_restarts_without_saving() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
@@ -398,7 +432,8 @@ mod tests {
         rig.run(7.0);
         rig.hold(Face::PosZ);
         rig.tip(TipDir::Up); // 2 dice, not saved
-        rig.tip(TipDir::Right); // Settings
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings
         rig.tip(TipDir::Down); // About
         rig.tip(TipDir::Down); // Restart
         rig.hold(Face::PosZ);

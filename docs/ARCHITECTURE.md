@@ -168,8 +168,15 @@ against recorded throws on real hardware.
 
 Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
 
-- **Draft.** The menu works on a `Draft` (`menu.rs`): page, die, count and
-  the Settings item. Only a hold saves it into `Settings`. Holding on
+- **Modes.** `Settings.play` (`PlayMode`) says what the die is being used
+  for. Dice keeps the count and die pages; each game brings its own options
+  page (Pass the Pot: how many pots). The Mode page is one tip right of the
+  first page, so the dice flow is as short as it was. The dice setup and
+  each game's options are saved apart, and `Settings::active()` gives the
+  die and count a throw rolls. `Settings.modes = false` removes the Mode
+  page (the golden frames use this).
+- **Draft.** The menu works on a `Draft` (`menu.rs`): page, mode, die, count,
+  pot count and the Settings item. Only a hold saves it into `Settings`. Holding on
   Restart restarts the die instead; a throw, docking or 25 s without a tip
   discards the draft.
 - **Tips** (`tips.rs`). The menu keeps a `Frame`: the front face (the held

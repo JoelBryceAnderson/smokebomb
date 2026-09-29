@@ -319,7 +319,8 @@ pub fn draw_menu<A: AssetStore>(
     }
     c.shifted(ox, oy, scale, |c| {
         let status = Style::new(FG, 0.85 * alpha, 0.0);
-        c.text_left(&short_label(m.die, m.count), -66.0, -66.0, 14, status);
+        let (die, count) = m.active();
+        c.text_left(&short_label(die, count), -66.0, -66.0, 14, status);
         c.painter.stroke_rect(44.0, -71.0, 20.0, 10.0, 1.5, status);
         c.painter.fill_rect(64.0, -68.0, 2.0, 4.0, status);
         c.painter
@@ -360,10 +361,10 @@ pub fn draw_menu<A: AssetStore>(
             );
         }
 
-        let n = Page::ALL.len();
-        for page in Page::ALL {
-            let x = (page.index() as f32 - (n as f32 - 1.0) / 2.0) * 14.0;
-            let a = if page == m.page { 1.0 } else { 0.35 };
+        let n = m.ring().len();
+        for i in 0..n {
+            let x = (i as f32 - (n as f32 - 1.0) / 2.0) * 14.0;
+            let a = if i == m.page_index() { 1.0 } else { 0.35 };
             c.painter
                 .fill_circle(x, 66.0, 3.5, Style::new(FG, a * alpha, 0.0));
         }

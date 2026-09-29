@@ -136,6 +136,11 @@ impl<P: Platform> Firmware<P> {
         &self.settings
     }
 
+    /// Replaces the settings, as when they're loaded from flash at boot.
+    pub fn set_settings(&mut self, settings: Settings) {
+        self.settings = settings;
+    }
+
     pub fn last_roll(&self) -> Option<&SignedRoll> {
         self.last_roll.as_ref()
     }
@@ -315,14 +320,15 @@ impl<P: Platform> Firmware<P> {
             Command::StopClip => self.player.stop(),
             Command::Haptic(effect) => self.hw.haptics.play(effect)?,
             Command::Roll => {
+                let (die, count) = self.settings.active();
                 let signed = self.roller.roll(
                     &mut self.hw.rng,
                     &mut self.hw.secure_element,
-                    self.settings.die,
-                    self.settings.count,
+                    die,
+                    count,
                     self.hw.clock.now_ms(),
                 )?;
-                if is_max(&signed, self.settings.die) {
+                if is_max(&signed, die) {
                     self.hw
                         .haptics
                         .play(smokebomb_hal::HapticEffect::MaxCelebration)?;
@@ -366,7 +372,8 @@ impl<P: Platform> Firmware<P> {
     fn render(&mut self, now: u64) -> HalResult<()> {
         let mode = *self.sm.mode();
         let up = self.up_face;
-        let label = screens::setup_label(self.settings.die, self.settings.count);
+        let (die, count) = self.settings.active();
+        let label = screens::setup_label(die, count);
         let battery = self.hw.power.battery()?.percent;
         let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
         let Self {
