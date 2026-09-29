@@ -94,13 +94,17 @@ pub struct Frame {
 impl Frame {
     /// The frame for a held `front` face with gravity `up` (any length). The
     /// up vector is snapped to the face axis nearest the sky. If the held face
-    /// itself points up or down, "up" is undefined (SIM_SPEC H7); the next
-    /// face around is used so the frame stays valid.
-    pub fn new(front: Face, up: [f32; 3]) -> Frame {
+    /// itself points up or down (looking down at it in a palm, or up at it
+    /// overhead), gravity gives no "up" (SIM_SPEC H7); `fallback_up` (the way
+    /// the screen already reads, any length) stands in for it.
+    pub fn new(front: Face, up: [f32; 3], fallback_up: [f32; 3]) -> Frame {
         let f = normal(front);
         let mut u = snap(up);
         if fabsf(dot(u, f)) > 0.5 {
-            u = [f[1], f[2], f[0]]; // any axis perpendicular to f
+            u = snap(fallback_up);
+            if fabsf(dot(u, f)) > 0.5 {
+                u = [f[1], f[2], f[0]]; // any axis perpendicular to f
+            }
         }
         Frame {
             front: f,
@@ -510,7 +514,45 @@ mod tests {
 
     /// Upright die, +Z toward the viewer: right is +X.
     fn frame() -> Frame {
-        Frame::new(Face::PosZ, [0.0, 1000.0, 0.0])
+        Frame::new(Face::PosZ, [0.0, 1000.0, 0.0], [0.0, 1.0, 0.0])
+    }
+
+    /// Gravity for a die whose +Z face leans back `deg` from vertical (toward
+    /// the sky), +Y still the upper edge: the up vector in die axes.
+    fn leaning(deg: f32) -> [f32; 3] {
+        let r = deg.to_radians();
+        [0.0, 1000.0 * libm::cosf(r), 1000.0 * libm::sinf(r)]
+    }
+
+    #[test]
+    fn a_leaning_hold_keeps_the_upright_frame_up_to_45_degrees() {
+        for deg in [0.0, 20.0, 40.0] {
+            let f = Frame::new(Face::PosZ, leaning(deg), [1.0, 0.0, 0.0]);
+            assert_eq!(f.up, [0.0, 1.0, 0.0], "{deg}");
+            assert_eq!(f.right, [1.0, 0.0, 0.0], "{deg}");
+        }
+    }
+
+    #[test]
+    fn past_45_degrees_the_frame_follows_the_screen_not_an_arbitrary_axis() {
+        // Screen mostly facing the sky (60° lean): gravity now snaps to the
+        // front axis, so up comes from the fallback, which is the way the
+        // screen already reads (+Y here).
+        let f = Frame::new(Face::PosZ, leaning(60.0), [0.0, 1.0, 0.0]);
+        assert_eq!(f.up, [0.0, 1.0, 0.0]);
+        assert_eq!(f.right, [1.0, 0.0, 0.0]);
+        // Looking up at it overhead (face pointing at the floor): same rule.
+        let f = Frame::new(Face::PosZ, [0.0, 0.0, -1000.0], [1.0, 0.0, 0.0]);
+        assert_eq!(f.up, [1.0, 0.0, 0.0]);
+        assert_eq!(f.next_front(TipDir::Down), Face::PosX);
+    }
+
+    #[test]
+    fn an_unusable_fallback_still_gives_a_valid_frame() {
+        let f = Frame::new(Face::PosZ, [0.0, 0.0, 1000.0], [0.0, 0.0, 1.0]);
+        assert_eq!(dot(f.up, f.front), 0.0);
+        assert_eq!(dot(f.right, f.front), 0.0);
+        assert_eq!(dot(f.right, f.up), 0.0);
     }
 
     #[test]

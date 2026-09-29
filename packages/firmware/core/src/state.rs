@@ -8,6 +8,8 @@
 //!    └──────────────── timeout / Handled ── Reveal ◀──────────── roll ◀────────────┘
 //!
 //!   Idle/Reveal ── LongPress ──▶ Menu ── LongPress (save) / MenuTimeout ──▶ Idle
+//!                                 ├──── Tap: change the setting / Power off ──▶ Menu / Off
+//!   Off ── Tap ──▶ Idle (boot)
 //!                                 └──── Shaking / FreeFall (discard) ──▶ Shaking / Airborne
 //!   any ── Docked(true) ──▶ Nest ── Docked(false) ──▶ Idle
 //! ```
@@ -38,6 +40,9 @@ pub enum Mode {
     },
     /// The setup menu (SIM_SPEC C3).
     Menu,
+    /// Powered off: dark until a tap. There is no power switch, so this is
+    /// as off as the die gets.
+    Off,
     /// On the charging nest.
     Nest,
 }
@@ -49,6 +54,8 @@ pub enum Event {
     Tap,
     /// Touch held for [`crate::MENU_HOLD_MS`].
     LongPress,
+    /// A tap in the menu while Power off is selected.
+    PowerOff,
     Docked(bool),
     /// No menu input for [`crate::MENU_IDLE_MS`].
     MenuTimeout,
@@ -65,12 +72,22 @@ pub enum Command {
     MenuClose {
         save: bool,
     },
+    /// A tap in the menu: change the selected setting.
+    MenuTap,
+    /// Leave the menu without saving and power the die off.
+    MenuPowerOff,
+    /// A tap while off: the screens light and the die boots.
+    WakeUp,
 }
 
 pub type Commands = Vec<Command, 4>;
 
 pub struct StateMachine {
     mode: Mode,
+    /// Whether throws roll. Off in a game that doesn't (Hot Potato): motion
+    /// then only matters to the menu, which a shake or a throw closes
+    /// without saving.
+    rolls: bool,
 }
 
 impl Default for StateMachine {
@@ -81,7 +98,14 @@ impl Default for StateMachine {
 
 impl StateMachine {
     pub const fn new() -> Self {
-        Self { mode: Mode::Idle }
+        Self {
+            mode: Mode::Idle,
+            rolls: true,
+        }
+    }
+
+    pub fn set_rolls(&mut self, rolls: bool) {
+        self.rolls = rolls;
     }
 
     pub fn mode(&self) -> &Mode {
@@ -100,6 +124,10 @@ impl StateMachine {
         let next = match (self.mode, event) {
             (Nest, Event::Docked(false)) => Some(Idle),
             (Nest, _) => None,
+            (Off, Event::Tap) => {
+                emit(WakeUp);
+                Some(Idle)
+            }
             (_, Event::Docked(true)) => {
                 if self.mode == Menu {
                     emit(MenuClose { save: false });
@@ -113,7 +141,19 @@ impl StateMachine {
                 emit(Haptic(HapticEffect::MenuSave));
                 Some(Idle)
             }
+            (Menu, Event::Tap) => {
+                emit(MenuTap);
+                None
+            }
+            (Menu, Event::PowerOff) => {
+                emit(MenuPowerOff);
+                Some(Off)
+            }
             (Menu, Event::MenuTimeout) => {
+                emit(MenuClose { save: false });
+                Some(Idle)
+            }
+            (Menu, Event::Motion(Motion::Shaking | Motion::FreeFall)) if !self.rolls => {
                 emit(MenuClose { save: false });
                 Some(Idle)
             }
@@ -132,6 +172,9 @@ impl StateMachine {
                 emit(MenuOpen);
                 Some(Menu)
             }
+
+            // A game that doesn't roll leaves motion to the game.
+            (_, Event::Motion(_)) if !self.rolls => None,
 
             // Roll flow.
             (Idle | Reveal { .. }, Event::Motion(Motion::Handled)) => Some(Held),
@@ -177,6 +220,35 @@ mod tests {
     }
 
     #[test]
+    fn without_rolls_motion_does_nothing_outside_the_menu() {
+        let mut sm = StateMachine::new();
+        sm.set_rolls(false);
+        let cmds = feed(
+            &mut sm,
+            &[
+                Event::Motion(Motion::Handled),
+                Event::Motion(Motion::Shaking),
+                Event::Motion(Motion::FreeFall),
+                Event::Motion(Motion::Impact),
+                Event::Motion(Motion::Rest),
+            ],
+        );
+        assert!(cmds.is_empty());
+        assert_eq!(*sm.mode(), Mode::Idle);
+    }
+
+    #[test]
+    fn without_rolls_a_shake_closes_the_menu_and_stays_idle() {
+        let mut sm = StateMachine::new();
+        sm.set_rolls(false);
+        feed(&mut sm, &[Event::LongPress]);
+        assert_eq!(*sm.mode(), Mode::Menu);
+        let cmds = feed(&mut sm, &[Event::Motion(Motion::Shaking)]);
+        assert_eq!(cmds.as_slice(), &[Command::MenuClose { save: false }]);
+        assert_eq!(*sm.mode(), Mode::Idle);
+    }
+
+    #[test]
     fn throw_produces_roll() {
         let mut sm = StateMachine::new();
         let cmds = feed(
@@ -214,6 +286,53 @@ mod tests {
         let cmds = feed(&mut sm, &[Event::Motion(Motion::Handled), Event::LongPress]);
         assert_eq!(*sm.mode(), Mode::Idle);
         assert!(cmds.contains(&Command::MenuClose { save: true }));
+    }
+
+    #[test]
+    fn a_tap_in_the_menu_changes_a_setting_and_stays() {
+        let mut sm = StateMachine::new();
+        feed(&mut sm, &[Event::LongPress]);
+        let cmds = feed(&mut sm, &[Event::Tap]);
+        assert_eq!(*sm.mode(), Mode::Menu);
+        assert!(cmds.contains(&Command::MenuTap));
+        assert!(!cmds.contains(&Command::MenuClose { save: true }));
+    }
+
+    #[test]
+    fn power_off_leaves_the_menu_without_saving() {
+        let mut sm = StateMachine::new();
+        feed(&mut sm, &[Event::LongPress]);
+        let cmds = feed(&mut sm, &[Event::PowerOff]);
+        assert_eq!(*sm.mode(), Mode::Off);
+        assert!(cmds.contains(&Command::MenuPowerOff));
+        assert!(!cmds.iter().any(|c| matches!(c, Command::MenuClose { .. })));
+    }
+
+    #[test]
+    fn only_a_tap_wakes_a_powered_off_die() {
+        let mut sm = StateMachine::new();
+        feed(&mut sm, &[Event::LongPress, Event::PowerOff]);
+        let cmds = feed(
+            &mut sm,
+            &[
+                Event::Motion(Motion::Handled),
+                Event::Motion(Motion::Shaking),
+                Event::LongPress,
+                Event::Tick,
+            ],
+        );
+        assert_eq!(*sm.mode(), Mode::Off, "motion and holds don't wake it");
+        assert!(cmds.is_empty());
+        let cmds = feed(&mut sm, &[Event::Tap]);
+        assert_eq!(*sm.mode(), Mode::Idle);
+        assert!(cmds.contains(&Command::WakeUp));
+    }
+
+    #[test]
+    fn docking_a_powered_off_die_shows_the_nest() {
+        let mut sm = StateMachine::new();
+        feed(&mut sm, &[Event::LongPress, Event::PowerOff, Event::Docked(true)]);
+        assert_eq!(*sm.mode(), Mode::Nest);
     }
 
     #[test]

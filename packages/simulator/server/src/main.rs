@@ -60,8 +60,8 @@ async fn main() -> anyhow::Result<()> {
         // the first tick still gets the real mode in its hello.
         status: Arc::new(Mutex::new(StatusSnapshot {
             mode: format!("{:?}", firmware.mode()),
-            die: firmware.settings().die.wire_name(),
-            die_count: firmware.settings().count,
+            die: firmware.settings().active().0.wire_name(),
+            die_count: firmware.settings().active().1,
             last_roll: None,
         })),
     };
@@ -150,7 +150,7 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
         let (pose, imu, docked) = {
             let mut w = state.world.lock().unwrap_or_else(|e| e.into_inner());
             let imu = w.step(dt);
-            (w.pose(), imu, w.docked())
+            (w.pose(), imu, w.on_charger())
         };
         {
             let mut s = state.sim.lock();
@@ -223,9 +223,9 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
 
         let mut status = state.status.lock().await;
         status.mode = mode;
-        let s = fw.settings();
-        status.die = s.die.wire_name();
-        status.die_count = s.count;
+        let (die, count) = fw.settings().active();
+        status.die = die.wire_name();
+        status.die_count = count;
         if let Some(roll) = roll {
             status.last_roll = Some((&roll).into());
         }
@@ -369,6 +369,13 @@ mod tests {
             self.run(1.0);
             self.sim.lock().touch_mask = 0;
             self.run(0.5);
+        }
+
+        fn tap(&mut self, face: Face) {
+            self.sim.lock().touch_mask = 1 << face.index();
+            self.run(0.15);
+            self.sim.lock().touch_mask = 0;
+            self.run(0.3);
         }
 
         fn tip(&mut self, dir: TipDir) {
@@ -697,14 +704,14 @@ mod tests {
             rig.tip(TipDir::Left);
             rig.run(0.3);
         }
-        // 13 pages on, 3 pages to a cycle: one on from How many dice.
+        // 13 pages on, 4 pages to a cycle: one on from How many dice.
         assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Die);
         for _ in 0..7 {
             rig.tip(TipDir::Up);
             rig.run(0.3);
         }
-        // Seven values up from d20, wrapping: d100, Pot, d4, d6, d8, d10, d12.
-        assert_eq!(rig.fw.menu_draft().unwrap().die, smokebomb_shared::DieKind::D12);
+        // Seven values up from d20 is a lap of the seven dice: d100, d4, d6, d8, d10, d12, d20.
+        assert_eq!(rig.fw.menu_draft().unwrap().die, smokebomb_shared::DieKind::D20);
         let front = rig.fw.menu_front().unwrap();
         let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
         let n = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(front);
@@ -741,10 +748,10 @@ mod tests {
         // Back one and a bit: settles one face back (Which die).
         rig.spin(SpinAxis::Yaw, 1.3);
         assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Die);
-        // Three faces up: d20 → d100 → Pass the Pot → d4.
+        // Three faces up: d20 → d100 → d4 → d6.
         rig.spin(SpinAxis::Pitch, -3.0);
         let draft = rig.fw.menu_draft().unwrap();
-        assert_eq!(draft.die, smokebomb_shared::DieKind::D4);
+        assert_eq!(draft.die, smokebomb_shared::DieKind::D6);
         // The firmware's front face is the one really facing the viewer.
         let front = rig.fw.menu_front().unwrap();
         let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
@@ -781,19 +788,355 @@ mod tests {
     }
 
     #[test]
-    fn holding_on_restart_restarts_without_saving() {
+    fn the_mode_page_switches_to_pass_the_pot_and_back_keeping_the_dice() {
+        use smokebomb_firmware::smokebomb_core::menu::{Page, PlayMode};
+        use smokebomb_shared::DieKind;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Set up 2d12 first.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().active(), (DieKind::D12, 2));
+
+        // Mode is one tip right of the count.
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Count);
+        rig.tip(TipDir::Right);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Mode);
+        rig.tip(TipDir::Up);
+        assert_eq!(rig.fw.menu_draft().unwrap().play, PlayMode::PassThePot);
+        rig.hold(Face::PosZ);
+        assert_eq!(
+            rig.fw.settings().active(),
+            (DieKind::PassThePot, 3),
+            "everyone starts with three bills"
+        );
+
+        // And back: the dice setup is still 2d12.
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Pot);
+        rig.tip(TipDir::Right);
+        rig.tip(TipDir::Down);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().active(), (DieKind::D12, 2));
+    }
+
+    #[test]
+    fn hot_potato_lights_on_a_shake_goes_off_and_resets_without_rolling() {
+        use smokebomb_firmware::smokebomb_core::menu::PlayMode;
+        use smokebomb_firmware::smokebomb_core::potato::{PotatoState, BOOM_MS};
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+        use smokebomb_hal::HapticEffect;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Mode ▶ Hot Potato, then Fuse length ▶ Short, and save.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Right);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().play(), PlayMode::HotPotato);
+        assert!(rig.fw.potato().is_idle());
+        rig.sim.lock().haptics.clear();
+
+        // A shake lights the fuse and the die doesn't roll.
+        rig.world.start_shake();
+        rig.run(1.0);
+        assert!(rig.fw.potato().is_lit(), "{:?}", rig.fw.potato().state());
+        rig.world.end_shake(false);
+        rig.run(3.0);
+        assert!(rig.fw.potato().is_lit());
+        assert_eq!(*rig.fw.mode(), Mode::Idle, "the roll flow stays out of it");
+        assert!(rig.fw.last_roll().is_none());
+        let PotatoState::Lit { fuse_ms, .. } = *rig.fw.potato().state() else {
+            panic!("not lit");
+        };
+        assert!((10_000..=20_000).contains(&fuse_ms), "short fuse: {fuse_ms}");
+
+        // Holding doesn't open the menu mid-round.
+        rig.hold(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(rig.fw.menu_draft().is_none());
+
+        // It goes off within the fuse.
+        for _ in 0..(25.0 / 0.1) as usize {
+            if matches!(rig.fw.potato().state(), PotatoState::Boom { .. }) {
+                break;
+            }
+            rig.run(0.1);
+        }
+        assert!(matches!(rig.fw.potato().state(), PotatoState::Boom { .. }));
+        let haptics: Vec<_> = rig.sim.lock().haptics.iter().copied().collect();
+        assert!(haptics.iter().filter(|h| **h == HapticEffect::Tick).count() > 10);
+        assert!(haptics.contains(&HapticEffect::Buzz));
+        assert!(rig.fw.last_roll().is_none());
+
+        // A tap resets it once BOOM has had its moment.
+        rig.run(1.0);
+        rig.sim.lock().touch_mask = 1 << Face::PosZ.index();
+        rig.run(0.1);
+        rig.sim.lock().touch_mask = 0;
+        rig.run(0.1);
+        assert!(rig.fw.potato().is_idle());
+
+        // Or BOOM times out by itself.
+        rig.world.start_shake();
+        rig.run(1.0);
+        rig.world.end_shake(false);
+        for _ in 0..(25.0 / 0.1) as usize {
+            if matches!(rig.fw.potato().state(), PotatoState::Boom { .. }) {
+                break;
+            }
+            rig.run(0.1);
+        }
+        assert!(matches!(rig.fw.potato().state(), PotatoState::Boom { .. }));
+        rig.run(BOOM_MS as f64 / 1000.0 + 0.5);
+        assert!(rig.fw.potato().is_idle());
+    }
+
+    #[test]
+    fn tapping_power_off_darkens_the_die_and_a_tap_boots_it() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
         let mut rig = Rig::new();
         rig.run(7.0);
         rig.hold(Face::PosZ);
         rig.tip(TipDir::Up); // 2 dice, not saved
-        rig.tip(TipDir::Right); // Settings
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings
+        rig.tip(TipDir::Down); // Regulatory
         rig.tip(TipDir::Down); // About
-        rig.tip(TipDir::Down); // Restart
+        rig.tip(TipDir::Down); // Power off
+        rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+        assert!(!rig.sim.lock().display_on);
+        assert_eq!(rig.fw.settings().count, 1, "not saved");
+        // Stays dark, ignoring a long wait.
+        rig.run(30.0);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+        assert!(rig.sim.lock().faces.iter().all(|f| f.iter().all(|b| *b == 0)));
+        // A tap boots straight away.
+        rig.tap(Face::PosY);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(rig.sim.lock().display_on);
+        assert!(rig.fw.booting());
+    }
+
+    #[test]
+    fn tap_changes_a_setting_and_a_hold_saves_and_returns_to_the_roll() {
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings, on Brightness (70%)
+        rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Menu, "a tap doesn't leave the menu");
+        assert_eq!(rig.fw.menu_draft().unwrap().setting().1, "100%");
+        assert_eq!(rig.fw.settings().brightness_pct(), 70, "not saved yet");
         rig.hold(Face::PosZ);
         assert_eq!(*rig.fw.mode(), Mode::Idle);
-        assert!(rig.fw.booting());
-        assert_eq!(rig.fw.settings().count, 1);
+        assert_eq!(rig.fw.settings().brightness_pct(), 100);
+    }
+
+    #[test]
+    fn a_powered_off_die_does_not_light_hot_potato() {
+        use smokebomb_firmware::smokebomb_core::menu::PlayMode;
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Mode ▶ Hot Potato, and save.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Right);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Up);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().play(), PlayMode::HotPotato);
+        // Fuse length ▶ Settings ▶ Power off (past Regulatory and About), and tap.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
+        rig.tip(TipDir::Down);
+        rig.tip(TipDir::Down);
+        rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+
+        // A shake doesn't light the fuse, and a tap wakes the die instead of
+        // passing the potato.
+        rig.world.start_shake();
+        rig.run(1.0);
+        rig.world.end_shake(false);
+        rig.run(2.0);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+        assert!(rig.fw.potato().is_idle());
+        rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(rig.fw.potato().is_idle());
+    }
+
+    /// The default settings with some items chosen (by index into
+    /// `SETTINGS`: 2 is Smoke, 3 is Sleep after).
+    fn settings_with(choices: &[(usize, u8)]) -> smokebomb_firmware::smokebomb_core::menu::Settings {
+        let mut s = smokebomb_firmware::smokebomb_core::menu::Settings::default();
+        for &(item, option) in choices {
+            s.choices[item] = option;
+        }
+        s
+    }
+
+    fn lit(rig: &Rig) -> bool {
+        rig.sim.lock().faces.iter().any(|f| f.iter().any(|b| *b != 0))
+    }
+
+    #[test]
+    fn about_shows_the_dies_own_id_and_keeps_it_when_settings_are_replaced() {
+        use smokebomb_firmware::smokebomb_core::menu::short_id;
+
+        let mut rig = Rig::new();
+        let id = short_id(&smokebomb_hal_simulator::SIM_SERIAL);
+        assert_ne!(id, 0);
+        assert_eq!(rig.fw.settings().device_id, id);
+        rig.fw.set_settings(settings_with(&[(2, 1)]));
+        assert_eq!(rig.fw.settings().device_id, id, "loading settings keeps the id");
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings, on Brightness
+        rig.tip(TipDir::Down); // Regulatory
+        rig.tip(TipDir::Down); // About
+        let draft = rig.fw.menu_draft().unwrap();
+        assert_eq!(draft.setting().0, "About");
+        assert!(draft.setting_value().ends_with(&format!("SB-{id:04X}")));
+    }
+
+    #[test]
+    fn the_screens_sleep_after_the_chosen_idle_time_and_wake_on_a_tap() {
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.fw.set_settings(settings_with(&[(3, 0)])); // Sleep after 30 s
+        rig.run(7.0); // boot
+        rig.tap(Face::PosZ);
+        assert!(lit(&rig), "the tap shows the setup");
+        rig.run(20.0);
+        assert!(rig.sim.lock().display_on, "still awake at 20 s");
+        rig.run(15.0);
+        assert!(!rig.sim.lock().display_on, "asleep after 30 s");
+        assert!(!lit(&rig));
+        assert_eq!(*rig.fw.mode(), Mode::Idle, "sleeping isn't a mode");
+
+        // A tap wakes it with the setup label, and no boot.
+        rig.tap(Face::PosY);
+        assert!(rig.sim.lock().display_on);
+        assert!(lit(&rig));
+        assert!(!rig.fw.booting());
+    }
+
+    #[test]
+    fn touching_the_die_puts_off_sleep() {
+        let mut rig = Rig::new();
+        rig.fw.set_settings(settings_with(&[(3, 0)]));
+        rig.run(7.0);
+        rig.run(25.0);
+        rig.tap(Face::PosZ);
+        rig.run(25.0);
+        assert!(rig.sim.lock().display_on, "50 s in but 25 s since the tap");
+        rig.run(10.0);
+        assert!(!rig.sim.lock().display_on);
+    }
+
+    #[test]
+    fn a_sleeping_die_still_rolls_when_thrown() {
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.fw.set_settings(settings_with(&[(3, 0)]));
+        rig.run(45.0);
+        assert!(!rig.sim.lock().display_on);
+        rig.world.start_shake();
+        rig.run(1.0);
+        assert!(rig.sim.lock().display_on, "a shake wakes it");
+        rig.world.end_shake(true);
+        for _ in 0..(10.0 / 0.1) as usize {
+            if matches!(rig.fw.mode(), Mode::Reveal { .. }) {
+                break;
+            }
+            rig.run(0.1);
+        }
+        assert!(matches!(rig.fw.mode(), Mode::Reveal { .. }));
+        assert!(rig.fw.last_roll().is_some());
+    }
+
+    #[test]
+    fn sleep_never_stays_awake() {
+        let mut rig = Rig::new();
+        rig.fw.set_settings(settings_with(&[(3, 4)])); // Never
+        rig.run(7.0);
+        assert_eq!(rig.fw.settings().sleep_after_ms(), None);
+        rig.run(200.0);
+        assert!(rig.sim.lock().display_on);
+    }
+
+    #[test]
+    fn smoke_off_makes_no_smoke_and_light_makes_less() {
+        let cloud = |choice: Option<u8>| {
+            let mut rig = Rig::new();
+            if let Some(c) = choice {
+                rig.fw.set_settings(settings_with(&[(2, c)]));
+            }
+            rig.run(7.0);
+            rig.world.start_shake();
+            rig.run(1.5);
+            rig.fw.smoke_mut().len()
+        };
+        let (full, light, off) = (cloud(None), cloud(Some(1)), cloud(Some(0)));
+        assert!(full > 0, "a shake builds smoke");
+        assert!(light > 0 && light < full, "light {light} < full {full}");
+        assert_eq!(off, 0);
+    }
+
+    #[test]
+    fn smoke_chosen_in_the_menu_applies_when_saved() {
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings, on Brightness
+        rig.tip(TipDir::Up); // Haptics
+        rig.tip(TipDir::Up); // Smoke
+        rig.tap(Face::PosZ); // Full -> Off
+        assert_eq!(rig.fw.menu_draft().unwrap().setting(), ("Smoke", "Off"));
+        rig.hold(Face::PosZ);
+        rig.world.start_shake();
+        rig.run(1.5);
+        assert_eq!(rig.fw.smoke_mut().len(), 0, "no smoke once Off is saved");
+    }
+
+    #[test]
+    fn a_hold_on_power_off_saves_and_returns_like_anywhere_else() {
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Up); // 2 dice
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings
+        rig.tip(TipDir::Down); // Regulatory
+        rig.tip(TipDir::Down); // About
+        rig.tip(TipDir::Down); // Power off
+        rig.hold(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(!rig.fw.booting(), "still on");
+        assert_eq!(rig.fw.settings().count, 2, "saved");
     }
 }

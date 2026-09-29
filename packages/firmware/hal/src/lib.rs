@@ -14,6 +14,11 @@
 pub use smokebomb_shared::assets::{FRAME_BYTES, PANEL_HEIGHT, PANEL_WIDTH};
 pub use smokebomb_shared::types::{Face, FACE_COUNT};
 
+/// The face with the charging contacts (and the laser etching around its
+/// window): −Y in the die's own frame. The die charges in the Nest only
+/// with this face down, in any of its four rotations.
+pub const CHARGING_FACE: Face = Face::NegY;
+
 /// One packed 4bpp 96x96 panel frame.
 pub type FrameBytes = [u8; FRAME_BYTES];
 

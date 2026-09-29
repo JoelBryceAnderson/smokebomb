@@ -7,10 +7,8 @@
 //! from the asset pack, and a particle near an edge is also stamped onto the
 //! neighbouring face, so the smoke wraps round the die continuously.
 //!
-//! This is a statement-for-statement port of the mockup, including the order
-//! it draws random numbers in, so a scenario started from the same generator
-//! state (the capture tool seeds the mockup's `Math.random` with mulberry32)
-//! plays out the same way.
+//! This began as a statement-for-statement port of the mockup, and a scenario
+//! started from the same generator state plays out the same way.
 
 use heapless::Vec;
 use libm::{cosf, powf, sinf, sqrtf};
@@ -47,7 +45,7 @@ const TIME_EPS: f32 = 1e-4;
 /// Shaking charges the smoke up over this long (s).
 const CHARGE_S: f32 = 1.6;
 
-/// The mockup's seeded `Math.random`: mulberry32.
+/// A seedable generator: mulberry32, as the mockup's seeded `Math.random`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmokeRng(u32);
 
@@ -56,7 +54,7 @@ impl SmokeRng {
         Self(seed)
     }
 
-    /// Uniform in [0, 1), exactly as the capture tool's `Math.random`.
+    /// Uniform in [0, 1).
     pub fn next_f64(&mut self) -> f64 {
         self.0 = self.0.wrapping_add(0x6d2b_79f5);
         let mut t = self.0;
@@ -72,12 +70,6 @@ impl SmokeRng {
     /// `(Math.random() * n) | 0`.
     fn index(&mut self, n: usize) -> usize {
         ((self.next_f64() * n as f64) as usize).min(n - 1)
-    }
-
-    pub fn skip(&mut self, n: u32) {
-        for _ in 0..n {
-            self.next_f64();
-        }
     }
 }
 
@@ -148,6 +140,18 @@ pub enum Special {
     Dud,
 }
 
+/// How much smoke the die makes (the Smoke setting).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Amount {
+    /// None: the throw, the boot and the landing are clear. The Max and Dud
+    /// effects are result feedback rather than smoke, and still show.
+    Off,
+    /// The reduced clouds (also used for reduced motion).
+    Light,
+    #[default]
+    Full,
+}
+
 pub struct Smoke {
     particles: Vec<Particle, MAX_PARTICLES>,
     sprites: [Option<Sprite>; 4],
@@ -157,6 +161,7 @@ pub struct Smoke {
     /// Gravity "up" in die coordinates (unit length).
     up: [f32; 3],
     reduced: bool,
+    amount: Amount,
     /// The smoke's own clock (s): the sum of its steps, like the mockup's
     /// `now`, so lingering and the curl noise run on the same time base.
     time: f32,
@@ -192,17 +197,33 @@ impl Smoke {
             charge: 0.0,
             up: [0.0, 1.0, 0.0],
             reduced: false,
+            amount: Amount::Full,
             time: 0.0,
         }
     }
 
-    /// Replace the random generator (tests replay the mockup's sequence).
+    /// Replace the random generator (tests seed it for repeatable smoke).
     pub fn set_rng(&mut self, rng: SmokeRng) {
         self.rng = rng;
     }
 
     pub fn set_reduced_motion(&mut self, on: bool) {
         self.reduced = on;
+    }
+
+    /// Set how much smoke to make. Going to Off clears what is already in
+    /// the air.
+    pub fn set_amount(&mut self, amount: Amount) {
+        self.amount = amount;
+        if amount == Amount::Off {
+            self.particles
+                .retain(|q| !matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember));
+        }
+    }
+
+    /// Smaller clouds: reduced motion, or the Light amount.
+    fn lean(&self) -> bool {
+        self.reduced || self.amount == Amount::Light
     }
 
     /// Particles of one kind.
@@ -240,7 +261,7 @@ impl Smoke {
     }
 
     fn full(&self) -> usize {
-        if self.reduced {
+        if self.lean() {
             FULL_REDUCED
         } else {
             FULL
@@ -304,7 +325,7 @@ impl Smoke {
         for q in &mut self.particles[before..] {
             q.linger = now + 0.6;
         }
-        let embers = if self.reduced { EMBERS_REDUCED } else { EMBERS };
+        let embers = if self.lean() { EMBERS_REDUCED } else { EMBERS };
         self.spawn(SpriteKind::Ember, embers, Where::All);
         self.charge = 0.0;
         self.phase = Phase::Calm;
@@ -316,7 +337,7 @@ impl Smoke {
         let now = self.time;
         let (axis, sign) = axis_sign(face);
         let (a1, a2) = ((axis + 1) % 3, (axis + 2) % 3);
-        let n = if self.reduced { BURST_REDUCED } else { BURST };
+        let n = if self.lean() { BURST_REDUCED } else { BURST };
         for _ in 0..n {
             let th = self.rng.r() * core::f32::consts::TAU;
             let mut dir = [0.0; 3];
@@ -349,11 +370,11 @@ impl Smoke {
     pub fn special(&mut self, special: Special) {
         match special {
             Special::Max => {
-                let n = if self.reduced { GOLD_REDUCED } else { GOLD };
+                let n = if self.lean() { GOLD_REDUCED } else { GOLD };
                 self.spawn(SpriteKind::Gold, n, Where::Ring);
             }
             Special::Dud => {
-                let n = if self.reduced { FIZZLE_REDUCED } else { FIZZLE };
+                let n = if self.lean() { FIZZLE_REDUCED } else { FIZZLE };
                 self.spawn(SpriteKind::Fizzle, n, Where::Top);
             }
         }
@@ -492,6 +513,9 @@ impl Smoke {
     // ---------- spawning (SIM_SPEC D3) ----------
 
     fn push(&mut self, q: Particle) {
+        if self.amount == Amount::Off && matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember) {
+            return;
+        }
         let _ = self.particles.push(q);
     }
 
@@ -818,6 +842,7 @@ mod tests {
             charge: 0.0,
             up: [0.0, 1.0, 0.0],
             reduced: false,
+            amount: Amount::Full,
             time: 0.0,
         };
         s.set_up([0.0, 1000.0, 0.0]);

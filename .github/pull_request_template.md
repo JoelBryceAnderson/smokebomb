@@ -20,4 +20,4 @@
 - [ ] `cargo fmt --all --check` and clippy are clean (firmware, simulator, shared)
 - [ ] Tests pass for the packages touched (`cargo test`, `./gradlew :shared:testDebugUnitTest` for mobile)
 - [ ] Docs updated if behaviour, endpoints or the wire/roll format changed (`docs/`)
-- [ ] Golden frames regenerated on purpose, if rendering changed
+- [ ] Screen snapshots regenerated on purpose, if rendering changed (`UPDATE_SNAPSHOTS=1 cargo test -p smokebomb-core --test snapshots`)

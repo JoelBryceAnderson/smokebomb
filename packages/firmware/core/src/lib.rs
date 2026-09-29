@@ -16,6 +16,7 @@ pub mod menu;
 pub mod motion;
 pub mod orientation;
 pub mod pack;
+pub mod potato;
 pub mod roll;
 pub mod screens;
 pub mod smoke;
@@ -25,8 +26,8 @@ pub mod ui;
 
 use heapless::Vec;
 use smokebomb_hal::{
-    Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Peripherals, Platform, Power, Rng, Touch,
-    FRAME_BYTES,
+    Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Peripherals, Platform, Power, Rng,
+    SecureElement, Touch, FRAME_BYTES,
 };
 use smokebomb_shared::{DieKind, SignedRoll};
 
@@ -34,9 +35,10 @@ use display::Framebuffer;
 use font::Fonts;
 use gfx::{Layer, Painter, Transform};
 use menu::{Draft, Settings};
-use motion::MotionDetector;
+use motion::{Motion, MotionDetector};
 use orientation::TextOrientation;
 use pack::PackIndex;
+use potato::{Potato, PotatoCommand};
 use roll::RollEngine;
 use screens::Ctx;
 use smoke::{Smoke, Special};
@@ -90,6 +92,7 @@ pub struct Firmware<P: Platform> {
     sm: StateMachine,
     motion: MotionDetector,
     settings: Settings,
+    potato: Potato,
     roller: RollEngine,
     smoke: Smoke,
     /// A max or dud waiting for the smoke to clear (SIM_SPEC C6).
@@ -116,6 +119,12 @@ pub struct Firmware<P: Platform> {
     frozen: Option<Frozen>,
     last_roll: Option<SignedRoll>,
     docked: bool,
+    /// The last time anything happened to the die, for the Sleep after
+    /// setting.
+    last_activity: u64,
+    /// The screens are dark after sitting idle. The die still rolls if it is
+    /// thrown: only the display sleeps (unlike Power off, which boots on wake).
+    asleep: bool,
 }
 
 impl<P: Platform> Firmware<P> {
@@ -124,12 +133,17 @@ impl<P: Platform> Firmware<P> {
         let smoke = Smoke::load(&mut hw.assets, &pack, hw.rng.next_u32()?);
         let fonts = Fonts::load(&mut hw.assets, &pack);
         let roller = RollEngine::new(&mut hw.secure_element)?;
+        let settings = Settings {
+            device_id: menu::short_id(&hw.secure_element.serial()?),
+            ..Settings::default()
+        };
         hw.display.set_enabled(true)?;
         Ok(Self {
             hw,
             sm: StateMachine::new(),
             motion: MotionDetector::new(),
-            settings: Settings::default(),
+            settings,
+            potato: Potato::new(),
             roller,
             smoke,
             pending_special: None,
@@ -150,6 +164,8 @@ impl<P: Platform> Firmware<P> {
             frozen: None,
             last_roll: None,
             docked: false,
+            last_activity: 0,
+            asleep: false,
         })
     }
 
@@ -159,6 +175,28 @@ impl<P: Platform> Firmware<P> {
 
     pub fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    /// Replaces the settings, as when they're loaded from flash at boot.
+    pub fn set_settings(&mut self, settings: Settings) {
+        // The die's id is its identity, not a setting: keep it.
+        self.settings = Settings {
+            device_id: self.settings.device_id,
+            ..settings
+        };
+        self.apply_settings();
+    }
+
+    /// The saved mode decides whether throws roll or belong to a game.
+    fn apply_settings(&mut self) {
+        self.smoke.set_amount(self.settings.smoke_amount());
+        self.sm.set_rolls(self.settings.play().rolls());
+        self.potato = Potato::new();
+    }
+
+    /// The Hot Potato round in play, if any.
+    pub fn potato(&self) -> &Potato {
+        &self.potato
     }
 
     pub fn last_roll(&self) -> Option<&SignedRoll> {
@@ -247,8 +285,28 @@ impl<P: Platform> Firmware<P> {
         while self.hw.ble.receive(&mut rx)?.is_some() {}
 
         let before = *self.sm.mode();
+        let input = !events.is_empty();
         let _ = events.push(Event::Tick);
+        let game = !self.settings.play().rolls();
         for event in events {
+            if game && !matches!(self.sm.mode(), Mode::Menu | Mode::Nest | Mode::Off) {
+                match event {
+                    Event::Motion(Motion::Shaking) if self.potato.is_idle() => self.light_potato(now)?,
+                    Event::Tap => {
+                        for cmd in self.potato.tap(now) {
+                            self.run_potato(cmd)?;
+                        }
+                    }
+                    // No opening the menu mid-round.
+                    Event::LongPress if self.potato.is_lit() => continue,
+                    _ => {}
+                }
+            }
+            if event == Event::Docked(true) {
+                for cmd in self.potato.reset() {
+                    self.run_potato(cmd)?;
+                }
+            }
             if event == Event::Tap {
                 self.ui.tap(now, self.sm.mode());
             }
@@ -257,12 +315,73 @@ impl<P: Platform> Firmware<P> {
                 self.execute(cmd, now)?;
             }
         }
+        for cmd in self.potato.tick(now) {
+            self.run_potato(cmd)?;
+        }
         let after = *self.sm.mode();
+        self.update_sleep(now, input, &after)?;
         self.ui.tick(now, &before, &after, self.up_face, self.docked);
         self.update_smoke(now, &before, &after);
         self.freeze_for_result(&before, &after);
 
         self.render(now)?;
+        Ok(())
+    }
+
+    /// A shake lit Hot Potato: pick the fuse at random within the setting.
+    fn light_potato(&mut self, now: u64) -> HalResult<()> {
+        let range = self.settings.fuse.range_ms();
+        let fuse = potato::fuse_from(self.hw.rng.next_u32()?, range);
+        self.ui.game_started();
+        for cmd in self.potato.light(now, fuse, range.1) {
+            self.run_potato(cmd)?;
+        }
+        Ok(())
+    }
+
+    /// Do what the game asked for: haptics and smoke.
+    fn run_potato(&mut self, cmd: PotatoCommand) -> HalResult<()> {
+        match cmd {
+            PotatoCommand::Ignite => {
+                self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
+                self.smoke.shake_start();
+            }
+            PotatoCommand::Tick => self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?,
+            PotatoCommand::Boom => {
+                self.hw.haptics.play(smokebomb_hal::HapticEffect::Buzz)?;
+                // A full cloud that drains over the faces, with embers.
+                self.smoke.throw();
+                self.smoke.land();
+            }
+            PotatoCommand::Clear => self.smoke.clear(),
+        }
+        Ok(())
+    }
+
+    /// The Sleep after setting: the screens go dark once the die has sat
+    /// idle that long, and light again (with the setup label, no boot) when
+    /// it is touched, picked up or thrown.
+    fn update_sleep(&mut self, now: u64, input: bool, mode: &Mode) -> HalResult<()> {
+        let busy = input
+            || self.touch_since.is_some()
+            || !matches!(mode, Mode::Idle)
+            || !self.potato.is_idle()
+            || self.ui.booting();
+        if busy {
+            self.last_activity = now;
+            if self.asleep {
+                self.asleep = false;
+                self.hw.display.set_enabled(true)?;
+                self.ui.woke(now);
+            }
+        } else if !self.asleep {
+            if let Some(ms) = self.settings.sleep_after_ms() {
+                if now.saturating_sub(self.last_activity) >= ms {
+                    self.asleep = true;
+                    self.hw.display.set_enabled(false)?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -355,7 +474,7 @@ impl<P: Platform> Firmware<P> {
             // The die is still in front of the person: take the sky from
             // here (the simulator has just turned the die toward the viewer).
             let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
-            m.frame = Frame::new(m.frame.front_face(), up);
+            m.frame = Frame::new(m.frame.front_face(), up, m.frame.up);
         }
         match update {
             TipUpdate::Turning { dir, progress } => {
@@ -364,7 +483,7 @@ impl<P: Platform> Firmware<P> {
                 // at its start, and once per face on a long turn, however
                 // many stops it makes on the way.
                 let detent = libm::floorf(progress + 0.5) as i32;
-                if detent != m.detent {
+                if detent != m.detent && self.settings.haptics_on() {
                     self.hw.haptics.play(smokebomb_hal::HapticEffect::MenuTip)?;
                 }
                 m.detent = detent;
@@ -426,9 +545,11 @@ impl<P: Platform> Firmware<P> {
             (false, Some(_)) => {
                 // Letting go after a hold that saved the menu shows the
                 // setup like a tap does (the mockup's pointer-up); letting go
-                // after the hold that opened it doesn't.
+                // after the hold that opened it doesn't. A tap inside the
+                // menu changes the selected setting, or powers the die off.
                 if !self.menu_hold_fired || self.menu.is_none() {
-                    let _ = events.push(Event::Tap);
+                    let off = self.menu.as_ref().is_some_and(|m| m.draft.power_off_selected());
+                    let _ = events.push(if off { Event::PowerOff } else { Event::Tap });
                 }
                 self.touch_since = None;
             }
@@ -442,6 +563,7 @@ impl<P: Platform> Firmware<P> {
         let since = self.touch_since?;
         let held = now.saturating_sub(since);
         let ring = !self.menu_hold_fired
+            && !self.potato.is_lit()
             && held > HOLD_RING_AFTER_MS
             && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. } | Mode::Menu);
         ring.then(|| {
@@ -453,17 +575,18 @@ impl<P: Platform> Firmware<P> {
     /// while a tick runs, and everything in one tick must agree on when it is.
     fn execute(&mut self, cmd: Command, now: u64) -> HalResult<()> {
         match cmd {
-            Command::Haptic(effect) => self.hw.haptics.play(effect)?,
+            Command::Haptic(effect) => {
+                if self.settings.haptics_on() {
+                    self.hw.haptics.play(effect)?;
+                }
+            }
             Command::Roll => {
-                let signed = self.roller.roll(
-                    &mut self.hw.rng,
-                    &mut self.hw.secure_element,
-                    self.settings.die,
-                    self.settings.count,
-                    now,
-                )?;
-                self.pending_special = special(&signed, self.settings.die);
-                if self.pending_special == Some(Special::Max) {
+                let (die, count) = self.settings.active();
+                let signed =
+                    self.roller
+                        .roll(&mut self.hw.rng, &mut self.hw.secure_element, die, count, now)?;
+                self.pending_special = special(&signed, die);
+                if self.pending_special == Some(Special::Max) && self.settings.haptics_on() {
                     self.hw
                         .haptics
                         .play(smokebomb_hal::HapticEffect::MaxCelebration)?;
@@ -476,10 +599,15 @@ impl<P: Platform> Firmware<P> {
                 self.last_roll = Some(signed);
             }
             Command::MenuOpen => {
+                self.potato = Potato::new();
                 let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
                 self.menu = Some(MenuSession {
                     draft: Draft::new(&self.settings),
-                    frame: Frame::new(self.touch_face, up),
+                    frame: Frame::new(
+                        self.touch_face,
+                        up,
+                        orientation::sky_for(self.touch_face, self.display_quarter(self.touch_face)),
+                    ),
                     // Starts disarmed: tips count once the die is still.
                     tips: TipTracker::new(),
                     last_input: now,
@@ -488,31 +616,71 @@ impl<P: Platform> Firmware<P> {
                 });
                 self.ui.menu_opened(now);
             }
+            Command::MenuTap => {
+                if let Some(m) = &mut self.menu {
+                    let next = m.draft.tapped();
+                    if next != m.draft && self.settings.haptics_on() {
+                        self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
+                    }
+                    m.draft = next;
+                    m.last_input = now;
+                }
+            }
+            // The draft is dropped: powering off saves nothing.
+            Command::MenuPowerOff => {
+                if self.menu.take().is_some() {
+                    self.smoke.clear();
+                    self.pending_special = None;
+                    self.ui.power_off();
+                    self.hw.display.set_enabled(false)?;
+                }
+            }
+            Command::WakeUp => {
+                self.hw.display.set_enabled(true)?;
+                self.ui.wake_up(now);
+            }
             Command::MenuClose { save } => {
                 if let Some(m) = self.menu.take() {
-                    if save && m.draft.restart_selected() {
-                        self.smoke.clear();
-                        self.pending_special = None;
-                        self.ui.restart(now);
-                    } else {
-                        if save {
-                            m.draft.commit(&mut self.settings);
-                        }
-                        self.ui.menu_closed(now, m.frame.front_face(), m.draft, save);
+                    if save {
+                        m.draft.commit(&mut self.settings);
+                        self.apply_settings();
+                        self.apply_hardware_settings()?;
                     }
+                    self.ui.menu_closed(now, m.frame.front_face(), m.draft, save);
                 }
             }
         }
         Ok(())
     }
 
+    /// Push saved settings to the hardware they control. Smoke and the mode
+    /// are applied by `apply_settings`, and Sleep after by `update_sleep`.
+    /// Owner and About are display-only.
+    fn apply_hardware_settings(&mut self) -> HalResult<()> {
+        let level = (self.settings.brightness_pct() as u16 * 255 / 100) as u8;
+        for face in Face::ALL {
+            self.hw.display.set_brightness(face, level)?;
+        }
+        self.hw.ble.set_advertising(self.settings.bluetooth_on())
+    }
+
     fn render(&mut self, now: u64) -> HalResult<()> {
         let mode = *self.sm.mode();
         let up = self.display_up();
         let quarters = Face::ALL.map(|f| self.display_quarter(f));
-        let label = screens::setup_label(self.settings.die, self.settings.count);
+        let label = self.settings.setup().label();
         let battery = self.hw.power.battery()?.percent;
+        let potato_view = if matches!(mode, Mode::Menu | Mode::Nest) {
+            None
+        } else if let Some(t) = self.potato.boomed_for(now) {
+            Some(PotatoView::Boom(t as f32 / 1000.0))
+        } else if self.potato.is_lit() {
+            Some(PotatoView::Fuse(self.potato.heat(now), self.potato.pulse(now)))
+        } else {
+            None
+        };
         let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
+        let asleep = self.asleep;
         let Self {
             frames,
             layer,
@@ -525,7 +693,7 @@ impl<P: Platform> Firmware<P> {
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
-        let blackout = ui.blackout();
+        let blackout = ui.blackout() || asleep;
 
         for face in Face::ALL {
             let fb = &mut frames[face.index()];
@@ -534,6 +702,14 @@ impl<P: Platform> Firmware<P> {
                 continue;
             }
             let content = ui.content(now, face, up, &mode, record.is_some());
+            // A round of Hot Potato takes the faces, except the one facing
+            // down (H2).
+            let potato_face = potato_view.filter(|_| face != up.opposite());
+            let content = if potato_face.is_some() {
+                FaceContent::Blank
+            } else {
+                content
+            };
             let rot = quarters[face.index()];
             let mut painter = Painter::new(fb, layer, Transform::quarter(rot));
             let mut c = Ctx {
@@ -576,8 +752,8 @@ impl<P: Platform> Firmware<P> {
                         screens::draw_result(&mut c, r, ui.special(), alpha);
                     }
                 }
-                FaceContent::Success { t, die, count } => {
-                    screens::draw_success(&mut c, &screens::setup_label(die, count), t);
+                FaceContent::Success { t, setup } => {
+                    screens::draw_success(&mut c, &setup.label(), setup.nudge(), t);
                 }
                 FaceContent::Menu => {
                     if let Some(m) = menu {
@@ -595,9 +771,14 @@ impl<P: Platform> Firmware<P> {
                 }
                 // Placeholder until the Nest screens are built.
                 FaceContent::Nest if face == up => {
-                    fb_of(&mut painter).draw_number(battery as u16, 6, display::FG, rot);
+                    fb_of(c.painter).draw_number(battery as u16, 6, display::FG, rot);
                 }
                 FaceContent::Nest => {}
+            }
+            match potato_face {
+                Some(PotatoView::Fuse(heat, pulse)) => screens::draw_fuse(&mut c, heat, pulse),
+                Some(PotatoView::Boom(t)) => screens::draw_boom(&mut c, t),
+                None => {}
             }
         }
 
@@ -609,6 +790,15 @@ impl<P: Platform> Firmware<P> {
         }
         self.hw.display.flush()
     }
+}
+
+/// What a round of Hot Potato shows on the faces.
+#[derive(Clone, Copy)]
+enum PotatoView {
+    /// Heat and pulse, both 0–1.
+    Fuse(f32, f32),
+    /// Seconds since it went off.
+    Boom(f32),
 }
 
 /// One face while the menu is open (C3). The menu shows on the front face;

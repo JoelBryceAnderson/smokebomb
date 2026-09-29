@@ -13,9 +13,8 @@
 //! blacks everything out. The landing flash arrives with the throw work.
 
 use smokebomb_hal::Face;
-use smokebomb_shared::DieKind;
 
-use crate::menu::Draft;
+use crate::menu::{Draft, Setup};
 use crate::screens::{BOOT_DURATION, BURST_AT, LOOP_END};
 use crate::smoke::Special;
 use crate::state::Mode;
@@ -43,8 +42,6 @@ const MENU_FADE_OUT_MS: f32 = 300.0;
 const FLASH_MS: f32 = 250.0;
 /// The success screen on the face the menu was on (C4).
 pub const SUCCESS_MS: u64 = 1_300;
-/// Screens stay dark this long before a restart boots (C3).
-pub const RESTART_BLACKOUT_MS: u64 = 800;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Boot {
@@ -67,9 +64,9 @@ pub struct Ui {
     /// The menu fading out: when it closed, what it showed, and where.
     menu_fade: Option<(u64, Draft, Face)>,
     /// A saved setup: when, on which face, and what.
-    success: Option<(u64, Face, DieKind, u8)>,
+    success: Option<(u64, Face, Setup)>,
     flash: Option<u64>,
-    /// Restarting: dark until then, then boot.
+    /// Powered off: dark until then (or until woken), then boot.
     blackout_until: Option<u64>,
 }
 
@@ -110,8 +107,7 @@ pub enum FaceContent {
     /// Seconds since a setup was saved, and the setup.
     Success {
         t: f32,
-        die: DieKind,
-        count: u8,
+        setup: Setup,
     },
     Wake {
         alpha: f32,
@@ -164,7 +160,7 @@ impl Ui {
         self.special
     }
 
-    /// Restarting: every screen is dark.
+    /// Powered off: every screen is dark.
     pub fn blackout(&self) -> bool {
         self.blackout_until.is_some()
     }
@@ -181,19 +177,32 @@ impl Ui {
         self.menu_open_at = None;
         self.menu_fade = Some((now, draft, face));
         if saved {
-            self.success = Some((now, face, draft.die, draft.count));
+            self.success = Some((now, face, draft.setup()));
             self.flash = Some(now);
         }
         self.wake(now, WAKE_AFTER_BOOT_MS);
     }
 
-    /// Holding on Restart: dark for a moment, then boot again (C3, C1).
-    pub fn restart(&mut self, now: u64) {
+    /// A game starts (Hot Potato lit): the boot and the labels give way.
+    pub fn game_started(&mut self) {
+        self.boot = None;
+        self.wake = None;
+        self.result = None;
+        self.success = None;
+    }
+
+    /// Power off: every screen dark until [`Ui::wake_up`].
+    pub fn power_off(&mut self) {
         *self = Self {
             started: true,
-            blackout_until: Some(now + RESTART_BLACKOUT_MS),
+            blackout_until: Some(u64::MAX),
             ..Self::default()
         };
+    }
+
+    /// A tap on a powered-off die: boot at once.
+    pub fn wake_up(&mut self, now: u64) {
+        self.blackout_until = Some(now);
     }
 
     pub fn menu_intro(&self, now: u64) -> MenuIntro {
@@ -255,6 +264,10 @@ impl Ui {
             self.special = None;
             self.success = None;
         }
+        // Docking a powered-off die shows the nest.
+        if entered(|m| matches!(m, Mode::Nest)) {
+            self.blackout_until = None;
+        }
         if let Mode::Reveal { since_ms } = *after {
             if !matches!(before, Mode::Reveal { .. }) {
                 self.result = Some((since_ms, since_ms + RESULT_DIM_AFTER_MS));
@@ -282,6 +295,12 @@ impl Ui {
             _ => now,
         };
         self.wake = Some((start, now + ms));
+    }
+
+    /// The die was picked up or touched while its screens were dark: show
+    /// the setup, like a tap does. (No boot: it never turned off.)
+    pub fn woke(&mut self, now: u64) {
+        self.wake(now, WAKE_AFTER_TAP_MS);
     }
 
     /// A tap on a screen (C2): show the setup, and bring back a dimmed result.
@@ -353,10 +372,10 @@ impl Ui {
         if has_result && result > 0.0 && !down {
             return FaceContent::Result { alpha: result };
         }
-        if let Some((t, f, die, count)) = self.success {
+        if let Some((t, f, setup)) = self.success {
             if f == face && now.saturating_sub(t) < SUCCESS_MS && !tumbling(mode) {
                 let t = since(now, t) / 1000.0;
-                return FaceContent::Success { t, die, count };
+                return FaceContent::Success { t, setup };
             }
         }
         let wake = self.wake_alpha(now);
@@ -441,19 +460,23 @@ mod tests {
     }
 
     #[test]
-    fn restart_blacks_out_then_boots() {
+    fn power_off_stays_dark_until_woken_then_boots_at_once() {
         let mut ui = Ui::new();
         ui.tick(0, &Mode::Idle, &Mode::Idle, UP, false);
         ui.tick(7_000, &Mode::Idle, &Mode::Idle, UP, false);
-        ui.restart(9_000);
-        ui.tick(9_000, &Mode::Menu, &Mode::Idle, UP, false);
-        assert_eq!(
-            ui.content(9_500, Face::PosX, UP, &Mode::Idle, false),
-            FaceContent::Blank
-        );
-        ui.tick(9_800, &Mode::Idle, &Mode::Idle, UP, false);
+        ui.power_off();
+        ui.tick(9_000, &Mode::Menu, &Mode::Off, UP, false);
+        for t in [9_500, 60_000, 3_600_000] {
+            ui.tick(t, &Mode::Off, &Mode::Off, UP, false);
+            assert_eq!(
+                ui.content(t, Face::PosX, UP, &Mode::Off, false),
+                FaceContent::Blank
+            );
+        }
+        ui.wake_up(3_700_000);
+        ui.tick(3_700_000, &Mode::Off, &Mode::Idle, UP, false);
         assert!(matches!(
-            ui.content(9_900, Face::PosX, UP, &Mode::Idle, false),
+            ui.content(3_700_000, Face::PosX, UP, &Mode::Idle, false),
             FaceContent::Boot { .. }
         ));
     }
