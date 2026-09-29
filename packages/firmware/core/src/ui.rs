@@ -297,6 +297,12 @@ impl Ui {
         self.wake = Some((start, now + ms));
     }
 
+    /// The die was picked up or touched while its screens were dark: show
+    /// the setup, like a tap does. (No boot: it never turned off.)
+    pub fn woke(&mut self, now: u64) {
+        self.wake(now, WAKE_AFTER_TAP_MS);
+    }
+
     /// A tap on a screen (C2): show the setup, and bring back a dimmed result.
     pub fn tap(&mut self, now: u64, mode: &Mode) {
         if matches!(mode, Mode::Menu | Mode::Nest) || self.blackout() {
