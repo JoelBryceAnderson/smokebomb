@@ -132,7 +132,8 @@ animation rate; panels accept at most 100 Hz. Each tick:
    Low-pass the gravity direction and update each face's text orientation
    (`orientation.rs`, SIM_SPEC B2). While the menu is open, feed the gyro
    to the tip tracker (below). Poll touch (grip-rejected while moving) →
-   `Tap` / `LongPress`. Poll the PMIC for nest docking. Drain BLE writes.
+   `Tap` / `LongPress`. Read the magnetometer when it is due and feed the dock
+   state machine (`nest.rs`, SIM_SPEC C7a) with the PMIC's power flags. Drain BLE writes.
 2. **Decide.** Feed the events to the pure `StateMachine`, which returns
    `Command`s.
 3. **Act.** Execute the commands: fire haptics, roll and sign, open and
@@ -155,7 +156,7 @@ animation rate; panels accept at most 100 Hz. Each tick:
 
   Idle/Reveal ── LongPress ──▶ Menu ── LongPress (save) / 25 s idle ──▶ Idle
                                 └── Shaking / FreeFall (discard) ──▶ Shaking / Airborne
-  any ── Docked ──▶ Nest ── Undocked ──▶ Idle
+  any ── Docked ──▶ Nest ── Undocked ──▶ Idle   (the dock state machine, nest.rs, decides; SIM_SPEC C7a)
 ```
 
 `state.rs` is free of side effects and has unit tests for every transition

@@ -5,7 +5,7 @@
 use core::fmt::Write as _;
 
 use heapless::{String, Vec};
-use libm::{floorf, powf, roundf, sinf, sqrtf};
+use libm::{cosf, floorf, powf, roundf, sinf, sqrtf};
 use smokebomb_hal::AssetStore;
 use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
@@ -13,6 +13,7 @@ use crate::display::{DUD, FG};
 use crate::font::{fit_px, Align, Fonts};
 use crate::gfx::{Painter, Style};
 use crate::menu::{Draft, Page};
+use crate::nest::{ChargeView, ClockView, Label, NestFace, Screen};
 use crate::smoke::Special;
 
 /// The lit area's half-size in canvas units.
@@ -534,6 +535,285 @@ pub fn draw_flash<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
         c.painter
             .fill_rect(-128.0, -128.0, 256.0, 256.0, Style::new(0xf2, alpha * 0.35, 0.0));
     }
+}
+
+// ---------- the Nest (DOCK_BRIEF) ----------
+
+/// The clock's radius in canvas units (C7).
+const CLOCK_R: f32 = 71.0;
+
+/// One Nest face. Dimming is the caller's: it scales the finished frame.
+pub fn draw_nest<A: AssetStore>(c: &mut Ctx<A>, face: &NestFace) {
+    let base = c.painter.xf;
+    c.painter.xf = base.offset(face.shift.0, face.shift.1);
+    match face.screen {
+        Screen::Blank => {}
+        Screen::Charge(v) => draw_charge(c, &v),
+        Screen::Clock(v) => draw_clock(c, &v),
+        Screen::Flip { t } => draw_flip(c, t),
+        Screen::SideDown { pulse } => {
+            let a = pulse;
+            draw_chevron(c, (0.0, -1.0), (0.0, -14.0), a);
+            c.text(
+                "This side down",
+                0.0,
+                40.0,
+                fit_px("This side down", 20, 150.0),
+                Style::new(FG, 0.9, 6.0),
+            );
+        }
+        Screen::TipArrow { dir, nudge } => {
+            // 4 px toward the edge and back.
+            let n = nudge * 4.0 / crate::gfx::K;
+            draw_arrow(c, dir, (dir.0 * n, -14.0 + dir.1 * n), 1.0);
+            c.text(
+                "Tip this way",
+                0.0,
+                52.0,
+                fit_px("Tip this way", 27, 150.0),
+                Style::new(FG, 1.0, 8.0),
+            );
+        }
+        Screen::FaceDown => {
+            draw_arrow(c, (0.0, 1.0), (0.0, -14.0), 1.0);
+            c.text(
+                "This side down",
+                0.0,
+                52.0,
+                fit_px("This side down", 27, 150.0),
+                Style::new(FG, 1.0, 8.0),
+            );
+        }
+        Screen::Toward { dir } => draw_chevron(c, dir, (0.0, 0.0), 0.5),
+        Screen::NoPower => draw_no_power(c),
+        Screen::Fault => draw_fault(c),
+    }
+    c.painter.xf = base;
+}
+
+/// The battery: a liquid fill with a wavy top edge, the percentage, and a
+/// status word.
+fn draw_charge<A: AssetStore>(c: &mut Ctx<A>, v: &ChargeView) {
+    if v.alpha <= 0.0 {
+        return;
+    }
+    if v.fill > 0.002 {
+        let top = ACTIVE - v.fill.min(1.0) * 2.0 * ACTIVE;
+        let amp = 4.0 * (v.fill * 20.0).min(1.0);
+        let a = (0.28 + 0.72 * v.flash) * v.alpha;
+        c.painter.shape(
+            (-ACTIVE, -ACTIVE, ACTIVE, ACTIVE),
+            Style::new(FG, a, 0.0),
+            |x, y| {
+                let edge = top + amp * sinf(0.09 * x + 2.2 * v.wave);
+                (edge - y).max(y - ACTIVE)
+            },
+        );
+    }
+    let mut pct: String<8> = String::new();
+    let _ = write!(pct, "{}%", roundf(v.pct) as u32);
+    let ta = v.alpha * v.text;
+    c.text(&pct, 0.0, -8.0, fit_px(&pct, 52, 150.0), Style::new(FG, ta, 10.0));
+    let word = match v.label {
+        Label::Charging => "charging",
+        Label::Full => "full",
+        Label::Battery => "battery",
+    };
+    c.text(word, 0.0, 38.0, 20, Style::new(FG, ta * 0.8, 4.0));
+}
+
+/// The analog clock (C7): ticks, then hour, minute and smooth second hands.
+fn draw_clock<A: AssetStore>(c: &mut Ctx<A>, v: &ClockView) {
+    if v.alpha <= 0.0 {
+        return;
+    }
+    if v.smoke > 0.0 {
+        draw_wisp(c, v.smoke);
+    }
+    let dir = |turn: f32| {
+        let a = core::f32::consts::TAU * turn - core::f32::consts::FRAC_PI_2;
+        (cosf(a), sinf(a))
+    };
+    if v.ticks > 0.0 {
+        let mut major = [[(0.0, 0.0); 2]; 4];
+        let mut minor = [[(0.0, 0.0); 2]; 8];
+        let (mut mi, mut ni) = (0, 0);
+        for i in 0..12 {
+            let (dx, dy) = dir(i as f32 / 12.0);
+            let is_major = i % 3 == 0;
+            let r0 = if is_major { CLOCK_R - 12.0 } else { CLOCK_R - 7.0 };
+            let seg = [(dx * r0, dy * r0), (dx * CLOCK_R, dy * CLOCK_R)];
+            if is_major {
+                major[mi] = seg;
+                mi += 1;
+            } else {
+                minor[ni] = seg;
+                ni += 1;
+            }
+        }
+        let majors: [&[(f32, f32)]; 4] = core::array::from_fn(|i| &major[i][..]);
+        let minors: [&[(f32, f32)]; 8] = core::array::from_fn(|i| &minor[i][..]);
+        let a = v.alpha * v.ticks;
+        c.painter.stroke_paths(&minors, 2.5, Style::new(FG, 0.5 * a, 0.0));
+        c.painter.stroke_paths(&majors, 4.0, Style::new(FG, 0.9 * a, 0.0));
+    }
+    // Where each hand points, as a turn: hour 0–12 h, minute 0–1 h, second
+    // 0–1 min. Docking sweeps them from 12:00; undocking spins one more turn.
+    let t = v.secs;
+    let turns = [(t / 43_200.0) % 1.0, (t / 3_600.0) % 1.0, (t / 60.0) % 1.0];
+    let hands = [
+        (0.52 * CLOCK_R, 6.0, 1.0),
+        (0.8 * CLOCK_R, 4.0, 1.0),
+        (0.86 * CLOCK_R, 1.8, 0.7),
+    ];
+    for (turn, (len, width, alpha)) in turns.into_iter().zip(hands) {
+        let (dx, dy) = dir(turn * v.hands + v.spin);
+        c.painter.stroke_polyline(
+            &[(-dx * 6.0, -dy * 6.0), (dx * len, dy * len)],
+            width,
+            Style::new(FG, alpha * v.alpha, 6.0),
+        );
+    }
+    c.painter.fill_circle(0.0, 0.0, 4.5, Style::new(FG, v.alpha, 6.0));
+    if let Some(p) = v.puff {
+        draw_puff(c, p);
+    }
+}
+
+/// A wisp of smoke sinking toward the bottom edge as the die is seated:
+/// ten soft puffs from mid-height, fading as they fall.
+fn draw_wisp<A: AssetStore>(c: &mut Ctx<A>, t: f32) {
+    for k in 0..10 {
+        let seed = (k * 37 + 11) % 100;
+        let x = (seed as f32 - 50.0) * 1.1;
+        let delay = (k % 5) as f32 * 0.08;
+        let u = ((t - delay) / (1.0 - 0.4)).clamp(0.0, 1.0);
+        let y = u * (ACTIVE - 4.0);
+        let r = 7.0 + (k % 3) as f32 * 3.0 + 6.0 * u;
+        let a = 0.45 * sinf(core::f32::consts::PI * u.min(1.0)).max(0.0);
+        c.painter.fill_circle(x, y, r, Style::new(FG, a, 10.0));
+    }
+}
+
+/// The small puff the clock dissolves into as the die is lifted.
+fn draw_puff<A: AssetStore>(c: &mut Ctx<A>, p: f32) {
+    for k in 0..7 {
+        let a = core::f32::consts::TAU * k as f32 / 7.0 + 0.4;
+        let d = 8.0 + 26.0 * p;
+        let r = 9.0 + 10.0 * p;
+        c.painter
+            .fill_circle(cosf(a) * d, sinf(a) * d, r, Style::new(FG, 0.5 * (1.0 - p), 10.0));
+    }
+}
+
+/// A chevron pointing along `dir`, centred on `at`.
+fn draw_chevron<A: AssetStore>(c: &mut Ctx<A>, dir: (f32, f32), at: (f32, f32), alpha: f32) {
+    let perp = (-dir.1, dir.0);
+    let tip = (at.0 + dir.0 * 14.0, at.1 + dir.1 * 14.0);
+    let arm = |s: f32| {
+        (
+            tip.0 - dir.0 * 28.0 + perp.0 * 30.0 * s,
+            tip.1 - dir.1 * 28.0 + perp.1 * 30.0 * s,
+        )
+    };
+    c.painter
+        .stroke_polyline(&[arm(1.0), tip, arm(-1.0)], 12.0, Style::new(FG, alpha, 8.0));
+}
+
+/// A large arrow along `dir`, centred on `at`.
+fn draw_arrow<A: AssetStore>(c: &mut Ctx<A>, dir: (f32, f32), at: (f32, f32), alpha: f32) {
+    let perp = (-dir.1, dir.0);
+    let at_pt = |along: f32, side: f32| {
+        (
+            at.0 + dir.0 * along + perp.0 * side,
+            at.1 + dir.1 * along + perp.1 * side,
+        )
+    };
+    let shaft = [at_pt(-30.0, 0.0), at_pt(30.0, 0.0)];
+    let head = [at_pt(12.0, 20.0), at_pt(32.0, 0.0), at_pt(12.0, -20.0)];
+    c.painter
+        .stroke_paths(&[&shaft, &head], 10.0, Style::new(FG, alpha, 8.0));
+}
+
+/// "Flip me over": a square turning over, under a curved arrow.
+fn draw_flip<A: AssetStore>(c: &mut Ctx<A>, t: f32) {
+    let u = (t / 1.2) % 1.0;
+    let turn = ease_in_out(u) * core::f32::consts::PI;
+    let h = (40.0 * cosf(turn)).abs().max(3.0);
+    let style = Style::new(FG, 1.0, 8.0);
+    c.painter.stroke_rect(-20.0, -6.0 - h / 2.0, 40.0, h, 5.0, style);
+    // The arrow arcs over the top and points down the far side.
+    let (r, end) = (36.0, -0.45);
+    c.painter.stroke_arc(0.0, -6.0, r, -2.7, end, 5.0, style);
+    let p = (r * cosf(end), -6.0 + r * sinf(end));
+    let tan = (-sinf(end), cosf(end));
+    let n = (tan.1, -tan.0);
+    c.painter.fill_triangle(
+        [
+            (p.0 + tan.0 * 12.0, p.1 + tan.1 * 12.0),
+            (p.0 + n.0 * 9.0, p.1 + n.1 * 9.0),
+            (p.0 - n.0 * 9.0, p.1 - n.1 * 9.0),
+        ],
+        style,
+    );
+    c.text(
+        "Flip me over",
+        0.0,
+        52.0,
+        fit_px("Flip me over", 27, 150.0),
+        Style::new(FG, 1.0, 8.0),
+    );
+}
+
+fn ease_in_out(u: f32) -> f32 {
+    u * u * (3.0 - 2.0 * u)
+}
+
+/// A plug, and "Check the Nest / cable or contacts".
+fn draw_no_power<A: AssetStore>(c: &mut Ctx<A>) {
+    let style = Style::new(FG, 1.0, 8.0);
+    c.painter.stroke_rect(-16.0, -32.0, 32.0, 24.0, 5.0, style);
+    c.painter.fill_rect(-10.0, -50.0, 5.0, 14.0, style);
+    c.painter.fill_rect(5.0, -50.0, 5.0, 14.0, style);
+    c.painter
+        .stroke_polyline(&[(0.0, -8.0), (0.0, 2.0), (12.0, 12.0)], 5.0, style);
+    c.text(
+        "Check the Nest",
+        0.0,
+        28.0,
+        fit_px("Check the Nest", 27, 150.0),
+        style,
+    );
+    c.text("cable or contacts", 0.0, 56.0, 15, Style::new(FG, 0.7, 0.0));
+}
+
+/// A warning triangle, and "Charging paused".
+fn draw_fault<A: AssetStore>(c: &mut Ctx<A>) {
+    let style = Style::new(FG, 1.0, 8.0);
+    c.painter.stroke_polyline(
+        &[(0.0, -48.0), (32.0, 6.0), (-32.0, 6.0), (0.0, -48.0)],
+        5.0,
+        style,
+    );
+    c.painter
+        .stroke_polyline(&[(0.0, -32.0), (0.0, -16.0)], 5.0, style);
+    c.painter.fill_circle(0.0, -4.0, 3.0, style);
+    c.text(
+        "Charging paused",
+        0.0,
+        38.0,
+        fit_px("Charging paused", 24, 150.0),
+        style,
+    );
+}
+
+/// The low-battery glyph: a small lightning bolt at the centre.
+pub fn draw_bolt<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
+    c.painter.stroke_polyline(
+        &[(4.0, -12.0), (-5.0, 1.0), (5.0, -1.0), (-4.0, 12.0)],
+        4.0,
+        Style::new(FG, alpha, 8.0),
+    );
 }
 
 #[cfg(test)]

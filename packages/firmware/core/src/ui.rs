@@ -68,6 +68,8 @@ pub struct Ui {
     flash: Option<u64>,
     /// Powered off: dark until then (or until woken), then boot.
     blackout_until: Option<u64>,
+    /// The battery is at or below the low mark and the die is off the Nest.
+    low_battery: bool,
 }
 
 /// How the menu enters (C3): its alpha and scale, and the hold ring that
@@ -99,7 +101,14 @@ pub enum FaceContent {
         t: f32,
         top: bool,
     },
+    /// A Nest screen (docked, or just lifted out): the firmware asks the
+    /// Nest what this face shows.
     Nest,
+    /// The wake label on the charging face, replaced by a charge glyph:
+    /// the battery is low and this is the face that goes down.
+    LowBattery {
+        alpha: f32,
+    },
     Menu,
     Result {
         alpha: f32,
@@ -288,6 +297,18 @@ impl Ui {
         }
     }
 
+    /// The battery is low (and the die isn't charging): the charging face
+    /// shows a glyph on each wake.
+    pub fn set_low_battery(&mut self, low: bool) {
+        self.low_battery = low;
+    }
+
+    /// Show the setup label from `start` for `ms`: after the battery has
+    /// held on the top face as the die leaves the Nest.
+    pub fn wake_from(&mut self, start: u64, ms: u64) {
+        self.wake = Some((start, start + ms));
+    }
+
     /// Show the setup label for `ms`, extending one already showing.
     pub fn wake(&mut self, now: u64, ms: u64) {
         let start = match self.wake {
@@ -380,6 +401,9 @@ impl Ui {
         }
         let wake = self.wake_alpha(now);
         if wake > 0.0 && !tumbling(mode) && !down {
+            if self.low_battery && face == crate::nest::CHARGE_FACE {
+                return FaceContent::LowBattery { alpha: wake };
+            }
             return FaceContent::Wake { alpha: wake };
         }
         FaceContent::Blank

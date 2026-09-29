@@ -9,11 +9,15 @@
 
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 pub mod display;
 pub mod font;
 pub mod gfx;
 pub mod menu;
 pub mod motion;
+pub mod nest;
 pub mod orientation;
 pub mod pack;
 pub mod potato;
@@ -26,8 +30,8 @@ pub mod ui;
 
 use heapless::Vec;
 use smokebomb_hal::{
-    Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Peripherals, Platform, Power, Rng,
-    SecureElement, Touch, FRAME_BYTES,
+    Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Magnetometer, Peripherals, Platform,
+    Power, Rng, SecureElement, Touch, FRAME_BYTES,
 };
 use smokebomb_shared::{DieKind, SignedRoll};
 
@@ -36,6 +40,7 @@ use font::Fonts;
 use gfx::{Layer, Painter, Transform};
 use menu::{Draft, Settings};
 use motion::{Motion, MotionDetector};
+use nest::{Nest, NestFace};
 use orientation::TextOrientation;
 use pack::PackIndex;
 use potato::{Potato, PotatoCommand};
@@ -45,6 +50,10 @@ use smoke::{Smoke, Special};
 use state::{Command, Event, Mode, StateMachine};
 use tips::{Frame, TipDir, TipTracker, TipUpdate};
 use ui::{FaceContent, Ui};
+
+/// At or below this the die suggests Low power mode, and shows the charge
+/// glyph on its charging face.
+pub const LOW_BATTERY_PCT: u8 = 15;
 
 /// Main loop rate. The mockup animates at display rate (~60 Hz); panels
 /// accept at most 100 Hz (SIM_SPEC B1).
@@ -118,7 +127,10 @@ pub struct Firmware<P: Platform> {
     /// The screens' orientation, frozen while a result is up.
     frozen: Option<Frozen>,
     last_roll: Option<SignedRoll>,
+    /// Seated in the Nest (one of its docked states).
     docked: bool,
+    nest: Nest,
+    reduced_motion: bool,
     /// The last time anything happened to the die, for the Sleep after
     /// setting.
     last_activity: u64,
@@ -164,9 +176,23 @@ impl<P: Platform> Firmware<P> {
             frozen: None,
             last_roll: None,
             docked: false,
+            nest: Nest::new(),
+            reduced_motion: false,
             last_activity: 0,
             asleep: false,
         })
+    }
+
+    /// The Nest: docking, guidance and its screens' state.
+    pub fn nest(&self) -> &Nest {
+        &self.nest
+    }
+
+    /// Reduced motion: no sinking smoke or count-up when docking, and the
+    /// smoke clouds shrink.
+    pub fn set_reduced_motion(&mut self, on: bool) {
+        self.reduced_motion = on;
+        self.smoke.set_reduced_motion(on);
     }
 
     pub fn mode(&self) -> &Mode {
@@ -274,10 +300,9 @@ impl<P: Platform> Firmware<P> {
         }
 
         let battery = self.hw.power.battery()?;
-        if battery.docked != self.docked {
-            self.docked = battery.docked;
-            let _ = events.push(Event::Docked(battery.docked));
-        }
+        self.sense_nest(now, &battery, &mut events)?;
+        self.ui
+            .set_low_battery(battery.percent <= LOW_BATTERY_PCT && !self.docked);
 
         // BLE: drain writes from the phone. Decoding into `PhoneToDie` and
         // acting on it is not wired up yet.
@@ -325,6 +350,55 @@ impl<P: Platform> Firmware<P> {
         self.freeze_for_result(&before, &after);
 
         self.render(now)?;
+        Ok(())
+    }
+
+    /// Read the Nest's magnet when it's time, and let the dock state machine
+    /// decide whether the die is seated, wrongly seated, unpowered or lifted.
+    fn sense_nest(
+        &mut self,
+        now: u64,
+        battery: &smokebomb_hal::BatteryStatus,
+        events: &mut Vec<Event, 8>,
+    ) -> HalResult<()> {
+        let still = self.motion.is_still();
+        if self.nest.wants_reading(now, still, self.asleep) {
+            // The display's 12 V supply is paused for the reading so its
+            // current can't disturb the measurement.
+            self.hw.display.set_supply_paused(true)?;
+            let raw = self.hw.mag.read();
+            self.hw.display.set_supply_paused(false)?;
+            let (raw, offset) = (raw?, self.hw.mag.hard_iron());
+            let b = [0, 1, 2].map(|i| raw[i] - offset[i]);
+            self.nest.reading(now, b, self.up.unwrap_or([0.0, 1000.0, 0.0]));
+        }
+        let step = self.nest.update(nest::Inputs {
+            now,
+            still,
+            up_face: self.up_face,
+            vbus: battery.vbus,
+            charge: battery.charge,
+        });
+        self.docked = self.nest.docked();
+        match step.change {
+            nest::Change::None => {}
+            nest::Change::Docked => {
+                let _ = events.push(Event::Docked(true));
+            }
+            nest::Change::Undocked { animate } => {
+                let _ = events.push(Event::Docked(false));
+                if animate && !matches!(self.sm.mode(), Mode::Menu) {
+                    // The battery holds on the top face, then the setup label.
+                    self.ui
+                        .wake_from(now + nest::UNDOCK_HOLD_MS, ui::WAKE_AFTER_BOOT_MS);
+                }
+            }
+        }
+        if let Some(effect) = step.haptic {
+            if self.settings.haptics_on() {
+                self.hw.haptics.play(effect)?;
+            }
+        }
         Ok(())
     }
 
@@ -432,7 +506,7 @@ impl<P: Platform> Firmware<P> {
         if self.smoke.tumbling() && resting && !matches!(after, Mode::Airborne) {
             self.smoke.land();
         }
-        if entered(|m| matches!(m, Mode::Menu)) {
+        if entered(|m| matches!(m, Mode::Menu) || matches!(m, Mode::Nest)) {
             self.smoke.clear();
         }
         let dt = self.frame_dt(now);
@@ -532,6 +606,7 @@ impl<P: Platform> Firmware<P> {
         match (usable, self.touch_since) {
             (true, None) => {
                 self.touch_since = Some(now);
+                self.nest.touch(now);
                 self.touch_face = Face::ALL[mask.trailing_zeros() as usize % Face::ALL.len()];
                 self.menu_hold_fired = false;
                 started = true;
@@ -565,7 +640,10 @@ impl<P: Platform> Firmware<P> {
         let ring = !self.menu_hold_fired
             && !self.potato.is_lit()
             && held > HOLD_RING_AFTER_MS
-            && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. } | Mode::Menu);
+            && matches!(
+                self.sm.mode(),
+                Mode::Idle | Mode::Reveal { .. } | Mode::Menu | Mode::Nest
+            );
         ring.then(|| {
             ((held - HOLD_RING_AFTER_MS) as f32 / (MENU_HOLD_MS - HOLD_RING_AFTER_MS) as f32).min(1.0)
         })
@@ -664,6 +742,47 @@ impl<P: Platform> Firmware<P> {
         self.hw.ble.set_advertising(self.settings.bluetooth_on())
     }
 
+    /// What each face shows of the Nest: its docked screens, or the
+    /// battery and clock hanging on for a moment after the die is lifted.
+    fn nest_faces(
+        &mut self,
+        now: u64,
+        mode: &Mode,
+        battery: u8,
+    ) -> [Option<NestFace>; smokebomb_hal::FACE_COUNT] {
+        let docked = matches!(mode, Mode::Nest);
+        if !docked && (self.ui.blackout() || matches!(mode, Mode::Menu | Mode::Off) || !self.nest.undocking())
+        {
+            return [None; smokebomb_hal::FACE_COUNT];
+        }
+        let charge = self
+            .hw
+            .power
+            .battery()
+            .map_or(smokebomb_hal::ChargeState::Idle, |b| b.charge);
+        let secs = self.nest.clock_time(now, self.hw.clock.local_seconds());
+        let quarters = Face::ALL.map(|f| self.display_quarter(f));
+        let env = nest::Env {
+            battery: if charge == smokebomb_hal::ChargeState::Full {
+                100
+            } else {
+                battery
+            },
+            charge,
+            secs,
+            night: self.settings.night_hours,
+            reduced_motion: self.reduced_motion,
+            quarters: &quarters,
+        };
+        Face::ALL.map(|f| {
+            if docked {
+                Some(self.nest.face(now, f, &env))
+            } else {
+                self.nest.undock_face(now, f, &env)
+            }
+        })
+    }
+
     fn render(&mut self, now: u64) -> HalResult<()> {
         let mode = *self.sm.mode();
         let up = self.display_up();
@@ -681,6 +800,7 @@ impl<P: Platform> Firmware<P> {
         };
         let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
         let asleep = self.asleep;
+        let nest_faces = self.nest_faces(now, &mode, battery);
         let Self {
             frames,
             layer,
@@ -701,7 +821,11 @@ impl<P: Platform> Firmware<P> {
             if blackout {
                 continue;
             }
-            let content = ui.content(now, face, up, &mode, record.is_some());
+            let mut content = ui.content(now, face, up, &mode, record.is_some());
+            // Lifted from the Nest a moment ago: its screens hang on.
+            if nest_faces[face.index()].is_some() && !matches!(content, FaceContent::Menu) {
+                content = FaceContent::Nest;
+            }
             // A round of Hot Potato takes the faces, except the one facing
             // down (H2).
             let potato_face = potato_view.filter(|_| face != up.opposite());
@@ -769,11 +893,13 @@ impl<P: Platform> Firmware<P> {
                         );
                     }
                 }
-                // Placeholder until the Nest screens are built.
-                FaceContent::Nest if face == up => {
-                    fb_of(c.painter).draw_number(battery as u16, 6, display::FG, rot);
+                FaceContent::Nest => {
+                    if let Some(nf) = nest_faces[face.index()].filter(|nf| nf.dim > 0.0) {
+                        screens::draw_nest(&mut c, &nf);
+                        fb_of(c.painter).scale(nf.dim);
+                    }
                 }
-                FaceContent::Nest => {}
+                FaceContent::LowBattery { alpha } => screens::draw_bolt(&mut c, alpha),
             }
             match potato_face {
                 Some(PotatoView::Fuse(heat, pulse)) => screens::draw_fuse(&mut c, heat, pulse),

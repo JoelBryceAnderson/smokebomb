@@ -8,6 +8,7 @@
 //! |------------------|--------------|----------------------|
 //! | 6x OLED 96x96    | SSD1317      | SPIM (shared DC/CLK, 6 CS) |
 //! | IMU              | LSM6DSx      | TWIM                 |
+//! | Magnetometer     | part TBD     | TWIM                 |
 //! | Touch            | nRF54 COMP / ext. cap controller | GPIO |
 //! | Secure element   | ATECC608B    | TWIM                 |
 //! | PMIC / charger   | nPM1300      | TWIM                 |
@@ -24,6 +25,7 @@ pub struct Nrf54l15;
 impl Platform for Nrf54l15 {
     type Display = Ssd1317Array;
     type Imu = Lsm6dsx;
+    type Magnetometer = NestMag;
     type Touch = CapTouch;
     type Ble = ZephyrBle;
     type SecureElement = Atecc608;
@@ -41,6 +43,7 @@ pub fn peripherals() -> Peripherals<Nrf54l15> {
     Peripherals {
         display: Ssd1317Array,
         imu: Lsm6dsx,
+        mag: NestMag,
         touch: CapTouch,
         ble: ZephyrBle,
         secure_element: Atecc608,
@@ -75,6 +78,16 @@ pub struct Lsm6dsx;
 impl Imu for Lsm6dsx {
     fn read(&mut self) -> HalResult<Option<ImuSample>> {
         Err(TODO) // Zephyr sensor API, FIFO + free-fall/wake-up interrupts
+    }
+}
+
+pub struct NestMag;
+impl Magnetometer for NestMag {
+    fn read(&mut self) -> HalResult<[i32; 3]> {
+        Err(TODO) // one-shot measurement over I2C, with the panel supply paused
+    }
+    fn hard_iron(&self) -> [i32; 3] {
+        [0; 3] // factory calibration, from the die's OTP page
     }
 }
 
@@ -162,5 +175,8 @@ pub struct KernelClock;
 impl Clock for KernelClock {
     fn now_ms(&self) -> u64 {
         0 // k_uptime_get()
+    }
+    fn local_seconds(&self) -> u32 {
+        0 // RTC, set by the phone over BLE
     }
 }
