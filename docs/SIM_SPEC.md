@@ -1,10 +1,10 @@
 # Smokebomb: UX, visual and hardware spec for the simulator
 
-**Purpose.** Make a firmware-driven simulator behave and look 1:1 like the interactive mockup (https://claude.ai/artifact/8Z1hGvE7k3mf5sGfaWEJ7j) and the hardware we've designed.
+**Purpose.** Describe how the die looks and behaves, and the hardware it is built on. It began as the spec for a firmware-driven simulator that matched the interactive mockup (https://claude.ai/artifact/8Z1hGvE7k3mf5sGfaWEJ7j) 1:1.
 
-**Source.** Every number here comes from the mockup's code. **If this document and the mockup disagree, the mockup wins.** Flag the difference so this document gets fixed.
+**Source.** The numbers here came from the mockup's code (artifact version `1790415968-5231`, checked line by line on 2026-09-28). **Decision H10: the firmware and this document now lead, and the mockup is a starting point that we no longer track.** Where they disagree, the firmware's tests and the decisions in [Part H](#part-h-decisions) win, and this document should be fixed to say so. Parts A to F still describe the mockup's design where nothing has departed from it; departures are recorded in Part H and noted in the text.
 
-**Status.** Checked line by line against the mockup source (artifact version `1790415968-5231`) on 2026-09-28. The differences found are folded into the text below and listed in [Part G](#part-g-corrections-log). Design decisions made on 2026-09-28 are in [Part H](#part-h-decisions); where a decision departs from the mockup, the text follows the decision and says so.
+**Status.** Checked against the mockup on 2026-09-28; the differences found are in [Part G](#part-g-corrections-log). Since then the firmware has diverged on purpose (H9, H10, H11).
 
 **Conventions**
 - **Units:** mm for hardware.
@@ -171,14 +171,14 @@ The face touching the table is dark:
 ## Part C: States and behavior
 
 Order of precedence each frame, per face:
-1. Restart blackout.
+1. Power-off blackout (the mockup's Restart blackout).
 2. Landing flash overlay.
 3. Menu close fade.
 4. Hold ring.
 5. **Boot**, **docked**, **menu**, **result**, **success** or **wake label**, whichever applies, in that order.
 6. Smoke and particles drawn on top, additively.
 
-### C1. Boot (power-on or Restart only; never on wake)
+### C1. Boot (power-on or after Power off only; never on wake)
 - **Pips:** center-to-corner offset **38.2 canvas (22.1 px)**, pip radius **12.45 canvas (7.2 px)**.
 - **Slot order** (each value keeps existing pips sliding and grows or shrinks the rest):
 
@@ -269,14 +269,14 @@ The mockup has three pages: How many dice, Which die, Settings. The firmware add
 | Die | Which die | d4, d6, d8, d10, d12, d20, d100 |
 | Pot | How many pots | 1–3 |
 | Fuse | Fuse length | Short (10–20 s), Medium (20–40 s), Long (40–90 s) |
-| Settings | Settings | Brightness 70%; Haptics Strong; Smoke Full; Large text Off; Sleep after 2 min; Night mode Auto; Bluetooth On; Verified rolls Off; Owner "Joel"; Restart "Hold to restart"; About "v0.1.0 · SB-0042". Values are display-only. |
+| Settings | Settings | Brightness 70%; Haptics Strong; Smoke Full; Large text Off; Sleep after 2 min; Night mode Auto; Bluetooth On; Verified rolls Off; Owner "Joel"; Power off "Tap to power off"; About "v0.1.0 · SB-0042". **Decided (H11):** a tap steps the selected item to its next value; Owner, Power off and About aren't editable. |
 
 - **X1, Mode page.** Mode sits one tip *right* of How many dice, so the dice flow is unchanged: hold, tip up or down for the count, one tip left for the die, hold to save.
 - **Setups are kept apart.** The dice setup (die, count) and each game's options are saved separately, so leaving Dice for Pass the Pot and coming back leaves `3d6` as it was.
 - **Pass the Pot is a mode, not a die.** It no longer appears under Which die, and the count no longer clamps. It is still rolled and signed as `pass_the_pot` (H6).
 - **Page dots** show the ring: four in Dice mode, three in a game mode.
 - **Hot Potato is not a roll.** See X2. The dice setup, Pass the Pot's count and the fuse length are all kept when switching.
-- **`Settings.modes` off** removes the Mode page and the die is always in Dice mode: the mockup's three-page menu. The golden frames are captured this way.
+- **`Settings.modes` off** removes the Mode page and the die is always in Dice mode: the mockup's three-page menu. Most snapshot scenarios run this way; `menu-modes` runs the default menu.
 
 **X2, Hot Potato** (extension; not in the mockup)
 
@@ -330,7 +330,7 @@ Mockup input: a swipe of more than 36 px (by dominant direction), or the arrow k
   - a throw or shake,
   - changing view or docking,
   - **25 s** with no input.
-- **Restart** (holding while "Restart" is selected): screens go black for **0.8 s**, then boot (C1). Any count or die change made in the same menu session is **not** saved.
+- **Power off** (a *tap* while "Power off" is selected; a hold there saves like anywhere else): the screens go black and stay black. Motion and holds are ignored; a **tap** on any screen boots the die at once (C1). Docking shows the nest as usual. Any count or die change made in the same menu session is **not** saved. There is no power switch, so this is as off as the die gets. (Replaces the mockup's "Restart", which blacked out for 0.8 s and rebooted on its own; see H11.)
 
 ### C4. Success screen (after saving)
 - **Duration:** about **1.25 s** on the menu face.
@@ -540,7 +540,7 @@ The mockup also has "side-face" variants for smoke (life 2.2–3.5, size 20–38
 | Result dim | 7 s after reveal, 1.2 s fade (≥5 s after a max or dud effect; a touch adds 4 s) |
 | Landing flash | 0.25 s |
 | Die pulse | 0.28 s, +3.5% |
-| Restart blackout | 0.8 s |
+| Power-off blackout | until the next tap (the mockup's Restart: 0.8 s) |
 | Boot | 6.2 s total |
 | Panel refresh cap | 100 Hz |
 | Reduced motion | tumble 0.45 s (no spin, no bounce), tip 0.15 s, fewer particles (D3), no shake jitter, no idle spin |
@@ -582,7 +582,7 @@ Differences found when this document was checked against the mockup source (2026
 | G16 | C3 | Unspecified | Letting go after the saving hold is a tap (wake label for 3 s from the release). The 0.8 s hold completes on the 49th frame at 60 Hz (the mockup's clock sums float frame times), so the firmware waits for *more than* 0.8 s |
 | G17 | D2 | Unspecified | A lingering particle lingers through its boundary frame: the mockup's clock is a sum of frame times that falls just short of `spawn + 0.75` there. The firmware lingers for *at least* the time |
 
-**Golden frames.** `tools/mockup-capture` runs the pinned mockup headless (seeded randomness, virtual time) and saves each face's 96×96 output at fixed moments in nine scenarios: boot, tap, throw, quick throw, Pass the Pot, menu, menu settings, restart and Nest. These are the reference for decision H4; `packages/firmware/core/tests/golden.rs` scores the firmware against them. The captures confirm G1 (the wake label is lit on the face-down screen).
+**Snapshots (H10).** `packages/firmware/core/tests/snapshots.rs` runs the firmware through scripted scenarios (boot, tap, result, quick-throw smoke, throw smoke, menu, menu settings, and settings tap and power off) and compares every face with the sheets in `tests/snapshots/`. They began as frames captured from the mockup (the captures confirmed G1, that the wake label is lit on the face-down screen; the firmware keeps that screen dark, H2); the firmware is now their source.
 
 Everything else was checked and matches: all canvas → panel-px conversions, timings, the boot sequence (the top face's start value of 6 is an explicit override of the per-face table), the menu layout, the particle formulas, and every die, Nest and case dimension.
 
@@ -595,9 +595,11 @@ Decided 2026-09-28.
 | H1 | **Smoke rendering.** Part D is a live, gravity-reactive particle system, which can't be baked into frame sequences. It conflicted with the earlier "pre-rendered smoke in 64 MB QSPI" decision. | **Live particle simulation in firmware.** "Pre-rendered" now means *assets* in QSPI: smoke sprite stamps and Space Grotesk bitmaps. A theme is a sprite set plus parameters, not a video. On hardware the smoke layer is drawn at half resolution (48×48) to fit the frame budget (late-life sprites reach ~60 px radius; 380 of them at full resolution is ~1M pixel blends per frame). The simulator may draw it at full resolution. *Measured in the simulator:* a full cloud (shake plus landing, ~500 particles, with edge wrapping) is ~4M sprite pixels a tick at full resolution, so ~1M at half; the hardware budget still needs measuring (ARCHITECTURE, Smoke). |
 | H2 | **Face-down wake label** | **Dark.** Departs from the mockup (G1); the mockup should be updated. |
 | H3 | **Neighbour previews** in the menu | **Off**, as in the mockup. The product film should be updated. |
-| H4 | **Fidelity target** for firmware rendering | **Native 96×96 rendering, compared against captured mockup frames within a tolerance.** Pixel-identical output isn't a goal: the firmware can't afford the mockup's 256×256 canvas-and-downsample pipeline. |
+| H4 | **Fidelity target** for firmware rendering | **Native 96×96 rendering, compared against reference frames within a tolerance.** Pixel-identical output to the mockup isn't a goal: the firmware can't afford the mockup's 256×256 canvas-and-downsample pipeline. *Superseded in part by H10: the reference frames are now snapshots of the firmware.* |
 | H5 | **Normal results through smoke** | **Keep the mockup:** the result fades in from 0.35 s after landing while smoke drains. Only max/dud effects wait for clear air. |
 | H6 | **Pass the Pot in the signed roll** | **Sign the raw d6 value** (1 → ←, 2 → P, 3 → →, 4–6 → •), exactly as the mockup draws it. Requires roll format v2 and a 10-dice limit. |
 | H7 | **Menu frame on hardware when the held face points up or down.** "Front" and "up" coincide, so right/up are undefined. Happens when you look down at a face in your palm, or up at one overhead. | **Use the way the screen already reads.** The firmware takes the frame from the held face and gravity once the die has been still for 120 ms after the menu opens. When gravity is along the held face (more than 45° from vertical), "up" is the face's current text orientation (B2's locked orientation on a top or bottom face), so the menu opens the way that screen already looks. The simulator turns the die like the mockup's snap, so it never needs this. |
 | H8 | **Label weight** (G14) | **700 everywhere, matching what the mockup renders.** The firmware ships one Space Grotesk cut (Bold). |
 | H9 | **Screens after a roll.** The mockup re-orients every face continuously, so picking the die up to read a result turns the text and can light the old bottom face. | **Freeze at the reveal.** Each face's text orientation and the dark face are fixed when the result is revealed and stay fixed while the result lasts (including a dimmed result brought back by a touch). A shake or throw, the menu, docking or a restart releases them. Departs from the mockup, whose die never leaves the table. |
+| H10 | **The mockup as a reference.** Once the firmware worked, keeping it 1:1 with the mockup meant editing the mockup for every design change. | **The firmware leads.** The mockup capture tool and its golden frames are removed (they remain in git history). Screens are checked by **snapshot tests**: sheets generated from the firmware and committed in `packages/firmware/core/tests/snapshots/`, regenerated with `UPDATE_SNAPSHOTS=1` when a change is intended. Statistical smoke comparisons against the mockup are replaced by exact snapshots of a seeded run. This document stays as the description of the design; it is no longer a promise to match the mockup. |
+| H11 | **Settings items in the menu.** The mockup shows them but they do nothing, and "hold to restart" clashes with hold meaning save. | **A hold always saves and returns to the roll. A tap changes the selected Settings item** (Brightness 30/50/70/100 %, Haptics Off/Light/Strong, Smoke Off/Light/Full, Large text Off/On, Sleep after 30 s/1/2/5 min/Never, Night mode Off/Auto/On, Bluetooth Off/On, Verified rolls Off/On), **and a tap on Power off darkens the die until the next tap.** Owner and About are display-only. Defaults are the mockup's values. Departs from the mockup. |

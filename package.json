@@ -3,8 +3,7 @@
   "private": true,
   "description": "Smokebomb monorepo: firmware, simulator, server, mobile",
   "workspaces": [
-    "packages/simulator/web-ui",
-    "tools/mockup-capture"
+    "packages/simulator/web-ui"
   ],
   "scripts": {
     "sim": "nx run simulator-server:serve",

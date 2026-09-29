@@ -371,6 +371,13 @@ mod tests {
             self.run(0.5);
         }
 
+        fn tap(&mut self, face: Face) {
+            self.sim.lock().touch_mask = 1 << face.index();
+            self.run(0.15);
+            self.sim.lock().touch_mask = 0;
+            self.run(0.3);
+        }
+
         fn tip(&mut self, dir: TipDir) {
             assert!(self.world.tip(dir, DEFAULT_VIEWER_RIGHT));
             self.run(0.6);
@@ -891,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    fn holding_on_restart_restarts_without_saving() {
+    fn tapping_power_off_darkens_the_die_and_a_tap_boots_it() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
         let mut rig = Rig::new();
@@ -901,10 +908,90 @@ mod tests {
         rig.tip(TipDir::Left); // Die
         rig.tip(TipDir::Left); // Settings
         rig.tip(TipDir::Down); // About
-        rig.tip(TipDir::Down); // Restart
+        rig.tip(TipDir::Down); // Power off
+        rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+        assert!(!rig.sim.lock().display_on);
+        assert_eq!(rig.fw.settings().count, 1, "not saved");
+        // Stays dark, ignoring a long wait.
+        rig.run(30.0);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+        assert!(rig.sim.lock().faces.iter().all(|f| f.iter().all(|b| *b == 0)));
+        // A tap boots straight away.
+        rig.tap(Face::PosY);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(rig.sim.lock().display_on);
+        assert!(rig.fw.booting());
+    }
+
+    #[test]
+    fn tap_changes_a_setting_and_a_hold_saves_and_returns_to_the_roll() {
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings, on Brightness (70%)
+        rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Menu, "a tap doesn't leave the menu");
+        assert_eq!(rig.fw.menu_draft().unwrap().setting().1, "100%");
+        assert_eq!(rig.fw.settings().brightness_pct(), 70, "not saved yet");
         rig.hold(Face::PosZ);
         assert_eq!(*rig.fw.mode(), Mode::Idle);
-        assert!(rig.fw.booting());
-        assert_eq!(rig.fw.settings().count, 1);
+        assert_eq!(rig.fw.settings().brightness_pct(), 100);
+    }
+
+    #[test]
+    fn a_powered_off_die_does_not_light_hot_potato() {
+        use smokebomb_firmware::smokebomb_core::menu::PlayMode;
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Mode ▶ Hot Potato, and save.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Right);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Up);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().play(), PlayMode::HotPotato);
+        // Fuse length ▶ Settings ▶ Power off, and tap.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
+        rig.tip(TipDir::Down);
+        rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+
+        // A shake doesn't light the fuse, and a tap wakes the die instead of
+        // passing the potato.
+        rig.world.start_shake();
+        rig.run(1.0);
+        rig.world.end_shake(false);
+        rig.run(2.0);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+        assert!(rig.fw.potato().is_idle());
+        rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(rig.fw.potato().is_idle());
+    }
+
+    #[test]
+    fn a_hold_on_power_off_saves_and_returns_like_anywhere_else() {
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Up); // 2 dice
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings
+        rig.tip(TipDir::Down); // About
+        rig.tip(TipDir::Down); // Power off
+        rig.hold(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(!rig.fw.booting(), "still on");
+        assert_eq!(rig.fw.settings().count, 2, "saved");
     }
 }

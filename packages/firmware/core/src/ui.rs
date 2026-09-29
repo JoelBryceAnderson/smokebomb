@@ -42,8 +42,6 @@ const MENU_FADE_OUT_MS: f32 = 300.0;
 const FLASH_MS: f32 = 250.0;
 /// The success screen on the face the menu was on (C4).
 pub const SUCCESS_MS: u64 = 1_300;
-/// Screens stay dark this long before a restart boots (C3).
-pub const RESTART_BLACKOUT_MS: u64 = 800;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Boot {
@@ -68,7 +66,7 @@ pub struct Ui {
     /// A saved setup: when, on which face, and what.
     success: Option<(u64, Face, Setup)>,
     flash: Option<u64>,
-    /// Restarting: dark until then, then boot.
+    /// Powered off: dark until then (or until woken), then boot.
     blackout_until: Option<u64>,
 }
 
@@ -162,7 +160,7 @@ impl Ui {
         self.special
     }
 
-    /// Restarting: every screen is dark.
+    /// Powered off: every screen is dark.
     pub fn blackout(&self) -> bool {
         self.blackout_until.is_some()
     }
@@ -193,13 +191,18 @@ impl Ui {
         self.success = None;
     }
 
-    /// Holding on Restart: dark for a moment, then boot again (C3, C1).
-    pub fn restart(&mut self, now: u64) {
+    /// Power off: every screen dark until [`Ui::wake_up`].
+    pub fn power_off(&mut self) {
         *self = Self {
             started: true,
-            blackout_until: Some(now + RESTART_BLACKOUT_MS),
+            blackout_until: Some(u64::MAX),
             ..Self::default()
         };
+    }
+
+    /// A tap on a powered-off die: boot at once.
+    pub fn wake_up(&mut self, now: u64) {
+        self.blackout_until = Some(now);
     }
 
     pub fn menu_intro(&self, now: u64) -> MenuIntro {
@@ -260,6 +263,10 @@ impl Ui {
             self.result = None;
             self.special = None;
             self.success = None;
+        }
+        // Docking a powered-off die shows the nest.
+        if entered(|m| matches!(m, Mode::Nest)) {
+            self.blackout_until = None;
         }
         if let Mode::Reveal { since_ms } = *after {
             if !matches!(before, Mode::Reveal { .. }) {
@@ -447,19 +454,23 @@ mod tests {
     }
 
     #[test]
-    fn restart_blacks_out_then_boots() {
+    fn power_off_stays_dark_until_woken_then_boots_at_once() {
         let mut ui = Ui::new();
         ui.tick(0, &Mode::Idle, &Mode::Idle, UP, false);
         ui.tick(7_000, &Mode::Idle, &Mode::Idle, UP, false);
-        ui.restart(9_000);
-        ui.tick(9_000, &Mode::Menu, &Mode::Idle, UP, false);
-        assert_eq!(
-            ui.content(9_500, Face::PosX, UP, &Mode::Idle, false),
-            FaceContent::Blank
-        );
-        ui.tick(9_800, &Mode::Idle, &Mode::Idle, UP, false);
+        ui.power_off();
+        ui.tick(9_000, &Mode::Menu, &Mode::Off, UP, false);
+        for t in [9_500, 60_000, 3_600_000] {
+            ui.tick(t, &Mode::Off, &Mode::Off, UP, false);
+            assert_eq!(
+                ui.content(t, Face::PosX, UP, &Mode::Off, false),
+                FaceContent::Blank
+            );
+        }
+        ui.wake_up(3_700_000);
+        ui.tick(3_700_000, &Mode::Off, &Mode::Idle, UP, false);
         assert!(matches!(
-            ui.content(9_900, Face::PosX, UP, &Mode::Idle, false),
+            ui.content(3_700_000, Face::PosX, UP, &Mode::Idle, false),
             FaceContent::Boot { .. }
         ));
     }

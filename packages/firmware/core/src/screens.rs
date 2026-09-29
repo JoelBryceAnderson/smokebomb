@@ -12,7 +12,7 @@ use smokebomb_shared::{DieKind, PotFace, RollRecord};
 use crate::display::{DUD, FG};
 use crate::font::{fit_px, Align, Fonts};
 use crate::gfx::{Painter, Style};
-use crate::menu::{Draft, Page, SETTINGS};
+use crate::menu::{Draft, Page};
 use crate::smoke::Special;
 
 /// The lit area's half-size in canvas units.
@@ -392,7 +392,7 @@ pub fn draw_menu<A: AssetStore>(
             .fill_triangle([(-w, 46.0 - h), (w, 46.0 - h), (0.0, 46.0 + h)], arrows);
 
         if m.page == Page::Settings {
-            let (name, value) = SETTINGS[m.setting as usize];
+            let (name, value) = m.setting();
             c.text(
                 name,
                 0.0,

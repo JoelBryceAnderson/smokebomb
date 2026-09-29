@@ -7,10 +7,8 @@
 //! from the asset pack, and a particle near an edge is also stamped onto the
 //! neighbouring face, so the smoke wraps round the die continuously.
 //!
-//! This is a statement-for-statement port of the mockup, including the order
-//! it draws random numbers in, so a scenario started from the same generator
-//! state (the capture tool seeds the mockup's `Math.random` with mulberry32)
-//! plays out the same way.
+//! This began as a statement-for-statement port of the mockup, and a scenario
+//! started from the same generator state plays out the same way.
 
 use heapless::Vec;
 use libm::{cosf, powf, sinf, sqrtf};
@@ -47,7 +45,7 @@ const TIME_EPS: f32 = 1e-4;
 /// Shaking charges the smoke up over this long (s).
 const CHARGE_S: f32 = 1.6;
 
-/// The mockup's seeded `Math.random`: mulberry32.
+/// A seedable generator: mulberry32, as the mockup's seeded `Math.random`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmokeRng(u32);
 
@@ -56,7 +54,7 @@ impl SmokeRng {
         Self(seed)
     }
 
-    /// Uniform in [0, 1), exactly as the capture tool's `Math.random`.
+    /// Uniform in [0, 1).
     pub fn next_f64(&mut self) -> f64 {
         self.0 = self.0.wrapping_add(0x6d2b_79f5);
         let mut t = self.0;
@@ -72,12 +70,6 @@ impl SmokeRng {
     /// `(Math.random() * n) | 0`.
     fn index(&mut self, n: usize) -> usize {
         ((self.next_f64() * n as f64) as usize).min(n - 1)
-    }
-
-    pub fn skip(&mut self, n: u32) {
-        for _ in 0..n {
-            self.next_f64();
-        }
     }
 }
 
@@ -196,7 +188,7 @@ impl Smoke {
         }
     }
 
-    /// Replace the random generator (tests replay the mockup's sequence).
+    /// Replace the random generator (tests seed it for repeatable smoke).
     pub fn set_rng(&mut self, rng: SmokeRng) {
         self.rng = rng;
     }
