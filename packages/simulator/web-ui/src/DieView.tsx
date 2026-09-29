@@ -3,6 +3,8 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { PANEL_SIZE, Pose, SpinAxis, TipDirection } from "./protocol";
+import { FINISHES, FinishKey, GLOW_INTENSITY, LIGHTING, SCREW_DARK } from "./finishes";
+import { addScrews, makeEtching } from "./shell";
 
 // Mockup scale (SIM_SPEC A1): 1 scene unit = 13.25 mm, 34 mm die, 2.5 mm edges.
 const MM = 1 / 13.25;
@@ -38,6 +40,10 @@ export interface DieViewHandle {
   setPose(pose: Pose): void;
   /** The viewer's right in world space (the axis for up/down tips). */
   viewerRight(): [number, number, number];
+  /** Shell finish and lighting; screens are never tinted. */
+  setLook(finish: FinishKey, night: boolean): void;
+  /** The device serial etched on the charging face. */
+  setSerial(serial: string): void;
 }
 
 interface Props {
@@ -90,6 +96,8 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     drawFrames: (f) => api.current?.drawFrames(f),
     setPose: (p) => api.current?.setPose(p),
     viewerRight: () => api.current?.viewerRight() ?? [1, 0, 0],
+    setLook: (f, n) => api.current?.setLook(f, n),
+    setSerial: (x) => api.current?.setSerial(x),
   }));
 
   useEffect(() => {
@@ -111,12 +119,71 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
 
     const die = new THREE.Group();
     scene.add(die);
-    // Stealth black finish (SIM_SPEC A4).
-    const shell = new THREE.Mesh(
-      new RoundedBoxGeometry(HALF * 2, HALF * 2, HALF * 2, 6, EDGE_RADIUS),
-      new THREE.MeshStandardMaterial({ color: 0x232428, metalness: 0.9, roughness: 0.38 }),
-    );
+    // The shell takes its finish from `setLook` (design brief §4). Env
+    // reflection is per material, so give it the environment explicitly.
+    const envMap = scene.environment;
+    const shellMat = new THREE.MeshStandardMaterial({ envMap });
+    // Heat-tinted titanium: a per-pixel tint after normal mapping that shifts
+    // with viewing angle and with the die's orientation.
+    const heat = { on: { value: 0 }, shift: { value: 0 } };
+    shellMat.onBeforeCompile = (sh) => {
+      sh.uniforms.heatOn = heat.on;
+      sh.uniforms.heatShift = heat.shift;
+      sh.vertexShader = sh.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 vHeatPos;")
+        .replace(
+          "#include <begin_vertex>",
+          "#include <begin_vertex>\nvHeatPos = (modelMatrix * vec4(transformed, 1.0)).xyz;",
+        );
+      sh.fragmentShader = sh.fragmentShader
+        .replace(
+          "#include <common>",
+          "#include <common>\nvarying vec3 vHeatPos;\nuniform float heatOn;\nuniform float heatShift;",
+        )
+        .replace(
+          "#include <normal_fragment_maps>",
+          `#include <normal_fragment_maps>
+          if (heatOn > 0.5) {
+            float ndv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
+            float t = fract(ndv * 0.9 + heatShift + dot(vHeatPos, vec3(0.05, 0.035, 0.045))) * 5.0;
+            vec3 c0 = vec3(0.86, 0.72, 0.40), c1 = vec3(0.74, 0.46, 0.24), c2 = vec3(0.48, 0.32, 0.66);
+            vec3 c3 = vec3(0.28, 0.44, 0.82), c4 = vec3(0.30, 0.64, 0.66);
+            vec3 heat = t < 1.0 ? mix(c0, c1, smoothstep(0.0, 1.0, t))
+                      : t < 2.0 ? mix(c1, c2, smoothstep(0.0, 1.0, t - 1.0))
+                      : t < 3.0 ? mix(c2, c3, smoothstep(0.0, 1.0, t - 2.0))
+                      : t < 4.0 ? mix(c3, c4, smoothstep(0.0, 1.0, t - 3.0))
+                      : mix(c4, c0, smoothstep(0.0, 1.0, t - 4.0));
+            diffuseColor.rgb *= mix(vec3(0.78), heat, 0.8) * 1.3;
+          }`,
+        );
+    };
+    const shell = new THREE.Mesh(new RoundedBoxGeometry(HALF * 2, HALF * 2, HALF * 2, 6, EDGE_RADIUS), shellMat);
     die.add(shell);
+
+    const key = new THREE.DirectionalLight(0xffffff, LIGHTING.day.key);
+    key.position.set(3, 6, 4);
+    const ambient = new THREE.AmbientLight(0xffffff, LIGHTING.day.ambient);
+    scene.add(key, ambient);
+
+    // Screws: 4 per face, and the charging face's etching.
+    const darkMat = new THREE.MeshStandardMaterial({
+      ...SCREW_DARK,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+    addScrews(die, FACE_DEFS, HALF, darkMat);
+    const etching = makeEtching(HALF, renderer.capabilities.getMaxAnisotropy(), FACE_DEFS);
+    etching.mesh.material.polygonOffset = true;
+    etching.mesh.material.polygonOffsetFactor = -1;
+    etching.mesh.material.polygonOffsetUnits = -1;
+    die.add(etching.mesh);
+    let serial = "000042";
+    etching.update(serial);
+    // The etching font loads late; redraw once it is there.
+    document.fonts?.load('600 20px "Space Grotesk"').then(() => etching.redraw());
+    const dieX = new THREE.Vector3();
+    const dieZ = new THREE.Vector3();
 
     const windowShape = new THREE.Shape();
     roundRectPath(windowShape, -WINDOW_HALF, -WINDOW_HALF, WINDOW_HALF * 2, WINDOW_HALF * 2, WINDOW_RADIUS);
@@ -192,8 +259,33 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
           f.texture.needsUpdate = true;
         });
       },
+      setLook(finish, night) {
+        const f = FINISHES.find((x) => x.key === finish) ?? FINISHES[0];
+        shellMat.color.setHex(f.color);
+        shellMat.metalness = f.metalness;
+        shellMat.roughness = f.roughness;
+        shellMat.envMapIntensity = f.envMapIntensity;
+        shellMat.emissive.setHex(f.emissive ?? 0x000000);
+        shellMat.emissiveIntensity = f.emissive ? (night ? GLOW_INTENSITY.night : GLOW_INTENSITY.day) : 0;
+        heat.on.value = f.heatTint ? 1 : 0;
+        const l = night ? LIGHTING.night : LIGHTING.day;
+        renderer.toneMappingExposure = l.exposure;
+        key.intensity = l.key;
+        ambient.intensity = l.ambient;
+      },
+      setSerial(x) {
+        if (x !== serial) {
+          serial = x;
+          etching.update(x);
+        }
+      },
       setPose({ rotation, position }) {
         die.quaternion.set(...rotation);
+        die.updateMatrixWorld();
+        // Slow colour drift as the die turns (heat-tinted titanium).
+        dieX.setFromMatrixColumn(die.matrixWorld, 0).normalize();
+        dieZ.setFromMatrixColumn(die.matrixWorld, 2).normalize();
+        heat.shift.value = 0.12 * dieX.z + 0.1 * dieZ.y;
         die.position.set(...position);
         shadow.scale.setScalar(1 - Math.min(0.35, position[1] * 0.25));
         (shadow.material as THREE.MeshBasicMaterial).opacity = 1 - Math.min(0.6, position[1] * 0.4);
@@ -349,6 +441,7 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       observer.disconnect();
       renderer.dispose();
       pmrem.dispose();
+      etching.mesh.geometry.dispose();
       faces.forEach((f) => f.texture.dispose());
       mount.removeChild(renderer.domElement);
     };

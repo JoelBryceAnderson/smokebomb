@@ -150,7 +150,7 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
         let (pose, imu, docked) = {
             let mut w = state.world.lock().unwrap_or_else(|e| e.into_inner());
             let imu = w.step(dt);
-            (w.pose(), imu, w.docked())
+            (w.pose(), imu, w.on_charger())
         };
         {
             let mut s = state.sim.lock();
@@ -911,6 +911,7 @@ mod tests {
         rig.tip(TipDir::Up); // 2 dice, not saved
         rig.tip(TipDir::Left); // Die
         rig.tip(TipDir::Left); // Settings
+        rig.tip(TipDir::Down); // Regulatory
         rig.tip(TipDir::Down); // About
         rig.tip(TipDir::Down); // Power off
         rig.tap(Face::PosZ);
@@ -960,9 +961,10 @@ mod tests {
         rig.tip(TipDir::Up);
         rig.hold(Face::PosZ);
         assert_eq!(rig.fw.settings().play(), PlayMode::HotPotato);
-        // Fuse length ▶ Settings ▶ Power off, and tap.
+        // Fuse length ▶ Settings ▶ Power off (past Regulatory and About), and tap.
         rig.hold(Face::PosZ);
         rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
         rig.tip(TipDir::Down);
         rig.tip(TipDir::Down);
         rig.tap(Face::PosZ);
@@ -1009,6 +1011,7 @@ mod tests {
         rig.hold(Face::PosZ);
         rig.tip(TipDir::Left); // Die
         rig.tip(TipDir::Left); // Settings, on Brightness
+        rig.tip(TipDir::Down); // Regulatory
         rig.tip(TipDir::Down); // About
         let draft = rig.fw.menu_draft().unwrap();
         assert_eq!(draft.setting().0, "About");
@@ -1128,6 +1131,7 @@ mod tests {
         rig.tip(TipDir::Up); // 2 dice
         rig.tip(TipDir::Left); // Die
         rig.tip(TipDir::Left); // Settings
+        rig.tip(TipDir::Down); // Regulatory
         rig.tip(TipDir::Down); // About
         rig.tip(TipDir::Down); // Power off
         rig.hold(Face::PosZ);

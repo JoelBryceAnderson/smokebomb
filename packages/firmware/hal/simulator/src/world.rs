@@ -16,7 +16,7 @@
 //! motions the simulator does.
 
 use glam::{Quat, Vec3};
-use smokebomb_hal::{Face, ImuSample};
+use smokebomb_hal::{Face, ImuSample, CHARGING_FACE};
 
 const G_MG: f32 = 1000.0;
 /// Specific force during a single-tick impact, on top of gravity.
@@ -119,6 +119,8 @@ pub struct World {
     /// up/down axis; the menu snap turns the held face toward the viewer.
     viewer_right: Vec3,
     docked: bool,
+    /// Where the die settles in the Nest: the way it was sitting, squared up.
+    dock_pose: Quat,
     reduced_motion: bool,
     rng: u64,
     /// Tests: the face the next throw lands on, instead of a random one.
@@ -157,6 +159,7 @@ impl World {
             spin: None,
             viewer_right: DEFAULT_VIEWER_RIGHT,
             docked: false,
+            dock_pose: Quat::IDENTITY,
             reduced_motion: false,
             rng: seed | 1,
             next_landing: None,
@@ -171,6 +174,12 @@ impl World {
 
     pub fn docked(&self) -> bool {
         self.docked
+    }
+
+    /// The die is in the Nest with its charging face down, so the pogo
+    /// pins reach the screws. Any of the face's four rotations works.
+    pub fn on_charger(&self) -> bool {
+        self.docked && (self.pose.rotation * face_normal(CHARGING_FACE)).y < -0.9
     }
 
     pub fn set_reduced_motion(&mut self, on: bool) {
@@ -412,8 +421,18 @@ impl World {
             self.throw_when_ready = false;
             self.tumble = None;
             self.turn = None;
+            self.dock_pose = self.squared();
         }
         self.docked = docked;
+    }
+
+    /// The current pose turned to the nearest face-aligned orientation, so
+    /// whichever face is down stays down.
+    fn squared(&self) -> Quat {
+        let ex = snap_axis(self.pose.rotation * Vec3::X);
+        let y = self.pose.rotation * Vec3::Y;
+        let ey = snap_axis(y - ex * y.dot(ex));
+        Quat::from_mat3(&glam::Mat3::from_cols(ex, ey, ex.cross(ey))).normalize()
     }
 
     fn busy(&self) -> bool {
@@ -539,7 +558,7 @@ impl World {
 
         if self.docked {
             // Settles upright in the Nest.
-            self.pose.rotation = self.pose.rotation.slerp(Quat::IDENTITY, ease_back);
+            self.pose.rotation = self.pose.rotation.slerp(self.dock_pose, ease_back);
             self.pose.position -= self.pose.position * ease_back;
         }
 
@@ -777,5 +796,29 @@ mod tests {
         w.set_docked(true);
         run(&mut w, 2.0);
         assert!(w.pose().rotation.angle_between(Quat::IDENTITY) < 0.01);
+        assert!(w.on_charger());
+    }
+
+    #[test]
+    fn docking_on_another_face_keeps_it_down_and_does_not_charge() {
+        let mut w = World::new();
+        w.place_face_up(Face::NegY); // the charging face up, so +Y is down
+        run(&mut w, 1.0);
+        w.set_docked(true);
+        run(&mut w, 2.0);
+        assert!(w.docked());
+        assert!(!w.on_charger());
+        assert!((w.pose().rotation * Vec3::Y).y < -0.99, "+Y stays down");
+    }
+
+    #[test]
+    fn the_charging_face_charges_in_any_of_its_four_rotations() {
+        for turns in 0..4 {
+            let mut w = World::new();
+            w.rotate(turns as f32 * std::f32::consts::FRAC_PI_2, 0.0);
+            w.set_docked(true);
+            run(&mut w, 2.0);
+            assert!(w.on_charger(), "{turns} quarter turns");
+        }
     }
 }

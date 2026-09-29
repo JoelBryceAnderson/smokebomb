@@ -45,11 +45,12 @@ impl Item {
     }
 }
 
-/// The Settings page's items. Owner, Power off and About are fixed rows; the
-/// phone will set the owner, and About shows the real version and the die's
-/// id (see [`Draft::setting_value`]). (The mockup had three more: Large text,
+/// The Settings page's items. Owner, Power off, About and Regulatory are fixed
+/// rows; the phone will set the owner, About shows the real version and the
+/// die's id (see [`Draft::setting_value`]), and Regulatory shows the approval
+/// numbers (placeholders until the die is certified). (The mockup had three more: Large text,
 /// Night mode and Verified rolls. See SIM_SPEC H13.)
-pub const SETTINGS: [Item; 8] = [
+pub const SETTINGS: [Item; 9] = [
     Item::choice("Brightness", &["30%", "50%", "70%", "100%"], 2),
     Item::choice("Haptics", &["Off", "On"], 1),
     Item::choice("Smoke", &["Off", "Light", "Full"], 2),
@@ -58,6 +59,7 @@ pub const SETTINGS: [Item; 8] = [
     Item::fixed("Owner", &["Joel"]),
     Item::fixed("Power off", &["Tap to power off"]),
     Item::fixed("About", &[""]),
+    Item::fixed("Regulatory", &[""]),
 ];
 
 const BRIGHTNESS: usize = 0;
@@ -67,6 +69,11 @@ const SLEEP: usize = 3;
 const BLUETOOTH: usize = 4;
 const POWER_OFF: u8 = 6;
 const ABOUT: u8 = 7;
+const REGULATORY: u8 = 8;
+
+/// What the Regulatory row shows, on two lines. FCC ID and IC are
+/// placeholders until the die is certified.
+const REGULATORY_LINES: [&str; 2] = ["FCC TBD · IC TBD", "CE · Model SB-1"];
 
 /// The chosen option of every Settings item.
 pub type Choices = [u8; SETTINGS.len()];
@@ -446,12 +453,19 @@ impl Draft {
     /// for About the firmware version and the die's id.
     pub fn setting_value(&self) -> String<24> {
         let mut s = String::new();
-        if self.setting == ABOUT {
+        if self.setting == REGULATORY {
+            let _ = s.push_str(REGULATORY_LINES[0]);
+        } else if self.setting == ABOUT {
             let _ = write!(s, "v{} · SB-{:04X}", env!("CARGO_PKG_VERSION"), self.device_id);
         } else {
             let _ = s.push_str(self.setting().1);
         }
         s
+    }
+
+    /// A second line under the selected item's value (Regulatory only).
+    pub fn setting_detail(&self) -> Option<&'static str> {
+        (self.setting == REGULATORY).then_some(REGULATORY_LINES[1])
     }
 
     pub fn commit(&self, s: &mut Settings) {
@@ -739,7 +753,7 @@ mod tests {
         assert_eq!(d.tapped(), d);
         assert_eq!(d.tipped(TipDir::Left).tapped(), d.tipped(TipDir::Left));
         let mut d = settings_page();
-        for name in ["Owner", "Power off", "About"] {
+        for name in ["Owner", "Power off", "About", "Regulatory"] {
             while d.setting().0 != name {
                 d = d.tipped(TipDir::Up);
             }
@@ -772,7 +786,7 @@ mod tests {
 
     #[test]
     fn the_settings_are_the_ones_that_do_something() {
-        let names: [&str; 8] = core::array::from_fn(|i| SETTINGS[i].name);
+        let names: [&str; 9] = core::array::from_fn(|i| SETTINGS[i].name);
         assert_eq!(
             names,
             [
@@ -783,7 +797,8 @@ mod tests {
                 "Bluetooth",
                 "Owner",
                 "Power off",
-                "About"
+                "About",
+                "Regulatory"
             ]
         );
         assert_eq!(Settings::default().choices[HAPTICS], 1, "haptics start on");
@@ -807,7 +822,7 @@ mod tests {
             ..Settings::default()
         };
         let mut d = Draft::new(&s).tipped(TipDir::Left).tipped(TipDir::Left);
-        d = d.tipped(TipDir::Down); // wraps to About
+        d = d.tipped(TipDir::Down).tipped(TipDir::Down); // wraps to Regulatory, then About
         assert_eq!(d.setting().0, "About");
         assert_eq!(
             d.setting_value().as_str(),
@@ -818,6 +833,15 @@ mod tests {
             d.tipped(TipDir::Down).setting_value().as_str(),
             "Tap to power off"
         );
+    }
+
+    #[test]
+    fn regulatory_follows_about_with_placeholder_numbers() {
+        let d = settings_page().tipped(TipDir::Down);
+        assert_eq!(d.setting().0, "Regulatory");
+        assert_eq!(d.setting_value().as_str(), "FCC TBD · IC TBD");
+        assert_eq!(d.setting_detail(), Some("CE · Model SB-1"));
+        assert_eq!(d.tipped(TipDir::Up).setting_detail(), None);
     }
 
     #[test]
