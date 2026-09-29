@@ -62,12 +62,7 @@ export function addContacts(
  * edges) meets the five-sided cup: a hairline in the plane that cuts the
  * bottom edges halfway round their radius, following the die's own curves.
  */
-export function addSeam(
-  die: THREE.Group,
-  half: number,
-  edgeRadius: number,
-  material: THREE.Material,
-) {
+export function addSeam(die: THREE.Group, half: number, edgeRadius: number, material: THREE.Material) {
   const ec = half - edgeRadius;
   const a = ec + edgeRadius / Math.SQRT2;
   const r = edgeRadius / Math.SQRT2;
@@ -81,18 +76,11 @@ export function addSeam(
   for (const [cx, cz, a0] of corners) {
     for (let k = 0; k <= 24; k++) {
       const t = a0 + ((Math.PI / 2) * k) / 24;
-      pts.push(
-        new THREE.Vector3(cx + r * Math.cos(t), -a, cz + r * Math.sin(t)),
-      );
+      pts.push(new THREE.Vector3(cx + r * Math.cos(t), -a, cz + r * Math.sin(t)));
     }
   }
   const path = new THREE.CatmullRomCurve3(pts, true, "centripetal");
-  die.add(
-    new THREE.Mesh(
-      new THREE.TubeGeometry(path, 400, 0.06 * MM, 6, true),
-      material,
-    ),
-  );
+  die.add(new THREE.Mesh(new THREE.TubeGeometry(path, 400, 0.06 * MM, 6, true), material));
 }
 
 /** The face that goes down in the Nest: index 3, −Y. */
@@ -113,8 +101,7 @@ function drawEtching(c: HTMLCanvasElement, serial: string) {
   x.textAlign = "center";
   x.textBaseline = "middle";
   const band = C / 2 - 13.25 * PXMM; // centre line of the 2.5 mm border
-  const font = (mm: number) =>
-    `600 ${mm * PXMM}px "Space Grotesk", Arial, sans-serif`;
+  const font = (mm: number) => `600 ${mm * PXMM}px "Space Grotesk", Arial, sans-serif`;
   const side = (rot: number, text: string, mm: number) => {
     x.save();
     x.translate(C / 2, C / 2);
@@ -151,11 +138,7 @@ function drawEtching(c: HTMLCanvasElement, serial: string) {
  * charging face's border. The 1024 px texture covers the 29 mm flat face.
  * Call `update(serial)` to redraw it, e.g. once the font loads.
  */
-export function makeEtching(
-  half: number,
-  anisotropy: number,
-  faces: FaceDef[],
-) {
+export function makeEtching(half: number, anisotropy: number, faces: FaceDef[]) {
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = 1024;
   const texture = new THREE.CanvasTexture(canvas);

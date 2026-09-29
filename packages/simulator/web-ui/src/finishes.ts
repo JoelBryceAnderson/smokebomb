@@ -3,13 +3,7 @@
 // column (the mockup's r128 fed the linear values straight into the shader).
 // Screens are never tinted by a finish.
 
-export type FinishKey =
-  | "stealth"
-  | "chrome"
-  | "ceramic"
-  | "glow"
-  | "gold"
-  | "rainbow";
+export type FinishKey = "stealth" | "chrome" | "ceramic" | "glow" | "gold" | "rainbow";
 
 export interface Finish {
   key: FinishKey;
