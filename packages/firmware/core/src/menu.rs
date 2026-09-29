@@ -13,6 +13,7 @@ use heapless::String;
 use smokebomb_shared::types::{MAX_DICE, MAX_POT_DICE};
 use smokebomb_shared::DieKind;
 
+use crate::smoke::Amount;
 use crate::tips::TipDir;
 
 /// One row of the Settings page. A tap steps `options`; a row without any is
@@ -62,6 +63,8 @@ pub const SETTINGS: [Item; 11] = [
 
 const BRIGHTNESS: usize = 0;
 const HAPTICS: usize = 1;
+const SMOKE: usize = 2;
+const SLEEP: usize = 4;
 const BLUETOOTH: usize = 6;
 const POWER_OFF: u8 = 9;
 
@@ -264,6 +267,18 @@ impl Settings {
 
     pub fn bluetooth_on(&self) -> bool {
         self.choices[BLUETOOTH] != 0
+    }
+
+    /// How much smoke the die makes.
+    pub fn smoke_amount(&self) -> Amount {
+        [Amount::Off, Amount::Light, Amount::Full][self.choices[SMOKE] as usize % 3]
+    }
+
+    /// How long the die may sit untouched before its screens go dark, or
+    /// `None` for never.
+    pub fn sleep_after_ms(&self) -> Option<u64> {
+        const MS: [Option<u64>; 5] = [Some(30_000), Some(60_000), Some(120_000), Some(300_000), None];
+        MS[self.choices[SLEEP] as usize % MS.len()]
     }
 
     /// The mode in use: always Dice when the menu has no Mode page.
@@ -683,6 +698,29 @@ mod tests {
                 d = d.tipped(TipDir::Up);
             }
             assert_eq!(d.tapped(), d, "{name}");
+        }
+    }
+
+    #[test]
+    fn smoke_and_sleep_settings_map_to_values() {
+        let mut s = Settings::default();
+        assert_eq!(s.smoke_amount(), Amount::Full);
+        assert_eq!(s.sleep_after_ms(), Some(120_000));
+        // Smoke is the third item, Sleep after the fifth.
+        let mut d = settings_page().tipped(TipDir::Up).tipped(TipDir::Up);
+        assert_eq!(d.setting().0, "Smoke");
+        d = d.tapped();
+        d.commit(&mut s);
+        assert_eq!(s.smoke_amount(), Amount::Off, "Full wraps to Off");
+        d = d.tapped();
+        d.commit(&mut s);
+        assert_eq!(s.smoke_amount(), Amount::Light);
+        d = d.tipped(TipDir::Up).tipped(TipDir::Up);
+        assert_eq!(d.setting().0, "Sleep after");
+        for expect in [Some(300_000), None, Some(30_000), Some(60_000)] {
+            d = d.tapped();
+            d.commit(&mut s);
+            assert_eq!(s.sleep_after_ms(), expect);
         }
     }
 

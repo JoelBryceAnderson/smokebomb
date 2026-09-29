@@ -119,6 +119,12 @@ pub struct Firmware<P: Platform> {
     frozen: Option<Frozen>,
     last_roll: Option<SignedRoll>,
     docked: bool,
+    /// The last time anything happened to the die, for the Sleep after
+    /// setting.
+    last_activity: u64,
+    /// The screens are dark after sitting idle. The die still rolls if it is
+    /// thrown: only the display sleeps (unlike Power off, which boots on wake).
+    asleep: bool,
 }
 
 impl<P: Platform> Firmware<P> {
@@ -154,6 +160,8 @@ impl<P: Platform> Firmware<P> {
             frozen: None,
             last_roll: None,
             docked: false,
+            last_activity: 0,
+            asleep: false,
         })
     }
 
@@ -173,6 +181,7 @@ impl<P: Platform> Firmware<P> {
 
     /// The saved mode decides whether throws roll or belong to a game.
     fn apply_settings(&mut self) {
+        self.smoke.set_amount(self.settings.smoke_amount());
         self.sm.set_rolls(self.settings.play().rolls());
         self.potato = Potato::new();
     }
@@ -268,6 +277,7 @@ impl<P: Platform> Firmware<P> {
         while self.hw.ble.receive(&mut rx)?.is_some() {}
 
         let before = *self.sm.mode();
+        let input = !events.is_empty();
         let _ = events.push(Event::Tick);
         let game = !self.settings.play().rolls();
         for event in events {
@@ -301,6 +311,7 @@ impl<P: Platform> Firmware<P> {
             self.run_potato(cmd)?;
         }
         let after = *self.sm.mode();
+        self.update_sleep(now, input, &after)?;
         self.ui.tick(now, &before, &after, self.up_face, self.docked);
         self.update_smoke(now, &before, &after);
         self.freeze_for_result(&before, &after);
@@ -335,6 +346,33 @@ impl<P: Platform> Firmware<P> {
                 self.smoke.land();
             }
             PotatoCommand::Clear => self.smoke.clear(),
+        }
+        Ok(())
+    }
+
+    /// The Sleep after setting: the screens go dark once the die has sat
+    /// idle that long, and light again (with the setup label, no boot) when
+    /// it is touched, picked up or thrown.
+    fn update_sleep(&mut self, now: u64, input: bool, mode: &Mode) -> HalResult<()> {
+        let busy = input
+            || self.touch_since.is_some()
+            || !matches!(mode, Mode::Idle)
+            || !self.potato.is_idle()
+            || self.ui.booting();
+        if busy {
+            self.last_activity = now;
+            if self.asleep {
+                self.asleep = false;
+                self.hw.display.set_enabled(true)?;
+                self.ui.woke(now);
+            }
+        } else if !self.asleep {
+            if let Some(ms) = self.settings.sleep_after_ms() {
+                if now.saturating_sub(self.last_activity) >= ms {
+                    self.asleep = true;
+                    self.hw.display.set_enabled(false)?;
+                }
+            }
         }
         Ok(())
     }
@@ -607,9 +645,10 @@ impl<P: Platform> Firmware<P> {
         Ok(())
     }
 
-    /// Push saved settings to the hardware they control. The rest (smoke,
-    /// large text, sleep, night mode, verified rolls) are stored and not
-    /// acted on yet.
+    /// Push saved settings to the hardware they control. Smoke and the mode
+    /// are applied by `apply_settings`, and Sleep after by `update_sleep`.
+    /// Large text, night mode and verified rolls are stored and not acted on
+    /// yet.
     fn apply_hardware_settings(&mut self) -> HalResult<()> {
         let level = (self.settings.brightness_pct() as u16 * 255 / 100) as u8;
         for face in Face::ALL {
@@ -634,6 +673,7 @@ impl<P: Platform> Firmware<P> {
             None
         };
         let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
+        let asleep = self.asleep;
         let Self {
             frames,
             layer,
@@ -646,7 +686,7 @@ impl<P: Platform> Firmware<P> {
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
-        let blackout = ui.blackout();
+        let blackout = ui.blackout() || asleep;
 
         for face in Face::ALL {
             let fb = &mut frames[face.index()];

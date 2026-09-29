@@ -467,22 +467,49 @@ fn quick_throw_smoke() {
     );
 }
 
-#[test]
-fn throw_smoke() {
-    // Hold the throw button 1 s, release: the shake fills the cloud, the
-    // tumble carries it, the landing drains it with embers. It rolls 12 and
-    // lands +Z up.
-    let mut run = Run::with_world();
+impl Run {
+    /// Change some settings before the scenario starts.
+    fn with_settings(mut self, edit: impl FnOnce(&mut Settings)) -> Self {
+        let mut settings = *self.fw.settings();
+        edit(&mut settings);
+        self.fw.set_settings(settings);
+        self
+    }
+}
+
+/// Hold the throw button 1 s, release: the shake fills the cloud, the tumble
+/// carries it, the landing drains it with embers. It rolls 12 and lands +Z up.
+fn throw_smoke_scenario(scenario: &str, mut run: Run) {
     run.world.as_mut().unwrap().set_next_landing(Face::PosZ);
     run.sim.lock().rng_script.push_back(11);
     run_timeline(
-        "throw-smoke",
+        scenario,
         run,
         &[
             9.2, 9.5, 9.9, 10.2, 10.6, 11.0, 11.3, 11.45, 11.6, 11.8, 12.1, 12.5, 13.5,
         ],
         vec![(9.0, Run::shake), (10.0, Run::throw_release)],
     );
+}
+
+#[test]
+fn throw_smoke() {
+    throw_smoke_scenario("throw-smoke", Run::with_world());
+}
+
+/// The Smoke setting is the third Settings item: Off, Light, Full.
+const SMOKE_ITEM: usize = 2;
+
+#[test]
+fn throw_smoke_light() {
+    let run = Run::with_world().with_settings(|s| s.choices[SMOKE_ITEM] = 1);
+    throw_smoke_scenario("throw-smoke-light", run);
+}
+
+#[test]
+fn throw_smoke_off() {
+    let run = Run::with_world().with_settings(|s| s.choices[SMOKE_ITEM] = 0);
+    throw_smoke_scenario("throw-smoke-off", run);
 }
 
 #[test]

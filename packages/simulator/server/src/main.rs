@@ -977,6 +977,123 @@ mod tests {
         assert!(rig.fw.potato().is_idle());
     }
 
+    /// The default settings with some items chosen (by index into
+    /// `SETTINGS`: 2 is Smoke, 4 is Sleep after).
+    fn settings_with(choices: &[(usize, u8)]) -> smokebomb_firmware::smokebomb_core::menu::Settings {
+        let mut s = smokebomb_firmware::smokebomb_core::menu::Settings::default();
+        for &(item, option) in choices {
+            s.choices[item] = option;
+        }
+        s
+    }
+
+    fn lit(rig: &Rig) -> bool {
+        rig.sim.lock().faces.iter().any(|f| f.iter().any(|b| *b != 0))
+    }
+
+    #[test]
+    fn the_screens_sleep_after_the_chosen_idle_time_and_wake_on_a_tap() {
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.fw.set_settings(settings_with(&[(4, 0)])); // Sleep after 30 s
+        rig.run(7.0); // boot
+        rig.tap(Face::PosZ);
+        assert!(lit(&rig), "the tap shows the setup");
+        rig.run(20.0);
+        assert!(rig.sim.lock().display_on, "still awake at 20 s");
+        rig.run(15.0);
+        assert!(!rig.sim.lock().display_on, "asleep after 30 s");
+        assert!(!lit(&rig));
+        assert_eq!(*rig.fw.mode(), Mode::Idle, "sleeping isn't a mode");
+
+        // A tap wakes it with the setup label, and no boot.
+        rig.tap(Face::PosY);
+        assert!(rig.sim.lock().display_on);
+        assert!(lit(&rig));
+        assert!(!rig.fw.booting());
+    }
+
+    #[test]
+    fn touching_the_die_puts_off_sleep() {
+        let mut rig = Rig::new();
+        rig.fw.set_settings(settings_with(&[(4, 0)]));
+        rig.run(7.0);
+        rig.run(25.0);
+        rig.tap(Face::PosZ);
+        rig.run(25.0);
+        assert!(rig.sim.lock().display_on, "50 s in but 25 s since the tap");
+        rig.run(10.0);
+        assert!(!rig.sim.lock().display_on);
+    }
+
+    #[test]
+    fn a_sleeping_die_still_rolls_when_thrown() {
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.fw.set_settings(settings_with(&[(4, 0)]));
+        rig.run(45.0);
+        assert!(!rig.sim.lock().display_on);
+        rig.world.start_shake();
+        rig.run(1.0);
+        assert!(rig.sim.lock().display_on, "a shake wakes it");
+        rig.world.end_shake(true);
+        for _ in 0..(10.0 / 0.1) as usize {
+            if matches!(rig.fw.mode(), Mode::Reveal { .. }) {
+                break;
+            }
+            rig.run(0.1);
+        }
+        assert!(matches!(rig.fw.mode(), Mode::Reveal { .. }));
+        assert!(rig.fw.last_roll().is_some());
+    }
+
+    #[test]
+    fn sleep_never_stays_awake() {
+        let mut rig = Rig::new();
+        rig.fw.set_settings(settings_with(&[(4, 4)])); // Never
+        rig.run(7.0);
+        assert_eq!(rig.fw.settings().sleep_after_ms(), None);
+        rig.run(200.0);
+        assert!(rig.sim.lock().display_on);
+    }
+
+    #[test]
+    fn smoke_off_makes_no_smoke_and_light_makes_less() {
+        let cloud = |choice: Option<u8>| {
+            let mut rig = Rig::new();
+            if let Some(c) = choice {
+                rig.fw.set_settings(settings_with(&[(2, c)]));
+            }
+            rig.run(7.0);
+            rig.world.start_shake();
+            rig.run(1.5);
+            rig.fw.smoke_mut().len()
+        };
+        let (full, light, off) = (cloud(None), cloud(Some(1)), cloud(Some(0)));
+        assert!(full > 0, "a shake builds smoke");
+        assert!(light > 0 && light < full, "light {light} < full {full}");
+        assert_eq!(off, 0);
+    }
+
+    #[test]
+    fn smoke_chosen_in_the_menu_applies_when_saved() {
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings, on Brightness
+        rig.tip(TipDir::Up); // Haptics
+        rig.tip(TipDir::Up); // Smoke
+        rig.tap(Face::PosZ); // Full -> Off
+        assert_eq!(rig.fw.menu_draft().unwrap().setting(), ("Smoke", "Off"));
+        rig.hold(Face::PosZ);
+        rig.world.start_shake();
+        rig.run(1.5);
+        assert_eq!(rig.fw.smoke_mut().len(), 0, "no smoke once Off is saved");
+    }
+
     #[test]
     fn a_hold_on_power_off_saves_and_returns_like_anywhere_else() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
