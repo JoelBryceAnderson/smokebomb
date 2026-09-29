@@ -16,7 +16,6 @@ use core::f32::consts::PI;
 
 use libm::{acosf, cosf, fabsf, sinf, sqrtf};
 
-use crate::display::FG;
 use crate::gfx::{Painter, Style};
 use crate::pigs::Pose;
 
@@ -126,8 +125,8 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Part {
-    /// Dark disc, bright rim.
-    Body,
+    /// A disc filled at this panel level (0–15) with a brighter rim.
+    Body(u8),
     /// A bright spot: an eye, or the dot on a pig's side.
     Spot,
 }
@@ -137,18 +136,18 @@ enum Part {
 struct Ball(f32, f32, f32, f32, Part);
 
 const PIG: [Ball; 16] = [
-    Ball(-0.30, 0.0, 0.0, 0.34, Part::Body),
-    Ball(0.0, 0.0, 0.0, 0.38, Part::Body),
-    Ball(0.30, 0.0, 0.0, 0.34, Part::Body),
-    Ball(0.66, 0.08, 0.0, 0.27, Part::Body),
-    Ball(0.92, 0.03, 0.0, 0.12, Part::Body),
-    Ball(0.58, 0.33, 0.17, 0.10, Part::Body),
-    Ball(0.58, 0.33, -0.17, 0.10, Part::Body),
-    Ball(0.30, -0.38, 0.17, 0.09, Part::Body),
-    Ball(0.30, -0.38, -0.17, 0.09, Part::Body),
-    Ball(-0.30, -0.38, 0.17, 0.09, Part::Body),
-    Ball(-0.30, -0.38, -0.17, 0.09, Part::Body),
-    Ball(-0.68, 0.15, 0.0, 0.05, Part::Body),
+    Ball(-0.30, 0.0, 0.0, 0.34, Part::Body(8)),
+    Ball(0.0, 0.0, 0.0, 0.38, Part::Body(8)),
+    Ball(0.30, 0.0, 0.0, 0.34, Part::Body(8)),
+    Ball(0.66, 0.08, 0.0, 0.27, Part::Body(9)),
+    Ball(0.92, 0.03, 0.0, 0.12, Part::Body(11)),
+    Ball(0.58, 0.33, 0.17, 0.10, Part::Body(7)),
+    Ball(0.58, 0.33, -0.17, 0.10, Part::Body(7)),
+    Ball(0.30, -0.38, 0.17, 0.09, Part::Body(6)),
+    Ball(0.30, -0.38, -0.17, 0.09, Part::Body(6)),
+    Ball(-0.30, -0.38, 0.17, 0.09, Part::Body(6)),
+    Ball(-0.30, -0.38, -0.17, 0.09, Part::Body(6)),
+    Ball(-0.68, 0.15, 0.0, 0.05, Part::Body(6)),
     Ball(0.80, 0.17, 0.13, 0.04, Part::Spot),
     Ball(0.80, 0.17, -0.13, 0.04, Part::Spot),
     // The dot, on the −Z side.
@@ -169,7 +168,7 @@ pub struct PigState {
 fn depth_below_centre(q: Quat) -> f32 {
     let mut low = 0.0f32;
     for Ball(x, y, z, r, part) in PIG {
-        if part == Part::Body {
+        if matches!(part, Part::Body(_)) {
             low = low.min(q.rotate([x, y, z])[1] - r);
         }
     }
@@ -290,7 +289,7 @@ pub fn draw(p: &mut Painter, scene: Scene, phase: f32, alpha: f32) {
         x: 0.0,
         y: 0.0,
         r: 0.0,
-        part: Part::Body,
+        part: Part::Body(0),
     });
     let mut n = 0;
     for st in states {
@@ -316,17 +315,23 @@ pub fn draw(p: &mut Painter, scene: Scene, phase: f32, alpha: f32) {
             j -= 1;
         }
     }
-    let spot = Style::new(FG, alpha, 0.0);
+    let spot = Style::new(15 * 17, alpha, 0.0);
     for d in discs.iter() {
         match d.part {
-            Part::Body => {
-                // Nearer parts are brighter, so the pig reads as solid.
-                let shade = (0x70 as f32 + d.depth * 0x30 as f32).clamp(0x38 as f32, 0xB0 as f32) as u8;
-                p.fill_circle(d.x, d.y, d.r, Style::new(shade, alpha, 0.0));
-                // The rim is a step brighter than the fill, so the joins
-                // between a pig's parts show without ruling lines across it.
-                let rim = Style::new(shade.saturating_add(0x48), alpha, 0.0);
-                p.stroke_arc(d.x, d.y, d.r, 0.0, 2.0 * PI, 1.8, rim);
+            Part::Body(level) => {
+                // Fixed levels, on the panel's own steps: a fill that moves
+                // through in-between greys would dither differently every
+                // frame and shimmer.
+                p.fill_circle(d.x, d.y, d.r, Style::new(level * 17, alpha, 0.0));
+                p.stroke_arc(
+                    d.x,
+                    d.y,
+                    d.r,
+                    0.0,
+                    2.0 * PI,
+                    1.8,
+                    Style::new((level + 3).min(15) * 17, alpha, 0.0),
+                );
             }
             Part::Spot => p.fill_circle(d.x, d.y, d.r, spot),
         }
@@ -356,7 +361,7 @@ mod tests {
             let st = rest(0, pose);
             let mut low = f32::MAX;
             for Ball(x, y, z, r, part) in PIG {
-                if part == Part::Body {
+                if matches!(part, Part::Body(_)) {
                     let w = st.q.rotate([x, y, z]);
                     low = low.min(w[1] + st.pos[1] - r);
                 }
@@ -373,7 +378,7 @@ mod tests {
                 let st = tumble(i, t);
                 let mut low = f32::MAX;
                 for Ball(x, y, z, r, part) in PIG {
-                    if part == Part::Body {
+                    if matches!(part, Part::Body(_)) {
                         low = low.min(st.q.rotate([x, y, z])[1] + st.pos[1] - r);
                     }
                 }

@@ -1031,7 +1031,11 @@ impl<P: Platform> Firmware<P> {
                 FaceContent::LowBattery { alpha } => screens::draw_bolt(&mut c, alpha),
             }
             if let Some(scene) = pig_scene {
-                if face != up.opposite() {
+                // In the air every face shows the pigs: which one faces down
+                // changes all the time, and would blink on and off. Landed,
+                // the face-down screen stays dark (H2).
+                let in_air = matches!(scene, pigfx::Scene::Tumbling(_));
+                if in_air || face != up.opposite() {
                     // Each face shows a different moment of the same throw.
                     pigfx::draw(c.painter, scene, face.index() as f32 * 0.9, pig_alpha);
                 }
