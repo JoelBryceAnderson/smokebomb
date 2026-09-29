@@ -4,7 +4,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { PANEL_SIZE, Pose, SpinAxis, TipDirection } from "./protocol";
 import { FINISHES, FinishKey, GLOW_INTENSITY, LIGHTING, SCREW_DARK } from "./finishes";
-import { addScrews, addSeam, makeEtching } from "./shell";
+import { addScrews, addSeam, makeEtching, ENGRAVE_GLSL, ENGRAVE_NORMAL } from "./shell";
 
 // Mockup scale (SIM_SPEC A1): 1 scene unit = 13.25 mm, 34 mm die, 2.5 mm edges.
 const MM = 1 / 13.25;
@@ -133,19 +133,26 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       sh.uniforms.heatOn = heat.on;
       sh.uniforms.heatShift = heat.shift;
       sh.vertexShader = sh.vertexShader
-        .replace("#include <common>", "#include <common>\nvarying vec3 vHeatPos;")
+        .replace("#include <common>", "#include <common>\nvarying vec3 vHeatPos;\nvarying vec3 vObjPos;\nvarying vec3 vObjNrm;")
         .replace(
           "#include <begin_vertex>",
-          "#include <begin_vertex>\nvHeatPos = (modelMatrix * vec4(transformed, 1.0)).xyz;",
+          "#include <begin_vertex>\nvHeatPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvObjPos = transformed;\nvObjNrm = normal;",
         );
       sh.fragmentShader = sh.fragmentShader
         .replace(
           "#include <common>",
-          "#include <common>\nvarying vec3 vHeatPos;\nuniform float heatOn;\nuniform float heatShift;",
+          `#include <common>
+          varying vec3 vHeatPos;
+          varying vec3 vObjPos;
+          varying vec3 vObjNrm;
+          uniform float heatOn;
+          uniform float heatShift;
+          ${ENGRAVE_GLSL}`,
         )
         .replace(
           "#include <normal_fragment_maps>",
           `#include <normal_fragment_maps>
+          ${ENGRAVE_NORMAL}
           if (heatOn > 0.5) {
             float ndv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
             float t = fract(ndv * 0.9 + heatShift + dot(vHeatPos, vec3(0.05, 0.035, 0.045))) * 5.0;

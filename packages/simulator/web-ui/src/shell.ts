@@ -163,3 +163,49 @@ export function makeEtching(half: number, anisotropy: number, faces: FaceDef[]) 
     },
   };
 }
+
+/**
+ * Engraved screws, as shading: the groove and slot are cut into the shell's
+ * normals, so they catch light like real cuts. It is computed from the
+ * fragment's object-space position rather than a texture, so it stays crisp
+ * at any zoom and lines up on every face. Folding the face coordinates with
+ * abs() maps all four screws of a face onto one, and a hex with a flat toward
+ * the window centre is symmetric under that fold.
+ */
+export const ENGRAVE_GLSL = `
+  // Height of the engraving in mm (0 on the flat metal, negative in the cuts) for a face-local point in mm.
+  float engraveHeight(vec2 q) {
+    const float AT = ${(SCREW_AT / MM).toFixed(3)};
+    const float APO = 0.8660254;
+    const float DEPTH = 0.12;
+    vec2 p = abs(q) - vec2(AT);
+    // flat normals of a hex with a flat toward the window centre (the 225 degree diagonal)
+    float d = max(max(abs(dot(p, vec2(0.7071, 0.7071))),
+                      abs(dot(p, vec2(-0.2588, 0.9659)))),
+                      abs(dot(p, vec2(0.9659, -0.2588))));
+    float rIn = ${(HEX_R / MM).toFixed(3)} * APO;
+    float rOut = ${((HEX_R + HEX_GAP) / MM).toFixed(3)} * APO;
+    float w = max(0.035, fwidth(d) * 0.75);
+    float ring = smoothstep(rIn - w, rIn + w, d) * (1.0 - smoothstep(rOut - w, rOut + w, d));
+    // slot: a bar along the diagonal toward the centre
+    float along = abs(dot(p, vec2(0.7071, 0.7071)));
+    float across = abs(dot(p, vec2(-0.7071, 0.7071)));
+    float slot = (1.0 - smoothstep(0.9 - w, 0.9 + w, along)) * (1.0 - smoothstep(0.1 - w, 0.1 + w, across));
+    return -DEPTH * max(ring, slot);
+  }
+`;
+
+export const ENGRAVE_NORMAL = `
+  {
+    vec3 an = abs(vObjNrm);
+    float flatFace = step(0.98, max(an.x, max(an.y, an.z)));
+    vec2 fq = an.x > an.y && an.x > an.z ? vObjPos.yz : (an.y > an.z ? vObjPos.xz : vObjPos.xy);
+    float h = engraveHeight(fq * ${(1 / MM).toFixed(3)}) * ${MM.toFixed(6)} * flatFace;
+    vec3 dpx = dFdx(-vViewPosition), dpy = dFdy(-vViewPosition);
+    float dhx = dFdx(h), dhy = dFdy(h);
+    vec3 r1 = cross(dpy, normal), r2 = cross(normal, dpx);
+    float det = dot(dpx, r1);
+    vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
+    normal = normalize(abs(det) * normal - grad);
+  }
+`;
