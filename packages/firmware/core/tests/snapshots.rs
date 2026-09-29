@@ -116,7 +116,9 @@ impl Run {
             s.manual_time_ms = Some((self.frame as f64 * 1000.0 / FPS).round() as u64);
             if let Some(w) = &mut self.world {
                 // World time matches frame time: frame 0 is at t = 0.
-                s.imu_resting = w.step(if self.frame == 0 { 0.0 } else { 1.0 / FPS });
+                let dt = if self.frame == 0 { 0.0 } else { 1.0 / FPS };
+                s.imu_resting = w.step(dt);
+                s.sync_world(w, dt);
             }
         }
         self.fw.tick().unwrap();
@@ -634,6 +636,95 @@ fn menu_settings_tap_and_power_off() {
             (12.6, Run::tap),
             (20.2, Run::tap),
         ],
+    );
+}
+
+// ---------- the Nest ----------
+
+fn world_of(run: &mut Run) -> &mut World {
+    run.world.as_mut().expect("the world model")
+}
+
+fn dock_right(run: &mut Run) {
+    world_of(run).place_in_nest(Face::NegY, 0);
+}
+
+fn dock_charging_face_up(run: &mut Run) {
+    world_of(run).place_in_nest(Face::PosY, 0);
+}
+
+fn dock_charging_face_beside(run: &mut Run) {
+    world_of(run).place_in_nest(Face::PosX, 0);
+}
+
+fn dock_unplugged(run: &mut Run) {
+    run.sim.lock().nest_plugged = false;
+    world_of(run).place_in_nest(Face::NegY, 0);
+}
+
+fn lift(run: &mut Run) {
+    world_of(run).lift();
+}
+
+fn fault_on(run: &mut Run) {
+    run.sim.lock().charger_fault = true;
+}
+
+#[test]
+fn nest_dock_animation() {
+    // Placed at 7 s; it stills at about 8 s, seats by 8.5 s, and the dock
+    // animation runs 8.5–10.1 s; the display holds after that.
+    run_timeline(
+        "nest-dock",
+        Run::with_world(),
+        &[7.4, 8.6, 8.8, 9.0, 9.2, 9.4, 9.6, 9.8, 10.2, 11.0, 12.5],
+        vec![(7.0, dock_right)],
+    );
+}
+
+#[test]
+fn nest_undock() {
+    run_timeline(
+        "nest-undock",
+        Run::with_world(),
+        &[12.0, 13.0, 13.2, 13.4, 13.6, 14.0, 14.4, 15.0, 16.0],
+        vec![(7.0, dock_right), (13.0, lift)],
+    );
+}
+
+#[test]
+fn nest_charging_face_on_top() {
+    run_timeline(
+        "nest-flip",
+        Run::with_world(),
+        &[9.5, 10.0, 10.3, 10.6, 10.9],
+        vec![(7.0, dock_charging_face_up)],
+    );
+}
+
+#[test]
+fn nest_charging_face_beside() {
+    run_timeline(
+        "nest-tip",
+        Run::with_world(),
+        &[9.5, 9.9, 10.3],
+        vec![(7.0, dock_charging_face_beside)],
+    );
+}
+
+#[test]
+fn nest_no_power_and_fault() {
+    run_timeline(
+        "nest-no-power",
+        Run::with_world(),
+        &[12.0, 13.0],
+        vec![(7.0, dock_unplugged)],
+    );
+    run_timeline(
+        "nest-fault",
+        Run::with_world(),
+        &[12.0, 13.0],
+        vec![(7.0, dock_right), (10.0, fault_on)],
     );
 }
 

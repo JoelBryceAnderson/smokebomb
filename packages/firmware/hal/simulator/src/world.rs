@@ -25,6 +25,21 @@ const IMPACT_MG: f32 = 3000.0;
 const AIRBORNE_ABOVE: f32 = 0.05;
 /// The firmware needs a few shake samples before a release reads as a throw.
 const MIN_SHAKE_S: f64 = 0.05;
+/// Scene units to millimetres (SIM_SPEC A1: 1 u = 13.25 mm).
+const MM_PER_U: f32 = 13.25;
+/// The Nest's magnet is this far below the die's centre when it is seated
+/// (the pocket floor, and the magnets under it), and gives this field there.
+const NEST_MAGNET_DEPTH_MM: f32 = 20.0;
+const NEST_FIELD_MG: f32 = 12_000.0;
+/// The Earth's field in world axes (+Y up), milligauss: about 0.5 G, dipping.
+const EARTH_MG: Vec3 = Vec3::new(200.0, -420.0, 100.0);
+/// A stray magnet beside the die (a phone, a speaker, a fridge magnet): 7 G
+/// at the die, pointing sideways at it. Strong enough to pass the field
+/// strength test alone, so the direction check is what rejects it.
+const STRAY_MG: Vec3 = Vec3::new(7_000.0, 0.0, 0.0);
+/// How high the hand lifts the die out of the Nest (scene units): far enough
+/// that the Nest's field is gone.
+const LIFT_HEIGHT: f32 = 3.0;
 /// The simulator's camera sits along (0.55, 0.62, 1) looking at the die
 /// (SIM_SPEC A5); this is its right, (1, 0, −0.55) normalised.
 pub const DEFAULT_VIEWER_RIGHT: Vec3 = Vec3::new(0.876_356, 0.0, -0.481_996);
@@ -118,9 +133,19 @@ pub struct World {
     /// The viewer's right in world space (horizontal). Tips use it as the
     /// up/down axis; the menu snap turns the held face toward the viewer.
     viewer_right: Vec3,
+    /// Seated in the Nest, in `dock_rot`.
     docked: bool,
-    /// Where the die settles in the Nest: the way it was sitting, squared up.
-    dock_pose: Quat,
+    /// The rotation it is seated in: the face down and a quarter-turn about
+    /// vertical.
+    dock_rot: Quat,
+    /// A Nest is under the die's resting place (so its magnet is felt).
+    nest_under: bool,
+    /// A stray magnet sits beside the die.
+    stray_magnet: bool,
+    /// Held above the Nest (scene units), after a lift.
+    hover: Option<f32>,
+    /// The next step reads a small bump: the die was just set down.
+    bump: bool,
     reduced_motion: bool,
     rng: u64,
     /// Tests: the face the next throw lands on, instead of a random one.
@@ -159,7 +184,11 @@ impl World {
             spin: None,
             viewer_right: DEFAULT_VIEWER_RIGHT,
             docked: false,
-            dock_pose: Quat::IDENTITY,
+            dock_rot: Quat::IDENTITY,
+            nest_under: false,
+            stray_magnet: false,
+            hover: None,
+            bump: false,
             reduced_motion: false,
             rng: seed | 1,
             next_landing: None,
@@ -198,6 +227,8 @@ impl World {
         }
         self.spin = None;
         self.docked = false;
+        self.nest_under = false;
+        self.hover = None;
         self.turn = None;
         self.shake_start.get_or_insert(self.time);
     }
@@ -253,6 +284,7 @@ impl World {
         if self.busy() {
             return false;
         }
+        self.hover = None;
         let (axis, angle) = match dir {
             TipDir::Up => (right, -std::f32::consts::FRAC_PI_2),
             TipDir::Down => (right, std::f32::consts::FRAC_PI_2),
@@ -401,6 +433,8 @@ impl World {
         if self.busy() || self.docked {
             return;
         }
+        self.hover = None;
+        self.nest_under = false;
         let normal = self.pose.rotation * face_normal(face);
         let to = Quat::from_rotation_arc(normal.normalize(), Vec3::Y) * self.pose.rotation;
         self.turn = Some(Turn {
@@ -414,16 +448,94 @@ impl World {
         });
     }
 
+    /// Seat the die in the Nest the way it is sitting, squared up.
     pub fn set_docked(&mut self, docked: bool) {
         if docked {
-            self.spin = None;
-            self.shake_start = None;
-            self.throw_when_ready = false;
-            self.tumble = None;
-            self.turn = None;
-            self.dock_pose = self.squared();
+            self.seat(self.squared());
+        } else {
+            self.lift();
         }
-        self.docked = docked;
+    }
+
+    /// Put the die in the Nest with `down` toward the pocket floor, turned
+    /// `quarters` quarter-turns about vertical. A Nest appears under it.
+    /// The die settles into place over about a second.
+    pub fn place_in_nest(&mut self, down: Face, quarters: u8) {
+        self.seat(
+            (Quat::from_rotation_y(quarters as f32 * std::f32::consts::FRAC_PI_2)
+                * Quat::from_rotation_arc(face_normal(down), -Vec3::Y))
+            .normalize(),
+        );
+    }
+
+    /// Seat the die in the Nest, settling into `rot`.
+    fn seat(&mut self, rot: Quat) {
+        self.spin = None;
+        self.shake_start = None;
+        self.throw_when_ready = false;
+        self.tumble = None;
+        self.turn = None;
+        self.hover = None;
+        self.dock_rot = rot;
+        self.docked = true;
+        self.nest_under = true;
+        self.bump = true;
+        // Set down from a little above, so it is seen to drop in.
+        self.pose.position.y = self.pose.position.y.max(0.25);
+    }
+
+    /// Lift the die out of the Nest and hold it in the hand above it. The
+    /// Nest stays where it was; the die's next resting place is elsewhere.
+    pub fn lift(&mut self) {
+        if !self.docked {
+            return;
+        }
+        self.docked = false;
+        self.nest_under = false;
+        self.hover = Some(LIFT_HEIGHT);
+    }
+
+    /// The face pointing down.
+    pub fn face_down(&self) -> Face {
+        Face::ALL
+            .into_iter()
+            .min_by(|a, b| {
+                (self.pose.rotation * face_normal(*a))
+                    .y
+                    .total_cmp(&(self.pose.rotation * face_normal(*b)).y)
+            })
+            .unwrap_or(Face::NegY)
+    }
+
+    /// Put a stray magnet beside the die (or take it away).
+    pub fn set_stray_magnet(&mut self, on: bool) {
+        self.stray_magnet = on;
+    }
+
+    /// Whether the die sits in the Nest with power to be had: the die is
+    /// seated, and settled into its pocket.
+    pub fn seated(&self) -> bool {
+        self.docked
+            && self.pose.position.length() < 0.02
+            && self.pose.rotation.angle_between(self.dock_rot) < 0.02
+    }
+
+    /// What the magnetometer's field is, in milligauss in the die's frame
+    /// (before the die's own hard-iron offset): the Earth's, the Nest's
+    /// magnet below (falling off with the cube of the distance as the die
+    /// lifts), and a stray magnet if there is one.
+    pub fn mag_field_mg(&self) -> [i32; 3] {
+        let mut b = EARTH_MG;
+        if self.nest_under {
+            let d = NEST_MAGNET_DEPTH_MM + self.pose.position.y.max(0.0) * MM_PER_U;
+            let k = (NEST_MAGNET_DEPTH_MM / d).powi(3);
+            b += Vec3::NEG_Y * NEST_FIELD_MG * k;
+        }
+        if self.stray_magnet {
+            b += STRAY_MG;
+        }
+        let die = self.pose.rotation.inverse() * b;
+        [die.x as i32, die.y as i32, die.z as i32]
     }
 
     /// The current pose turned to the nearest face-aligned orientation, so
@@ -557,9 +669,22 @@ impl World {
         }
 
         if self.docked {
-            // Settles upright in the Nest.
-            self.pose.rotation = self.pose.rotation.slerp(self.dock_pose, ease_back);
+            // Settles into the Nest's pocket.
+            self.pose.rotation = self.pose.rotation.slerp(self.dock_rot, ease_back);
             self.pose.position -= self.pose.position * ease_back;
+            // The turn into place is what the gyro reads; a die set down
+            // also gives the accelerometer a knock.
+            if self.bump {
+                self.bump = false;
+                linear = Vec3::Y * 400.0;
+            }
+        } else if let Some(h) = self.hover {
+            // Rising into the hand: the sensor reads the push.
+            let gap = h - self.pose.position.y;
+            self.pose.position.y += gap * ease_back;
+            if gap > 0.05 {
+                linear = Vec3::Y * 600.0;
+            }
         }
 
         self.imu(before, linear, dt as f32)

@@ -12,6 +12,7 @@
 //!   Off ── Tap ──▶ Idle (boot)
 //!                                 └──── Shaking / FreeFall (discard) ──▶ Shaking / Airborne
 //!   any ── Docked(true) ──▶ Nest ── Docked(false) ──▶ Idle
+//!   Nest ── LongPress ──▶ Menu ── (save / timeout) ──▶ Nest, if still docked
 //! ```
 //!
 //! Tips inside the menu don't pass through here: the firmware reads them
@@ -56,6 +57,8 @@ pub enum Event {
     LongPress,
     /// A tap in the menu while Power off is selected.
     PowerOff,
+    /// A docked state began or ended (the [`crate::nest::Nest`] decides:
+    /// seated in the Nest, with the seating settled).
     Docked(bool),
     /// No menu input for [`crate::MENU_IDLE_MS`].
     MenuTimeout,
@@ -88,6 +91,9 @@ pub struct StateMachine {
     /// then only matters to the menu, which a shake or a throw closes
     /// without saving.
     rolls: bool,
+    /// Seated in the Nest. The menu can be open while docked, and closing it
+    /// goes back to the Nest.
+    docked: bool,
 }
 
 impl Default for StateMachine {
@@ -101,6 +107,7 @@ impl StateMachine {
         Self {
             mode: Mode::Idle,
             rolls: true,
+            docked: false,
         }
     }
 
@@ -110,6 +117,15 @@ impl StateMachine {
 
     pub fn mode(&self) -> &Mode {
         &self.mode
+    }
+
+    /// Where the die rests when nothing is going on: the Nest if seated.
+    fn resting(&self) -> Mode {
+        if self.docked {
+            Mode::Nest
+        } else {
+            Mode::Idle
+        }
     }
 
     pub fn handle(&mut self, event: Event, now_ms: u64) -> Commands {
@@ -122,13 +138,29 @@ impl StateMachine {
         };
 
         let next = match (self.mode, event) {
-            (Nest, Event::Docked(false)) => Some(Idle),
+            (Nest, Event::Docked(false)) => {
+                self.docked = false;
+                Some(Idle)
+            }
+            // Picked up with the menu open (or a throw under way): the die
+            // is no longer docked, but what it's doing carries on.
+            (_, Event::Docked(false)) => {
+                self.docked = false;
+                None
+            }
+            // Docking doesn't block settings: a hold opens the menu.
+            (Nest, Event::LongPress) => {
+                emit(Haptic(HapticEffect::MenuOpen));
+                emit(MenuOpen);
+                Some(Menu)
+            }
             (Nest, _) => None,
             (Off, Event::Tap) => {
                 emit(WakeUp);
                 Some(Idle)
             }
             (_, Event::Docked(true)) => {
+                self.docked = true;
                 if self.mode == Menu {
                     emit(MenuClose { save: false });
                 }
@@ -139,7 +171,7 @@ impl StateMachine {
             (Menu, Event::LongPress) => {
                 emit(MenuClose { save: true });
                 emit(Haptic(HapticEffect::MenuSave));
-                Some(Idle)
+                Some(self.resting())
             }
             (Menu, Event::Tap) => {
                 emit(MenuTap);
@@ -151,7 +183,7 @@ impl StateMachine {
             }
             (Menu, Event::MenuTimeout) => {
                 emit(MenuClose { save: false });
-                Some(Idle)
+                Some(self.resting())
             }
             (Menu, Event::Motion(Motion::Shaking | Motion::FreeFall)) if !self.rolls => {
                 emit(MenuClose { save: false });
@@ -349,6 +381,29 @@ mod tests {
             assert_eq!(*sm.mode(), mode, "{event:?}");
             assert!(cmds.contains(&Command::MenuClose { save: false }), "{event:?}");
         }
+    }
+
+    #[test]
+    fn a_hold_in_the_nest_opens_the_menu_and_saving_goes_back_to_the_nest() {
+        let mut sm = StateMachine::new();
+        feed(&mut sm, &[Event::Docked(true)]);
+        let cmds = feed(&mut sm, &[Event::LongPress]);
+        assert_eq!(*sm.mode(), Mode::Menu);
+        assert!(cmds.contains(&Command::MenuOpen));
+        feed(&mut sm, &[Event::LongPress]);
+        assert_eq!(*sm.mode(), Mode::Nest);
+    }
+
+    #[test]
+    fn picking_the_die_up_with_the_menu_open_keeps_the_menu() {
+        let mut sm = StateMachine::new();
+        feed(
+            &mut sm,
+            &[Event::Docked(true), Event::LongPress, Event::Docked(false)],
+        );
+        assert_eq!(*sm.mode(), Mode::Menu);
+        feed(&mut sm, &[Event::MenuTimeout]);
+        assert_eq!(*sm.mode(), Mode::Idle, "no longer docked");
     }
 
     #[test]

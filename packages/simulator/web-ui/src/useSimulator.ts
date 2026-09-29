@@ -15,6 +15,8 @@ export interface SimulatorState {
   /** The server speaks a different protocol version than this page. */
   protocolMismatch: { server: number; page: number } | null;
   mode: string;
+  /** The Nest's dock state. */
+  nest: string;
   rolls: RollView[];
   lastHaptic: { effect: string; at: number } | null;
 }
@@ -35,6 +37,7 @@ export function useSimulator(streams: Streams) {
     connected: false,
     protocolMismatch: null,
     mode: "—",
+    nest: "OffNest",
     rolls: [],
     lastHaptic: null,
   });
@@ -81,6 +84,8 @@ export function useSimulator(streams: Streams) {
               };
             case "mode":
               return { ...s, mode: ev.mode };
+            case "nest":
+              return { ...s, nest: ev.phase };
             case "haptic":
               return { ...s, lastHaptic: { effect: ev.effect, at: Date.now() } };
             case "roll": {

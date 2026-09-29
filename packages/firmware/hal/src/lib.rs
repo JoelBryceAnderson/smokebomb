@@ -47,6 +47,12 @@ pub trait Display {
     /// Panel contrast, 0-255.
     fn set_brightness(&mut self, face: Face, level: u8) -> HalResult<()>;
     fn set_enabled(&mut self, enabled: bool) -> HalResult<()>;
+    /// Pause (or resume) the 12 V panel supply. The firmware pauses it for
+    /// the few milliseconds of each magnetometer reading, so the supply's
+    /// current doesn't disturb the measurement.
+    fn set_supply_paused(&mut self, _paused: bool) -> HalResult<()> {
+        Ok(())
+    }
 }
 
 /// Raw 6-axis sample in the die's body frame.
@@ -63,6 +69,18 @@ pub struct ImuSample {
 pub trait Imu {
     /// Latest sample, or `None` if no new data since the last read.
     fn read(&mut self) -> HalResult<Option<ImuSample>>;
+}
+
+/// Three-axis magnetometer near the board centre. Its job is to feel the
+/// Nest's magnet under the die.
+pub trait Magnetometer {
+    /// The field in the die's frame, in milligauss, as the sensor reads it:
+    /// the die's own steel, magnets and haptic motor included (see
+    /// [`Magnetometer::hard_iron`]).
+    fn read(&mut self) -> HalResult<[i32; 3]>;
+    /// The factory hard-iron offset in milligauss: what the die reads with
+    /// no outside field. Subtract it from every reading.
+    fn hard_iron(&self) -> [i32; 3];
 }
 
 /// Capacitive touch pads, one per face.
@@ -116,6 +134,16 @@ pub enum HapticEffect {
     MenuTip,
     /// Menu saved: 28 ms.
     MenuSave,
+    /// The die is seated in the Nest: one strong click at 100%.
+    SeatThunk,
+    /// A light 10 ms tick: the charge fill reached its level.
+    DockTick,
+    /// Wrong way in the Nest: two taps, 20 ms each, 80 ms apart.
+    DoubleTap,
+    /// One soft buzz: the Nest isn't giving power.
+    SoftBuzz,
+    /// Picked up from the Nest: 10 ms, 60 ms gap, 10 ms.
+    Ready,
 }
 
 /// DRV2605L LRA driver.
@@ -131,13 +159,26 @@ pub enum PowerMode {
     Sleep,
 }
 
+/// What the charger is doing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChargeState {
+    /// No input power, or nothing to do.
+    Idle,
+    Charging,
+    Full,
+    /// Thermal or other charger fault: charging is paused.
+    Fault,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BatteryStatus {
+    /// Fuel gauge, 0-100.
     pub percent: u8,
     pub millivolts: u16,
-    pub charging: bool,
-    /// Sitting on the charging nest.
-    pub docked: bool,
+    /// Charger input present (the contacts touch a live Nest). The power
+    /// chip reports it; the firmware debounces it.
+    pub vbus: bool,
+    pub charge: ChargeState,
 }
 
 /// nPM1300 PMIC: charger, fuel gauge and rail control.
@@ -160,6 +201,9 @@ pub trait Nfc {
 /// Monotonic milliseconds since boot.
 pub trait Clock {
     fn now_ms(&self) -> u64;
+    /// Local wall-clock time as seconds since midnight (0-86399): the
+    /// bedside clock, and the night hours. The phone sets it over BLE.
+    fn local_seconds(&self) -> u32;
 }
 
 /// A complete board: one concrete type per peripheral. The core is generic
@@ -168,6 +212,7 @@ pub trait Clock {
 pub trait Platform {
     type Display: Display;
     type Imu: Imu;
+    type Magnetometer: Magnetometer;
     type Touch: Touch;
     type Ble: Ble;
     type SecureElement: SecureElement;
@@ -183,6 +228,7 @@ pub trait Platform {
 pub struct Peripherals<P: Platform> {
     pub display: P::Display,
     pub imu: P::Imu,
+    pub mag: P::Magnetometer,
     pub touch: P::Touch,
     pub ble: P::Ble,
     pub secure_element: P::SecureElement,

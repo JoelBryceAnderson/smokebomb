@@ -250,6 +250,10 @@ pub struct Settings {
     /// die's identity, not a preference: the firmware fills it in from the
     /// secure element, and loading saved settings must not replace it.
     pub device_id: u16,
+    /// Night hours, local: the Nest's screens are off from the first hour to
+    /// the second (23 to 7 by default). The phone app sets them; the menu
+    /// has no item for them.
+    pub night_hours: (u8, u8),
 }
 
 /// A 16-bit id from a die's serial (FNV-1a folded), for About: every byte
@@ -274,6 +278,7 @@ impl Default for Settings {
             fuse: Fuse::Medium,
             choices: default_choices(),
             device_id: 0,
+            night_hours: (crate::nest::NIGHT_START_H, crate::nest::NIGHT_END_H),
         }
     }
 }

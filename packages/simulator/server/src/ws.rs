@@ -91,7 +91,23 @@ fn apply(state: &AppState, input: Inbound) {
             }
         }
         Inbound::Dock { docked } => world.set_docked(docked),
+        Inbound::PlaceInNest { face, quarters } => {
+            if let Some(f) = Face::from_index(face as usize) {
+                world.place_in_nest(f, quarters % 4);
+            }
+        }
+        Inbound::Lift => world.lift(),
+        Inbound::StrayMagnet { on } => world.set_stray_magnet(on),
+        Inbound::NestPlugged { on } => state.sim.lock().nest_plugged = on,
+        Inbound::DirtyContacts { on } => state.sim.lock().dirty_contacts = on,
+        Inbound::ChargerFault { on } => state.sim.lock().charger_fault = on,
+        Inbound::Battery { percent } => state.sim.lock().set_battery(percent),
+        Inbound::ChargeRate { rate } => state.sim.lock().charge_rate = rate.clamp(0.0, 10_000.0),
+        Inbound::SetTime { seconds } => state.sim.lock().set_local_time(seconds),
         Inbound::Ble { connected } => state.sim.lock().ble_connected = connected,
-        Inbound::ReducedMotion { on } => world.set_reduced_motion(on),
+        Inbound::ReducedMotion { on } => {
+            world.set_reduced_motion(on);
+            state.sim.lock().reduced_motion = on;
+        }
     }
 }

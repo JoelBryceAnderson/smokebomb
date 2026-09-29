@@ -73,6 +73,17 @@ impl Quarter {
         }
     }
 
+    /// A direction on the panel (x right, y down) as content coordinates:
+    /// the inverse of the turn, for content that must point a physical way.
+    pub fn unmap_dir(self, dx: f32, dy: f32) -> (f32, f32) {
+        match self {
+            Quarter::R0 => (dx, dy),
+            Quarter::R90 => (dy, -dx),
+            Quarter::R180 => (-dx, -dy),
+            Quarter::R270 => (-dy, dx),
+        }
+    }
+
     /// Where content pixel `(x, y)` lands on the panel.
     pub fn map(self, x: usize, y: usize) -> (usize, usize) {
         let m = PANEL_WIDTH - 1;

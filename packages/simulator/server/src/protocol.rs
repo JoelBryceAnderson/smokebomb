@@ -7,7 +7,7 @@ use smokebomb_shared::SignedRoll;
 /// Bumped whenever a message changes shape. The browser compares it with its
 /// own copy (`web-ui/src/protocol.ts`) and shows a banner when they differ,
 /// which usually means the web UI build is out of date.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// First byte of a binary frame packet; followed by six 4bpp panel frames in
 /// `Face` order.
@@ -64,6 +64,11 @@ pub enum Event {
     },
     Haptic {
         effect: String,
+    },
+    /// The Nest's dock state changed (`OffNest`, `Seating`, `Ok`, `Wrong`,
+    /// `NoPower`, `Display`).
+    Nest {
+        phase: String,
     },
     Roll(RollView),
 }
@@ -147,6 +152,41 @@ pub enum Inbound {
     },
     Dock {
         docked: bool,
+    },
+    /// Put the die in the Nest with `face` down, turned `quarters` quarter
+    /// turns about vertical.
+    PlaceInNest {
+        face: u8,
+        quarters: u8,
+    },
+    /// Lift the die out of the Nest.
+    Lift,
+    /// A stray magnet beside the die.
+    StrayMagnet {
+        on: bool,
+    },
+    /// The Nest's cord is in a live socket.
+    NestPlugged {
+        on: bool,
+    },
+    /// Dirty contacts: no power gets through.
+    DirtyContacts {
+        on: bool,
+    },
+    ChargerFault {
+        on: bool,
+    },
+    /// Set the battery level, 0-100.
+    Battery {
+        percent: u8,
+    },
+    /// Charge rate multiplier (1 = 1 %/min).
+    ChargeRate {
+        rate: f32,
+    },
+    /// Set the die's local time of day, seconds since midnight.
+    SetTime {
+        seconds: u32,
     },
     Ble {
         connected: bool,

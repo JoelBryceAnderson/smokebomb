@@ -35,10 +35,25 @@ const KEY_TIPS: Record<string, TipDirection> = {
 export function App() {
   const die = useRef<DieViewHandle>(null);
   const onFrames = useCallback((faces: Uint8Array[]) => die.current?.drawFrames(faces), []);
-  const onPose = useCallback((pose: Pose) => die.current?.setPose(pose), []);
+  const onPose = useCallback((pose: Pose) => {
+    poseRef.current = pose;
+    die.current?.setPose(pose);
+  }, []);
   const { state, send } = useSimulator({ onFrames, onPose });
 
-  const [docked, setDocked] = useState(false);
+  const [nestFace, setNestFace] = useState(3); // −Y, the charging face
+  const [nestQuarters, setNestQuarters] = useState(0);
+  const [plugged, setPlugged] = useState(true);
+  const [dirty, setDirty] = useState(false);
+  const [fault, setFault] = useState(false);
+  const [stray, setStray] = useState(false);
+  const [battery, setBattery] = useState(78);
+  const [chargeRate, setChargeRate] = useState(1);
+  const [clock, setClock] = useState(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  });
+  const poseRef = useRef<Pose | null>(null);
   const [ble, setBle] = useState(false);
   const [reduced, setReduced] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [multiTurn, setMultiTurn] = useState(false);
@@ -64,6 +79,41 @@ export function App() {
     send({ type: "reduced_motion", on: reduced });
   }, [reduced, send, state.connected]);
 
+  // Bring the die's clock to the browser's, and the bench to the panel's
+  // settings, whenever the link (re)connects.
+  useEffect(() => {
+    if (!state.connected) return;
+    const d = new Date();
+    send({ type: "set_time", seconds: d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() });
+    send({ type: "nest_plugged", on: plugged });
+    send({ type: "dirty_contacts", on: dirty });
+    send({ type: "charger_fault", on: fault });
+    send({ type: "stray_magnet", on: stray });
+    send({ type: "battery", percent: battery });
+    send({ type: "charge_rate", rate: chargeRate });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.connected, send]);
+
+  /** The face pointing down in the current pose (the one whose normal has the lowest y). */
+  const currentDownFace = () => {
+    const q = poseRef.current?.rotation;
+    if (!q) return 3;
+    const [x, y, z, w] = q;
+    // y component of q · n for each unit face normal.
+    const yOf = [
+      2 * (x * y + w * z), // +X
+      -2 * (x * y + w * z), // −X
+      1 - 2 * (x * x + z * z), // +Y
+      -(1 - 2 * (x * x + z * z)), // −Y
+      2 * (y * z - w * x), // +Z
+      -2 * (y * z - w * x), // −Z
+    ];
+    return yOf.indexOf(Math.min(...yOf));
+  };
+
+  const placeInNest = () =>
+    send({ type: "place_in_nest", face: nestFace < 0 ? currentDownFace() : nestFace, quarters: nestQuarters });
+
   const tip = useCallback(
     (dir: TipDirection) => send({ type: "tip", dir, right: die.current?.viewerRight() ?? [1, 0, 0] }),
     [send],
@@ -83,10 +133,6 @@ export function App() {
 
   // The throw button, as in the mockup: hold to shake, let go to throw.
   const shakeStart = () => {
-    if (docked) {
-      setDocked(false);
-      send({ type: "dock", docked: false });
-    }
     shaking.current = true;
     send({ type: "shake_start" });
   };
@@ -126,6 +172,7 @@ export function App() {
           <span className={state.connected ? "dot on" : "dot"} />
           {state.connected ? "firmware running" : "connecting to simulator…"}
           <span className="mode">{state.mode}</span>
+          <span className="mode">nest: {state.nest}</span>
           {(multiKey || multiTurn) && <span className="mode multi">Multi-turn</span>}
         </div>
         <p className="hint">
@@ -227,22 +274,128 @@ export function App() {
         </section>
 
         <section>
-          <h2>Environment</h2>
+          <h2>Nest</h2>
+          <p className="muted">
+            The charging face is −Y, the lid. It charges in all four rotations. Guidance appears only once the die is
+            seated.
+          </p>
+          <label>
+            Face down
+            <select value={nestFace} onChange={(e) => setNestFace(Number(e.target.value))}>
+              <option value={-1}>Current down face</option>
+              {FACE_NAMES.map((name, i) => (
+                <option key={name} value={i}>
+                  {name}
+                  {i === 3 ? " (charging face)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Rotation
+            <select value={nestQuarters} onChange={(e) => setNestQuarters(Number(e.target.value))}>
+              {[0, 1, 2, 3].map((q) => (
+                <option key={q} value={q}>
+                  {q * 90}°
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="row">
+            <button className="primary" onClick={placeInNest}>
+              Place in Nest
+            </button>
+            <button onClick={() => send({ type: "lift" })}>Lift</button>
+          </div>
           <label className="check">
             <input
               type="checkbox"
-              checked={docked}
+              checked={plugged}
               onChange={(e) => {
-                setDocked(e.target.checked);
-                send({ type: "dock", docked: e.target.checked });
+                setPlugged(e.target.checked);
+                send({ type: "nest_plugged", on: e.target.checked });
               }}
             />
-            On charging nest
+            Nest plugged in
           </label>
-          <p className="muted">
-            Charges only with the charging face down (−Y, the etched face), in any of its four rotations. Set the die
-            down on another face first and it sits in the Nest without charging.
-          </p>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={dirty}
+              onChange={(e) => {
+                setDirty(e.target.checked);
+                send({ type: "dirty_contacts", on: e.target.checked });
+              }}
+            />
+            Dirty contacts
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={fault}
+              onChange={(e) => {
+                setFault(e.target.checked);
+                send({ type: "charger_fault", on: e.target.checked });
+              }}
+            />
+            Charger fault
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={stray}
+              onChange={(e) => {
+                setStray(e.target.checked);
+                send({ type: "stray_magnet", on: e.target.checked });
+              }}
+            />
+            Stray magnet beside the die
+          </label>
+          <label>
+            Battery {battery}%
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={battery}
+              onChange={(e) => {
+                setBattery(Number(e.target.value));
+                send({ type: "battery", percent: Number(e.target.value) });
+              }}
+            />
+          </label>
+          <label>
+            Charge rate
+            <select
+              value={chargeRate}
+              onChange={(e) => {
+                setChargeRate(Number(e.target.value));
+                send({ type: "charge_rate", rate: Number(e.target.value) });
+              }}
+            >
+              {[1, 10, 60, 600].map((r) => (
+                <option key={r} value={r}>
+                  ×{r} ({r} %/min)
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Die's clock (local time)
+            <input
+              type="time"
+              value={clock}
+              onChange={(e) => {
+                setClock(e.target.value);
+                const [h, m] = e.target.value.split(":").map(Number);
+                if (!Number.isNaN(h) && !Number.isNaN(m)) send({ type: "set_time", seconds: h * 3600 + m * 60 });
+              }}
+            />
+          </label>
+        </section>
+
+        <section>
+          <h2>Environment</h2>
           <label className="check">
             <input
               type="checkbox"

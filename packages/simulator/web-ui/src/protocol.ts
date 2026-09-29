@@ -1,7 +1,7 @@
 // Mirror of packages/simulator/server/src/protocol.rs.
 
 /** Must match `PROTOCOL_VERSION` in the server's protocol.rs. */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export const FACE_COUNT = 6;
 export const PANEL_SIZE = 96;
@@ -29,6 +29,8 @@ export type ServerEvent =
   | { type: "hello"; protocol: number; mode: string }
   | { type: "mode"; mode: string }
   | { type: "haptic"; effect: string }
+  /** The Nest's dock state: OffNest, Seating, Ok, Wrong, NoPower or Display. */
+  | { type: "nest"; phase: string }
   | ({ type: "roll" } & RollView);
 
 export type TipDirection = "up" | "down" | "left" | "right";
@@ -46,6 +48,15 @@ export type ClientMessage =
   | { type: "rotate"; yaw: number; pitch: number }
   | { type: "place_face_up"; face: number }
   | { type: "dock"; docked: boolean }
+  | { type: "place_in_nest"; face: number; quarters: number }
+  | { type: "lift" }
+  | { type: "stray_magnet"; on: boolean }
+  | { type: "nest_plugged"; on: boolean }
+  | { type: "dirty_contacts"; on: boolean }
+  | { type: "charger_fault"; on: boolean }
+  | { type: "battery"; percent: number }
+  | { type: "charge_rate"; rate: number }
+  | { type: "set_time"; seconds: number }
   | { type: "ble"; connected: boolean }
   | { type: "reduced_motion"; on: boolean };
 

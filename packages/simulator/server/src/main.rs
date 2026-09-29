@@ -141,22 +141,23 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
     let mut last_counter = None;
     let mut last_pose = None;
     let mut menu_was_open = false;
+    let mut last_nest = String::new();
     let dt = TICK_S;
 
     loop {
         interval.tick().await;
 
         // Move the die first, so the firmware reads this tick's IMU sample.
-        let (pose, imu, docked) = {
+        let (pose, imu) = {
             let mut w = state.world.lock().unwrap_or_else(|e| e.into_inner());
             let imu = w.step(dt);
-            (w.pose(), imu, w.on_charger())
-        };
-        {
             let mut s = state.sim.lock();
             s.imu_resting = imu;
-            s.docked = docked;
-        }
+            s.sync_world(&w, dt);
+            fw.set_reduced_motion(s.reduced_motion);
+            (w.pose(), imu)
+        };
+        let _ = imu;
         if last_pose != Some(pose) {
             last_pose = Some(pose);
             let _ = state.out.send(Outbound::Binary(protocol::encode_pose(&pose)));
@@ -208,6 +209,18 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
             let _ = state
                 .out
                 .send(Outbound::event(protocol::Event::Mode { mode: mode.clone() }));
+        }
+
+        let nest = format!("{:?}", fw.nest().phase())
+            .split(" {")
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        if nest != last_nest {
+            last_nest.clone_from(&nest);
+            let _ = state
+                .out
+                .send(Outbound::event(protocol::Event::Nest { phase: nest }));
         }
 
         let roll = fw
@@ -354,6 +367,7 @@ mod tests {
                     let mut s = self.sim.lock();
                     s.imu_resting = imu;
                     s.manual_time_ms = Some((self.t * 1000.0) as u64);
+                    s.sync_world(&self.world, DT);
                 }
                 self.fw.tick().unwrap();
                 let front = self.fw.menu_front();
@@ -1138,5 +1152,403 @@ mod tests {
         assert_eq!(*rig.fw.mode(), Mode::Idle);
         assert!(!rig.fw.booting(), "still on");
         assert_eq!(rig.fw.settings().count, 2, "saved");
+    }
+
+    // ---------- the Nest (DOCK_BRIEF) ----------
+
+    use smokebomb_firmware::smokebomb_core::nest::{self, Phase, Screen};
+    use smokebomb_firmware::smokebomb_core::state::Mode;
+    use smokebomb_hal::HapticEffect;
+
+    /// The sum of a face's panel levels: how much it shows.
+    fn ink(rig: &Rig, face: Face) -> u32 {
+        rig.sim.lock().faces[face.index()]
+            .iter()
+            .map(|b| ((b >> 4) + (b & 0x0f)) as u32)
+            .sum()
+    }
+
+    fn phase(rig: &Rig) -> Phase {
+        rig.fw.nest().phase()
+    }
+
+    fn is_display(rig: &Rig) -> bool {
+        matches!(phase(rig), Phase::Display { .. })
+    }
+
+    fn haptics(rig: &Rig) -> Vec<HapticEffect> {
+        rig.sim.lock().haptics.drain(..).collect()
+    }
+
+    /// A booted die on the table, ready to be put in the Nest.
+    fn booted() -> Rig {
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        haptics(&rig);
+        rig
+    }
+
+    /// What the Nest says `face` shows right now.
+    fn nest_face(rig: &Rig, face: Face) -> nest::NestFace {
+        let quarters = Face::ALL.map(|f| rig.fw.display_quarter(f));
+        let settings = rig.fw.settings();
+        let b = rig.sim.lock().battery_percent;
+        let env = nest::Env {
+            battery: b,
+            charge: if rig.sim.lock().charger_fault {
+                smokebomb_hal::ChargeState::Fault
+            } else {
+                smokebomb_hal::ChargeState::Charging
+            },
+            secs: 12.0 * 3600.0,
+            night: settings.night_hours,
+            reduced_motion: false,
+            quarters: &quarters,
+        };
+        rig.fw.nest().face((rig.t * 1000.0) as u64, face, &env)
+    }
+
+    fn screen(rig: &Rig, face: Face) -> Screen {
+        nest_face(rig, face).screen
+    }
+
+    #[test]
+    fn the_right_face_in_any_rotation_seats_docks_and_displays() {
+        for quarters in 0..4 {
+            let mut rig = booted();
+            rig.world.place_in_nest(Face::NegY, quarters);
+            rig.run(0.3);
+            assert_eq!(phase(&rig), Phase::OffNest, "{quarters}: still settling");
+            rig.run(4.5);
+            assert!(is_display(&rig), "{quarters}: {:?}", phase(&rig));
+            assert_eq!(*rig.fw.mode(), Mode::Nest);
+            let h = haptics(&rig);
+            assert!(h.contains(&HapticEffect::SeatThunk), "{h:?}");
+            assert!(h.contains(&HapticEffect::DockTick), "{h:?}");
+            // Battery on top, clock on the sides, nothing on the bottom.
+            assert!(ink(&rig, Face::PosY) > 500, "battery");
+            for side in [Face::PosX, Face::NegX, Face::PosZ, Face::NegZ] {
+                assert!(ink(&rig, side) > 200, "{side:?} shows the clock");
+            }
+            assert_eq!(ink(&rig, Face::NegY), 0);
+        }
+    }
+
+    #[test]
+    fn the_charging_face_on_top_says_flip_me_over() {
+        let mut rig = booted();
+        rig.world.place_in_nest(Face::PosY, 0); // the charging face (−Y) is on top
+        rig.run(4.0);
+        assert!(matches!(phase(&rig), Phase::Wrong { .. }), "{:?}", phase(&rig));
+        assert_eq!(*rig.fw.mode(), Mode::Nest);
+        assert_eq!(haptics(&rig), [HapticEffect::DoubleTap]);
+        assert!(matches!(screen(&rig, Face::NegY), Screen::Flip { .. }));
+        for side in [Face::PosX, Face::NegX, Face::PosZ, Face::NegZ] {
+            assert!(matches!(screen(&rig, side), Screen::SideDown { .. }), "{side:?}");
+            assert!(ink(&rig, side) > 100);
+        }
+        assert_eq!(ink(&rig, Face::PosY), 0, "the face in the pocket is dark");
+    }
+
+    #[test]
+    fn the_charging_face_on_a_side_says_tip_this_way_at_the_right_edge() {
+        for down in [Face::PosX, Face::NegX, Face::PosZ, Face::NegZ] {
+            for quarters in [0, 1] {
+                let mut rig = booted();
+                rig.world.place_in_nest(down, quarters);
+                rig.run(4.0);
+                assert!(matches!(phase(&rig), Phase::Wrong { .. }), "{down:?}");
+                let top = down.opposite();
+                let c = Face::NegY;
+                let Screen::TipArrow { dir, .. } = screen(&rig, top) else {
+                    panic!("{down:?}: top shows {:?}", screen(&rig, top));
+                };
+                // Follow the arrow from the content, through the face's
+                // turn and its axes, to a direction in the room: it must
+                // point at the charging face's edge.
+                let q = rig.fw.display_quarter(top);
+                let b = &smokebomb_firmware::smokebomb_core::orientation::BASES[top.index()];
+                let panel = |x: f32, y: f32| q.unmap_dir(x, y); // inverse turn
+                let (cx, cy) = dir;
+                // Content direction → panel direction: undo unmap_dir.
+                let d_panel = [(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)]
+                    .into_iter()
+                    .find(|&(px, py)| {
+                        let (ux, uy) = panel(px, py);
+                        (ux - cx).abs() < 1e-3 && (uy - cy).abs() < 1e-3
+                    })
+                    .expect("axis-aligned");
+                let local = glam::Vec3::from_array(b.x) * d_panel.0 - glam::Vec3::from_array(b.y) * d_panel.1;
+                let room = rig.world.pose().rotation * local;
+                let want = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(c);
+                assert!(
+                    room.dot(want) > 0.99,
+                    "{down:?} q{quarters}: {room:?} vs {want:?}"
+                );
+                assert!(matches!(screen(&rig, c), Screen::FaceDown));
+                assert!(matches!(screen(&rig, c.opposite()), Screen::Blank));
+                let neighbours: Vec<_> = Face::ALL
+                    .into_iter()
+                    .filter(|f| ![top, down, c, c.opposite()].contains(f))
+                    .collect();
+                assert_eq!(neighbours.len(), 2);
+                for n in neighbours {
+                    assert!(matches!(screen(&rig, n), Screen::Toward { .. }), "{down:?} {n:?}");
+                }
+                assert_eq!(haptics(&rig), [HapticEffect::DoubleTap]);
+            }
+        }
+    }
+
+    #[test]
+    fn no_power_shows_check_the_nest_after_two_seconds_and_power_docks_it() {
+        let mut rig = booted();
+        rig.sim.lock().nest_plugged = false;
+        rig.world.place_in_nest(Face::NegY, 0);
+        rig.run(2.0);
+        assert!(!rig.fw.nest().docked(), "still deciding");
+        rig.run(2.5);
+        assert!(matches!(phase(&rig), Phase::NoPower { .. }), "{:?}", phase(&rig));
+        assert_eq!(haptics(&rig), [HapticEffect::SoftBuzz]);
+        assert!(matches!(screen(&rig, Face::PosY), Screen::NoPower));
+        assert_eq!(ink(&rig, Face::PosX), 0, "sides are off");
+        rig.sim.lock().nest_plugged = true;
+        rig.run(0.5);
+        assert!(
+            matches!(phase(&rig), Phase::Ok { .. } | Phase::Display { .. }),
+            "{:?}",
+            phase(&rig)
+        );
+    }
+
+    #[test]
+    fn dirty_contacts_look_like_no_power() {
+        let mut rig = booted();
+        rig.sim.lock().dirty_contacts = true;
+        rig.world.place_in_nest(Face::NegY, 2);
+        rig.run(5.0);
+        assert!(matches!(phase(&rig), Phase::NoPower { .. }));
+    }
+
+    #[test]
+    fn pulling_the_cable_while_docked_goes_to_no_power() {
+        let mut rig = booted();
+        rig.world.place_in_nest(Face::NegY, 0);
+        rig.run(4.0);
+        assert!(is_display(&rig));
+        rig.sim.lock().nest_plugged = false;
+        rig.run(0.5);
+        assert!(matches!(phase(&rig), Phase::NoPower { .. }), "{:?}", phase(&rig));
+    }
+
+    #[test]
+    fn a_charger_fault_pauses_and_recovers() {
+        let mut rig = booted();
+        rig.world.place_in_nest(Face::NegY, 0);
+        rig.run(4.0);
+        let (top, side) = (ink(&rig, Face::PosY), ink(&rig, Face::PosX));
+        rig.sim.lock().charger_fault = true;
+        rig.run(0.5);
+        assert!(matches!(screen(&rig, Face::PosY), Screen::Fault));
+        assert!(matches!(screen(&rig, Face::PosX), Screen::Clock(_)));
+        assert_eq!(
+            nest_face(&rig, Face::PosX).dim,
+            0.3,
+            "the clock carries on at 30%"
+        );
+        assert!(ink(&rig, Face::PosX) < side / 2);
+        assert!(is_display(&rig), "a fault isn't a state of its own");
+        rig.sim.lock().charger_fault = false;
+        rig.run(0.5);
+        assert!(matches!(screen(&rig, Face::PosY), Screen::Charge(_)));
+        assert!(ink(&rig, Face::PosX) > side / 2, "the clock is back to full");
+        assert!(ink(&rig, Face::PosY) > top / 2);
+    }
+
+    #[test]
+    fn a_stray_magnet_beside_the_die_on_a_table_is_not_a_nest() {
+        let mut rig = booted();
+        rig.world.set_stray_magnet(true);
+        rig.world.place_face_up(Face::PosY);
+        rig.run(8.0);
+        assert_eq!(phase(&rig), Phase::OffNest);
+        assert!(!rig.fw.nest().near());
+        assert!(rig.sim.lock().mag_reads > 0, "it did look");
+    }
+
+    #[test]
+    fn a_stray_magnet_does_not_disturb_a_seated_die() {
+        let mut rig = booted();
+        rig.world.set_stray_magnet(true);
+        rig.world.place_in_nest(Face::NegY, 0);
+        rig.run(4.0);
+        assert!(is_display(&rig));
+    }
+
+    #[test]
+    fn the_charging_face_down_on_a_plain_table_is_just_off_the_nest() {
+        let mut rig = booted();
+        rig.world.place_face_up(Face::PosY); // −Y down, no Nest
+        rig.run(8.0);
+        assert_eq!(phase(&rig), Phase::OffNest);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(haptics(&rig).is_empty());
+    }
+
+    #[test]
+    fn wrong_face_dims_after_a_minute_goes_dark_after_five_and_a_tap_wakes_it() {
+        let mut rig = booted();
+        rig.world.place_in_nest(Face::PosY, 0);
+        rig.run(5.0);
+        let full = ink(&rig, Face::NegY);
+        assert!(full > 0);
+        rig.run(50.0);
+        let still_full = ink(&rig, Face::NegY);
+        assert!(still_full > full / 2, "not dim before a minute");
+        rig.run(12.0);
+        let dim = ink(&rig, Face::NegY);
+        assert!(
+            dim < still_full / 2 && dim > 0,
+            "dim at a minute: {dim} vs {still_full}"
+        );
+        rig.run(4.0 * 60.0);
+        assert_eq!(ink(&rig, Face::NegY), 0, "off at five minutes");
+        rig.tap(Face::NegY);
+        assert!(ink(&rig, Face::NegY) > dim, "a tap brings it back");
+    }
+
+    #[test]
+    fn night_hours_turn_the_display_off_and_a_tap_shows_it_for_ten_seconds() {
+        let mut rig = booted();
+        rig.sim.lock().set_local_time(23 * 3600 + 30 * 60);
+        rig.world.place_in_nest(Face::NegY, 0);
+        rig.run(6.0);
+        assert!(is_display(&rig));
+        assert!(ink(&rig, Face::PosY) > 0, "still in its first ten seconds");
+        rig.run(8.0);
+        assert!(Face::ALL.iter().all(|f| ink(&rig, *f) == 0), "off at night");
+        rig.tap(Face::PosY);
+        assert!(ink(&rig, Face::PosY) > 500, "a tap lights it");
+        rig.run(9.0);
+        assert!(ink(&rig, Face::PosY) > 500, "for ten seconds");
+        rig.run(2.0);
+        assert!(Face::ALL.iter().all(|f| ink(&rig, *f) == 0), "then off again");
+    }
+
+    #[test]
+    fn by_day_it_stays_on_and_dims_after_two_minutes() {
+        let mut rig = booted();
+        rig.world.place_in_nest(Face::NegY, 0);
+        rig.run(60.0);
+        let bright = ink(&rig, Face::PosX);
+        assert!(bright > 200);
+        rig.run(70.0);
+        let dim = ink(&rig, Face::PosX);
+        assert!(dim < bright / 2 && dim > 0, "{dim} vs {bright}");
+    }
+
+    #[test]
+    fn lifting_from_the_nest_plays_the_undock_then_the_wake_label() {
+        let mut rig = booted();
+        rig.world.place_in_nest(Face::NegY, 0);
+        rig.run(4.0);
+        haptics(&rig);
+        rig.world.lift();
+        rig.run(0.4);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert_eq!(phase(&rig), Phase::OffNest);
+        assert!(haptics(&rig).contains(&HapticEffect::Ready));
+        // The battery holds on the top face for 1.5 s.
+        rig.run(0.8);
+        assert!(ink(&rig, Face::PosY) > 500, "battery still up at 1.2 s");
+        assert!(ink(&rig, Face::PosX) == 0, "the clock has dissolved");
+        rig.run(1.0);
+        assert!(ink(&rig, Face::PosY) > 0, "then the wake label");
+    }
+
+    #[test]
+    fn docking_and_lifting_again_works() {
+        let mut rig = booted();
+        for round in 0..2 {
+            rig.world.place_in_nest(Face::NegY, round);
+            rig.run(4.0);
+            assert!(is_display(&rig), "round {round}");
+            rig.world.lift();
+            rig.run(3.0);
+            assert_eq!(phase(&rig), Phase::OffNest, "round {round}");
+        }
+    }
+
+    #[test]
+    fn the_charge_glyph_marks_the_charging_face_when_the_battery_is_low() {
+        let mut rig = booted();
+        rig.sim.lock().set_battery(10);
+        rig.world.place_face_up(Face::PosZ); // −Y is a side face
+        rig.run(1.0);
+        rig.tap(Face::PosX);
+        rig.run(0.5);
+        let bolt = ink(&rig, Face::NegY);
+        assert!(
+            bolt > 0 && bolt < ink(&rig, Face::PosX) / 2,
+            "a small glyph, not the label: {bolt}"
+        );
+        // At 50% every face shows the label.
+        rig.sim.lock().set_battery(50);
+        rig.tap(Face::PosX);
+        rig.run(0.5);
+        assert!(ink(&rig, Face::NegY) > bolt * 2);
+    }
+
+    #[test]
+    fn a_docked_die_charges_and_flashes_when_full() {
+        let mut rig = booted();
+        rig.sim.lock().set_battery(97);
+        rig.sim.lock().charge_rate = 600.0; // 10 %/s
+        rig.world.place_in_nest(Face::NegY, 0);
+        rig.run(4.0);
+        assert!(is_display(&rig));
+        assert_eq!(rig.sim.lock().battery_percent, 100);
+        rig.run(1.0);
+        assert!(ink(&rig, Face::PosY) > 500);
+    }
+
+    #[test]
+    fn a_hold_in_the_nest_opens_the_menu_and_saving_returns_to_the_nest() {
+        let mut rig = booted();
+        rig.world.place_in_nest(Face::NegY, 0);
+        rig.run(4.0);
+        rig.hold(Face::PosY);
+        assert_eq!(*rig.fw.mode(), Mode::Menu);
+        rig.hold(Face::PosY);
+        assert_eq!(*rig.fw.mode(), Mode::Nest);
+        assert!(is_display(&rig));
+    }
+
+    #[test]
+    fn reduced_motion_docks_with_a_short_fade() {
+        let mut rig = booted();
+        rig.fw.set_reduced_motion(true);
+        rig.world.place_in_nest(Face::NegY, 0);
+        rig.run(4.0);
+        assert!(is_display(&rig));
+        assert!(ink(&rig, Face::PosY) > 500);
+    }
+
+    #[test]
+    fn the_magnetometer_is_off_while_moving_and_slows_when_still() {
+        let mut rig = booted();
+        let before = rig.sim.lock().mag_reads;
+        rig.world.start_shake();
+        rig.run(1.0);
+        assert_eq!(rig.sim.lock().mag_reads, before, "no readings in motion");
+        rig.world.end_shake(false);
+        rig.run(4.0);
+        rig.sim.lock().mag_reads = 0;
+        rig.run(10.0);
+        let reads = rig.sim.lock().mag_reads;
+        assert!(
+            (1..=3).contains(&reads),
+            "about one every 5 s once settled: {reads}"
+        );
     }
 }

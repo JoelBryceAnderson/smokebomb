@@ -55,6 +55,17 @@ impl Framebuffer {
         self.buf[y * PANEL_WIDTH + x]
     }
 
+    /// Dim every pixel to `factor` of its level (0–1): the Nest's dimmed
+    /// screens.
+    pub fn scale(&mut self, factor: f32) {
+        if factor >= 1.0 {
+            return;
+        }
+        for p in self.buf.iter_mut() {
+            *p = (*p as f32 * factor + 0.5) as u8;
+        }
+    }
+
     /// Additive blend (canvas "lighter"), saturating at 255.
     pub fn add_pixel(&mut self, x: usize, y: usize, value: u8) {
         if x < PANEL_WIDTH && y < PANEL_HEIGHT {
