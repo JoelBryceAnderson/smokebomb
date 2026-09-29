@@ -13,9 +13,8 @@
 //! blacks everything out. The landing flash arrives with the throw work.
 
 use smokebomb_hal::Face;
-use smokebomb_shared::DieKind;
 
-use crate::menu::Draft;
+use crate::menu::{Draft, Setup};
 use crate::screens::{BOOT_DURATION, BURST_AT, LOOP_END};
 use crate::smoke::Special;
 use crate::state::Mode;
@@ -67,7 +66,7 @@ pub struct Ui {
     /// The menu fading out: when it closed, what it showed, and where.
     menu_fade: Option<(u64, Draft, Face)>,
     /// A saved setup: when, on which face, and what.
-    success: Option<(u64, Face, DieKind, u8)>,
+    success: Option<(u64, Face, Setup)>,
     flash: Option<u64>,
     /// Restarting: dark until then, then boot.
     blackout_until: Option<u64>,
@@ -110,8 +109,7 @@ pub enum FaceContent {
     /// Seconds since a setup was saved, and the setup.
     Success {
         t: f32,
-        die: DieKind,
-        count: u8,
+        setup: Setup,
     },
     Wake {
         alpha: f32,
@@ -181,10 +179,18 @@ impl Ui {
         self.menu_open_at = None;
         self.menu_fade = Some((now, draft, face));
         if saved {
-            self.success = Some((now, face, draft.die, draft.count));
+            self.success = Some((now, face, draft.setup()));
             self.flash = Some(now);
         }
         self.wake(now, WAKE_AFTER_BOOT_MS);
+    }
+
+    /// A game starts (Hot Potato lit): the boot and the labels give way.
+    pub fn game_started(&mut self) {
+        self.boot = None;
+        self.wake = None;
+        self.result = None;
+        self.success = None;
     }
 
     /// Holding on Restart: dark for a moment, then boot again (C3, C1).
@@ -353,10 +359,10 @@ impl Ui {
         if has_result && result > 0.0 && !down {
             return FaceContent::Result { alpha: result };
         }
-        if let Some((t, f, die, count)) = self.success {
+        if let Some((t, f, setup)) = self.success {
             if f == face && now.saturating_sub(t) < SUCCESS_MS && !tumbling(mode) {
                 let t = since(now, t) / 1000.0;
-                return FaceContent::Success { t, die, count };
+                return FaceContent::Success { t, setup };
             }
         }
         let wake = self.wake_alpha(now);

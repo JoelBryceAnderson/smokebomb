@@ -13,6 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
+use smokebomb_core::menu::Settings;
 use smokebomb_core::smoke::SmokeRng;
 use smokebomb_core::Firmware;
 use smokebomb_hal::{Face, FACE_COUNT, FRAME_BYTES};
@@ -106,6 +107,11 @@ impl Run {
             s.battery_percent = 78;
         }
         let mut fw = Firmware::new(sim.peripherals()).unwrap();
+        // The mockup has no Mode page.
+        fw.set_settings(Settings {
+            modes: false,
+            ..Settings::default()
+        });
         fw.smoke_mut().set_rng(mockup_rng());
         let mut run = Self {
             sim,

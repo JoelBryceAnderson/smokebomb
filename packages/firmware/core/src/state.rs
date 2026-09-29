@@ -71,6 +71,10 @@ pub type Commands = Vec<Command, 4>;
 
 pub struct StateMachine {
     mode: Mode,
+    /// Whether throws roll. Off in a game that doesn't (Hot Potato): motion
+    /// then only matters to the menu, which a shake or a throw closes
+    /// without saving.
+    rolls: bool,
 }
 
 impl Default for StateMachine {
@@ -81,7 +85,14 @@ impl Default for StateMachine {
 
 impl StateMachine {
     pub const fn new() -> Self {
-        Self { mode: Mode::Idle }
+        Self {
+            mode: Mode::Idle,
+            rolls: true,
+        }
+    }
+
+    pub fn set_rolls(&mut self, rolls: bool) {
+        self.rolls = rolls;
     }
 
     pub fn mode(&self) -> &Mode {
@@ -117,6 +128,10 @@ impl StateMachine {
                 emit(MenuClose { save: false });
                 Some(Idle)
             }
+            (Menu, Event::Motion(Motion::Shaking | Motion::FreeFall)) if !self.rolls => {
+                emit(MenuClose { save: false });
+                Some(Idle)
+            }
             (Menu, Event::Motion(Motion::Shaking)) => {
                 emit(MenuClose { save: false });
                 emit(Haptic(HapticEffect::Tick));
@@ -132,6 +147,9 @@ impl StateMachine {
                 emit(MenuOpen);
                 Some(Menu)
             }
+
+            // A game that doesn't roll leaves motion to the game.
+            (_, Event::Motion(_)) if !self.rolls => None,
 
             // Roll flow.
             (Idle | Reveal { .. }, Event::Motion(Motion::Handled)) => Some(Held),
@@ -174,6 +192,35 @@ mod tests {
             }
         }
         all
+    }
+
+    #[test]
+    fn without_rolls_motion_does_nothing_outside_the_menu() {
+        let mut sm = StateMachine::new();
+        sm.set_rolls(false);
+        let cmds = feed(
+            &mut sm,
+            &[
+                Event::Motion(Motion::Handled),
+                Event::Motion(Motion::Shaking),
+                Event::Motion(Motion::FreeFall),
+                Event::Motion(Motion::Impact),
+                Event::Motion(Motion::Rest),
+            ],
+        );
+        assert!(cmds.is_empty());
+        assert_eq!(*sm.mode(), Mode::Idle);
+    }
+
+    #[test]
+    fn without_rolls_a_shake_closes_the_menu_and_stays_idle() {
+        let mut sm = StateMachine::new();
+        sm.set_rolls(false);
+        feed(&mut sm, &[Event::LongPress]);
+        assert_eq!(*sm.mode(), Mode::Menu);
+        let cmds = feed(&mut sm, &[Event::Motion(Motion::Shaking)]);
+        assert_eq!(cmds.as_slice(), &[Command::MenuClose { save: false }]);
+        assert_eq!(*sm.mode(), Mode::Idle);
     }
 
     #[test]
