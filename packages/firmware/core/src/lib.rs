@@ -685,6 +685,7 @@ impl<P: Platform> Firmware<P> {
                     0.0,
                     1.0 - u,
                     1.0 + 0.12 * u,
+                    screens::Glide::rest(&draft),
                 );
                 screens::draw_hold_ring(&mut c, 1.0, 1.0 - u, u * 3.0);
             }
@@ -786,19 +787,21 @@ fn draw_menu_face<A: smokebomb_hal::AssetStore>(
         let (frame, draft) = (m.frame.stepped(dir, k as i32), m.draft.stepped(dir, k as i32));
         let (mx, my) = frame.motion_dir(face, dir);
         let d = screens::TIP_SLIDE;
+        let next = draft.tipped(dir);
+        let glide = screens::Glide::between(&draft, &next, u);
         if face == frame.front_face() {
-            screens::draw_menu(c, &draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
+            screens::draw_menu(c, &draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0, glide);
         } else {
-            let next = draft.tipped(dir);
             let (ox, oy) = (mx * (1.0 - u) * d, my * (1.0 - u) * d);
-            screens::draw_menu(c, &next, battery, ox, oy, u, 1.0);
+            screens::draw_menu(c, &next, battery, ox, oy, u, 1.0, glide);
         }
         return;
     }
     {
         let intro = ui.menu_intro(now);
         screens::draw_hold_ring(c, 1.0, intro.ring_alpha, intro.ring_grow);
-        screens::draw_menu(c, &m.draft, battery, 0.0, 0.0, intro.alpha, intro.scale);
+        let glide = screens::Glide::rest(&m.draft);
+        screens::draw_menu(c, &m.draft, battery, 0.0, 0.0, intro.alpha, intro.scale, glide);
         if let Some(p) = hold {
             screens::draw_hold_ring(c, p, 1.0, 0.0);
         }
