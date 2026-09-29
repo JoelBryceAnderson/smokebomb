@@ -259,7 +259,7 @@ The mockup has three pages: How many dice, Which die, Settings. The firmware add
 | Mode | Ring (tip left goes to the next page) | Opens on |
 |---|---|---|
 | Dice | Mode, How many dice, Which die, Settings | How many dice |
-| Pass the Pot | Mode, How many pots, Settings | How many pots |
+| Pass the Pot | Mode, Bills in hand, Settings | Bills in hand |
 | Hot Potato | Mode, Fuse length, Settings | Fuse length |
 
 | Page | Title | Values |
@@ -267,7 +267,7 @@ The mockup has three pages: How many dice, Which die, Settings. The firmware add
 | Mode | Mode | Dice, Pass the Pot, Hot Potato |
 | Count | How many dice | 1–10 |
 | Die | Which die | d4, d6, d8, d10, d12, d20, d100 |
-| Pot | How many pots | 1–3 |
+| Pot | Bills in hand | 1–3 (starts at 3) |
 | Fuse | Fuse length | Short (10–20 s), Medium (20–40 s), Long (40–90 s) |
 | Settings | Settings | Brightness 70%; Haptics Strong; Smoke Full; Large text Off; Sleep after 2 min; Night mode Auto; Bluetooth On; Verified rolls Off; Owner "Joel"; Power off "Tap to power off"; About "v0.1.0 · SB-0042". **Decided (H11):** a tap steps the selected item to its next value; Owner, Power off and About aren't editable. |
 

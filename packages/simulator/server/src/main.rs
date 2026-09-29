@@ -810,7 +810,11 @@ mod tests {
         rig.tip(TipDir::Up);
         assert_eq!(rig.fw.menu_draft().unwrap().play, PlayMode::PassThePot);
         rig.hold(Face::PosZ);
-        assert_eq!(rig.fw.settings().active(), (DieKind::PassThePot, 1));
+        assert_eq!(
+            rig.fw.settings().active(),
+            (DieKind::PassThePot, 3),
+            "everyone starts with three bills"
+        );
 
         // And back: the dice setup is still 2d12.
         rig.hold(Face::PosZ);

@@ -33,9 +33,12 @@ type Levels = [u8; PIXELS];
 
 /// The most a face's mean absolute difference from its reference may be, in
 /// panel levels (0–15). The frames are deterministic, so this only absorbs
-/// floating-point differences between platforms: a changed glyph, a shifted
-/// edge or a different smoke particle is far above it.
+/// floating-point differences between platforms.
 const MAX_FACE_MAE: f32 = 0.05;
+/// The most pixels of a face that may differ from the reference by two levels
+/// or more. Rounding noise moves a few pixels by one level; a changed digit
+/// in small text moves dozens by much more, yet barely changes the mean.
+const MAX_BIG_DIFFS: usize = 4;
 
 /// The world model's seed, so shakes and tumbles are the same every run.
 const WORLD_SEED: u64 = 1;
@@ -332,6 +335,11 @@ fn mae(a: &Levels, b: &Levels) -> f32 {
         / PIXELS as f32
 }
 
+/// How many pixels differ by two levels or more.
+fn big_diffs(a: &Levels, b: &Levels) -> usize {
+    a.iter().zip(b).filter(|(&x, &y)| x.abs_diff(y) >= 2).count()
+}
+
 /// Compare the scenario's rows with its sheet, or write the sheet when
 /// `UPDATE_SNAPSHOTS` is set. Returns what differs.
 fn check(scenario: &str, names: &[&str], rows: &[Row]) -> Vec<String> {
@@ -356,15 +364,16 @@ fn check(scenario: &str, names: &[&str], rows: &[Row]) -> Vec<String> {
             rows.len()
         ));
     }
-    println!("\n{scenario}: mean absolute difference per face (+X −X +Y −Y +Z −Z), levels 0–15");
+    println!("\n{scenario}: mean difference / pixels off by 2+ per face (+X −X +Y −Y +Z −Z)");
     for ((name, row), exp) in names.iter().zip(rows).zip(&expected) {
         let mut line = format!("  t={name:>6}");
         for face in Face::ALL {
-            let d = mae(&exp[face.index()], &row[face.index()]);
-            line += &format!(" {d:6.3}");
-            if d > MAX_FACE_MAE {
+            let (a, b) = (&exp[face.index()], &row[face.index()]);
+            let (d, big) = (mae(a, b), big_diffs(a, b));
+            line += &format!(" {d:6.3}/{big:<4}");
+            if d > MAX_FACE_MAE || big > MAX_BIG_DIFFS {
                 failures.push(format!(
-                    "{scenario} t={name} face {face:?}: differs from the snapshot by {d:.3} levels (limit {MAX_FACE_MAE})"
+                    "{scenario} t={name} face {face:?}: differs from the snapshot by {d:.3} levels on average, with {big} pixels off by 2 or more (limits {MAX_FACE_MAE}, {MAX_BIG_DIFFS})"
                 ));
             }
         }
@@ -553,6 +562,27 @@ fn menu_modes() {
             (11.6, |r| r.tip(TipDir::Up)),
             (12.3, Run::press),
             (13.25, Run::release),
+        ],
+    );
+}
+
+#[test]
+fn menu_bills_in_hand() {
+    // Pass the Pot: the page counts the bills in your hand, which is how many
+    // dice you roll. It starts at three; tip down to two and save.
+    run_timeline(
+        "menu-bills",
+        Run::with_world_and_modes(),
+        &[10.0, 10.55, 11.05, 11.55, 13.4, 15.5],
+        vec![
+            (8.1, Run::press),
+            (9.3, Run::release),
+            (9.5, |r| r.tip(TipDir::Right)),
+            (10.1, |r| r.tip(TipDir::Up)),
+            (10.6, |r| r.tip(TipDir::Left)),
+            (11.1, |r| r.tip(TipDir::Down)),
+            (11.7, Run::press),
+            (12.65, Run::release),
         ],
     );
 }
