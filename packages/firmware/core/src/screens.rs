@@ -324,8 +324,8 @@ pub mod pig_score {
     /// The turn's total counts up.
     pub const TURN_AT: f32 = 1.8;
     pub const COUNT_S: f32 = 0.8;
-    /// The banked score, then the prompt in its place.
-    pub const BANKED_AT: f32 = 2.6;
+    /// Whose turn it is, then the prompt in its place.
+    pub const WHO_AT: f32 = 2.6;
     pub const PROMPT_AT: f32 = 3.4;
 }
 
@@ -335,8 +335,8 @@ fn ramp(t: f32, at: f32, over: f32) -> f32 {
 }
 
 /// What a throw says once the pigs have settled, `t` seconds after the die
-/// landed: the throw's points pop in big, the turn's total counts up to
-/// them, and then the screen says what to do next. The pigs themselves are
+/// landed: the throw's points pop in big, the turn's points count up beside
+/// the player's total, and then the screen says what to do next. The pigs themselves are
 /// [`crate::pigfx`]. A bust dims to the dud colour and passes the die by
 /// itself, so it only asks for the next player to shake.
 pub fn draw_pig_score<A: AssetStore>(
@@ -397,20 +397,21 @@ pub fn draw_pig_score<A: AssetStore>(
                 // Counts up from what the turn was to what it is now.
                 let k = ramp(t, TURN_AT, COUNT_S);
                 let eased = 1.0 - (1.0 - k) * (1.0 - k);
-                let shown = throw.turn_before + roundf(p as f32 * eased) as u16;
-                write!(line, "Turn {shown}")
+                let turn = throw.turn_before + roundf(p as f32 * eased) as u16;
+                // The turn's points, then what the player would have in all.
+                write!(line, "{turn} · {}", banked + turn)
             }
         };
         c.text(&line, 0.0, 36.0, fit_px(&line, 24, 150.0), style(turn_a, 10.0));
     }
 
-    // The bottom row: who has what, then what to do next.
+    // The bottom row: whose turn it is, then what to do next.
     let prompt = ramp(t, PROMPT_AT, 0.3);
-    let banked_a = ramp(t, BANKED_AT, 0.25) * (1.0 - prompt);
-    if banked_a > 0.0 && !bust {
+    let who_a = ramp(t, WHO_AT, 0.25) * (1.0 - prompt);
+    if who_a > 0.0 && !bust {
         let mut who: String<24> = String::new();
-        let _ = write!(who, "P{} · {banked} banked", throw.player + 1);
-        c.text(&who, 0.0, 66.0, 14, style(banked_a * 0.7, 0.0));
+        let _ = write!(who, "P{}", throw.player + 1);
+        c.text(&who, 0.0, 66.0, 14, style(who_a * 0.7, 0.0));
     }
     if prompt > 0.0 {
         if bust {
