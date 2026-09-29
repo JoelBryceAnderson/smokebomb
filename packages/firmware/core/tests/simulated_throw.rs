@@ -125,3 +125,58 @@ fn a_dud_fizzles() {
 fn an_ordinary_roll_has_no_effect() {
     assert_eq!(throw_and_watch(12), (0, 0, false));
 }
+
+/// Pig Toss: a throw draws two poses (always two), a tap banks the
+/// turn and passes the die, and the signed roll chain isn't touched.
+#[test]
+fn pig_toss_throws_two_pigs_and_a_tap_banks() {
+    use smokebomb_core::menu::{PlayMode, Settings};
+    use smokebomb_core::pigs::{Outcome, Pose};
+
+    let sim = SimHandle::new();
+    sim.lock().manual_time_ms = Some(0);
+    let mut fw = Firmware::new(sim.peripherals()).unwrap();
+    fw.set_settings(Settings {
+        play: PlayMode::PigToss,
+        players: 3,
+        ..Settings::default()
+    });
+    assert_eq!(fw.pigs().players(), 3);
+
+    // A word for the middle of a pose's odds.
+    let word = |pose: Pose| {
+        let start: u32 = Pose::ALL[..pose.index()].iter().map(|p| p.weight() as u32).sum();
+        (((start as u64 * 2 + pose.weight() as u64) << 32) / 20_000) as u32
+    };
+    {
+        let mut s = sim.lock();
+        s.imu_script.extend(imu_script::throw());
+        s.imu_resting = imu_script::resting(Face::PosY);
+        s.rng_script.push_back(word(Pose::Nose));
+        s.rng_script.push_back(word(Pose::Nose));
+    }
+    let mut t = 0u64;
+    let mut run = |fw: &mut Firmware<_>, ticks: u64| {
+        for _ in 0..ticks {
+            sim.lock().manual_time_ms = Some(t * 33);
+            fw.tick().unwrap();
+            t += 1;
+        }
+    };
+    run(&mut fw, 90);
+
+    let throw = *fw.pigs().last().expect("the throw was made");
+    assert_eq!(throw.poses, [Pose::Nose, Pose::Nose]);
+    assert_eq!(throw.outcome, Outcome::Score(40));
+    assert_eq!(fw.pigs().turn(), 40);
+    assert!(fw.last_roll().is_none(), "a pig throw isn't a signed roll");
+
+    // A tap banks it and passes to player 2.
+    sim.lock().touch_mask = 1 << Face::PosY.index();
+    run(&mut fw, 2);
+    sim.lock().touch_mask = 0;
+    run(&mut fw, 2);
+    assert_eq!(fw.pigs().scores(), &[40, 0, 0]);
+    assert_eq!(fw.pigs().current(), 1);
+    assert_eq!(fw.pigs().turn(), 0);
+}

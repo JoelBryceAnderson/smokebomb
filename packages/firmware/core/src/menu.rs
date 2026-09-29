@@ -93,17 +93,25 @@ pub enum PlayMode {
     Dice,
     PassThePot,
     HotPotato,
+    /// Two pigs to throw for points; the die keeps score for the table.
+    PigToss,
 }
 
 impl PlayMode {
     /// Menu order on the Mode page.
-    pub const ALL: [PlayMode; 3] = [PlayMode::Dice, PlayMode::PassThePot, PlayMode::HotPotato];
+    pub const ALL: [PlayMode; 4] = [
+        PlayMode::Dice,
+        PlayMode::PassThePot,
+        PlayMode::HotPotato,
+        PlayMode::PigToss,
+    ];
 
     pub const fn name(self) -> &'static str {
         match self {
             PlayMode::Dice => "Dice",
             PlayMode::PassThePot => "Pass the Pot",
             PlayMode::HotPotato => "Hot Potato",
+            PlayMode::PigToss => "Pig Toss",
         }
     }
 
@@ -120,6 +128,7 @@ impl PlayMode {
             (PlayMode::Dice, true) => &[Page::Mode, Page::Count, Page::Die, Page::Settings],
             (PlayMode::PassThePot, true) => &[Page::Mode, Page::Pot, Page::Settings],
             (PlayMode::HotPotato, true) => &[Page::Mode, Page::Fuse, Page::Settings],
+            (PlayMode::PigToss, true) => &[Page::Mode, Page::Players, Page::Settings],
             _ => &[Page::Count, Page::Die, Page::Settings],
         }
     }
@@ -140,6 +149,8 @@ pub enum Page {
     Pot,
     /// Hot Potato's option: how long the fuse may run.
     Fuse,
+    /// Pig Toss' option: how many people are playing.
+    Players,
     Settings,
 }
 
@@ -151,6 +162,7 @@ impl Page {
             Page::Die => "Which die",
             Page::Pot => "Bills in hand",
             Page::Fuse => "Fuse length",
+            Page::Players => "Players",
             Page::Settings => "Settings",
         }
     }
@@ -192,6 +204,8 @@ pub enum Setup {
     /// Dice to roll: `d20`, `3d6`, `Pass the Pot ×2`.
     Roll(DieKind, u8),
     HotPotato,
+    /// Pig Toss for this many players.
+    Pigs(u8),
 }
 
 impl Setup {
@@ -204,6 +218,11 @@ impl Setup {
                 let _ = s.push_str("Hot Potato");
                 s
             }
+            Setup::Pigs(_) => {
+                let mut s = String::new();
+                let _ = s.push_str("Pig Toss");
+                s
+            }
         }
     }
 
@@ -212,6 +231,7 @@ impl Setup {
         match self {
             Setup::Roll(..) => "Ready to roll",
             Setup::HotPotato => "Shake to light",
+            Setup::Pigs(_) => "Shake to roll",
         }
     }
 
@@ -222,6 +242,11 @@ impl Setup {
             Setup::HotPotato => {
                 let mut s = String::new();
                 let _ = s.push_str("Potato");
+                s
+            }
+            Setup::Pigs(players) => {
+                let mut s = String::new();
+                let _ = write!(s, "Pigs ×{players}");
                 s
             }
         }
@@ -244,6 +269,8 @@ pub struct Settings {
     /// roll. Everyone starts with three.
     pub pot_count: u8,
     pub fuse: Fuse,
+    /// Pig Toss: how many people are playing.
+    pub players: u8,
     /// The chosen option of each [`SETTINGS`] item.
     pub choices: Choices,
     /// A short id made from the die's serial, which About shows. It is the
@@ -276,6 +303,7 @@ impl Default for Settings {
             count: 1,
             pot_count: 3,
             fuse: Fuse::Medium,
+            players: crate::pigs::MIN_PLAYERS,
             choices: default_choices(),
             device_id: 0,
             night_hours: (crate::nest::NIGHT_START_H, crate::nest::NIGHT_END_H),
@@ -324,7 +352,7 @@ impl Settings {
     /// doesn't roll leaves this at the dice setup.
     pub fn active(&self) -> (DieKind, u8) {
         match self.play() {
-            PlayMode::Dice | PlayMode::HotPotato => (self.die, self.count),
+            PlayMode::Dice | PlayMode::HotPotato | PlayMode::PigToss => (self.die, self.count),
             PlayMode::PassThePot => (DieKind::PassThePot, self.pot_count),
         }
     }
@@ -333,6 +361,7 @@ impl Settings {
     pub fn setup(&self) -> Setup {
         match self.play() {
             PlayMode::HotPotato => Setup::HotPotato,
+            PlayMode::PigToss => Setup::Pigs(self.players),
             _ => {
                 let (die, count) = self.active();
                 Setup::Roll(die, count)
@@ -351,6 +380,7 @@ pub struct Draft {
     pub count: u8,
     pub pot_count: u8,
     pub fuse: Fuse,
+    pub players: u8,
     /// Index into [`SETTINGS`].
     pub setting: u8,
     pub choices: Choices,
@@ -368,6 +398,7 @@ impl Draft {
             count: s.count,
             pot_count: s.pot_count,
             fuse: s.fuse,
+            players: s.players,
             setting: 0,
             choices: s.choices,
             device_id: s.device_id,
@@ -412,6 +443,11 @@ impl Draft {
                     Page::Fuse => {
                         let i = Fuse::ALL.iter().position(|f| *f == self.fuse).unwrap_or(0);
                         next.fuse = Fuse::ALL[step(i, by, Fuse::ALL.len())];
+                    }
+                    Page::Players => {
+                        let n = (crate::pigs::MAX_PLAYERS - crate::pigs::MIN_PLAYERS + 1) as usize;
+                        let i = (self.players - crate::pigs::MIN_PLAYERS) as usize;
+                        next.players = step(i, by, n) as u8 + crate::pigs::MIN_PLAYERS;
                     }
                     Page::Settings => {
                         next.setting = step(self.setting as usize, by, SETTINGS.len()) as u8;
@@ -479,6 +515,7 @@ impl Draft {
         s.count = self.count;
         s.pot_count = self.pot_count;
         s.fuse = self.fuse;
+        s.players = self.players;
         s.choices = self.choices;
     }
 
@@ -511,6 +548,7 @@ impl Draft {
             Page::Die => write!(s, "{}", self.die.wire_name()),
             Page::Pot => write!(s, "{}", self.pot_count),
             Page::Fuse => write!(s, "{}", self.fuse.name()),
+            Page::Players => write!(s, "{}", self.players),
             Page::Settings => write!(s, "{}", self.setting().0),
         };
         s

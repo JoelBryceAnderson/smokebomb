@@ -511,6 +511,57 @@ fn result_screen() {
     );
 }
 
+/// A random word that lands the pigs on `pose`.
+fn pose_word(pose: smokebomb_core::pigs::Pose) -> u32 {
+    use smokebomb_core::pigs::{Pose, WEIGHT_TOTAL};
+    let start: u32 = Pose::ALL[..pose.index()].iter().map(|p| p.weight() as u32).sum();
+    let mid = start * 2 + pose.weight() as u32; // twice the bucket's midpoint
+    ((mid as u64 * (u32::MAX as u64 + 1)) / (2 * WEIGHT_TOTAL as u64)) as u32
+}
+
+impl Run {
+    /// A throw scripted to land +Z up with the two pigs in these poses.
+    fn throw_pigs(&mut self, poses: [smokebomb_core::pigs::Pose; 2]) {
+        let mut s = self.sim.lock();
+        s.imu_script.extend(imu_script::throw());
+        s.imu_resting = imu_script::resting(Face::PosZ);
+        for p in poses {
+            s.rng_script.push_back(pose_word(p));
+        }
+    }
+}
+
+fn pigs_scenario(name: &str, throw: Input) {
+    let run = Run::new().with_settings(|s| {
+        s.modes = true;
+        s.play = smokebomb_core::menu::PlayMode::PigToss;
+    });
+    run_timeline(
+        name,
+        run,
+        &[10.6, 11.0, 11.4, 11.8, 12.2, 12.7, 15.0],
+        vec![(THROW_AT, throw)],
+    );
+}
+
+#[test]
+fn pigs_score() {
+    use smokebomb_core::pigs::Pose::*;
+    pigs_scenario("pigs-score", |r| r.throw_pigs([Back, Feet]));
+}
+
+#[test]
+fn pigs_bust() {
+    use smokebomb_core::pigs::Pose::*;
+    pigs_scenario("pigs-bust", |r| r.throw_pigs([SideDot, SidePlain]));
+}
+
+#[test]
+fn pigs_rare() {
+    use smokebomb_core::pigs::Pose::*;
+    pigs_scenario("pigs-rare", |r| r.throw_pigs([Nose, Ear]));
+}
+
 #[test]
 fn quick_throw_smoke() {
     // A quick press throws with almost no shake: the throw fills the cloud.

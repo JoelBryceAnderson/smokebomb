@@ -14,6 +14,7 @@ use crate::font::{fit_px, Align, Fonts};
 use crate::gfx::{Painter, Style};
 use crate::menu::{Draft, Page, Setup};
 use crate::nest::{ChargeView, ClockView, Label, NestFace, Screen};
+use crate::pigs::{throw_label, Outcome, Throw};
 use crate::smoke::Special;
 
 /// The lit area's half-size in canvas units.
@@ -307,6 +308,32 @@ fn draw_pot_tokens<A: AssetStore>(c: &mut Ctx<A>, values: &[u8], value: u8, alph
             }
         }
     }
+}
+
+// ---------- Pig Toss ----------
+
+/// What a throw says under the pigs: its name, what it scored, the turn so
+/// far and the player's banked score. The pigs themselves are
+/// [`crate::pigfx`]. A bust dims to the dud colour.
+pub fn draw_pigs_text<A: AssetStore>(c: &mut Ctx<A>, throw: &Throw, turn: u16, banked: u16, alpha: f32) {
+    let value = if throw.outcome == Outcome::Bust { DUD } else { FG };
+    let mut who: String<24> = String::new();
+    let _ = write!(who, "P{} · {banked}", throw.player + 1);
+    c.text(&who, 0.0, -66.0, 15, Style::new(value, alpha * 0.7, 8.0));
+    let label = throw_label(throw.poses);
+    c.text(
+        &label,
+        0.0,
+        36.0,
+        fit_px(&label, 22, 150.0),
+        Style::new(value, alpha, 8.0),
+    );
+    let mut line: String<24> = String::new();
+    let _ = match throw.outcome {
+        Outcome::Bust => write!(line, "turn lost"),
+        Outcome::Score(p) => write!(line, "+{p} · turn {turn}"),
+    };
+    c.text(&line, 0.0, 60.0, 16, Style::new(value, alpha * 0.7, 8.0));
 }
 
 // ---------- Hot Potato ----------

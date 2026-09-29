@@ -21,6 +21,8 @@ pub mod motion;
 pub mod nest;
 pub mod orientation;
 pub mod pack;
+pub mod pigfx;
+pub mod pigs;
 pub mod potato;
 pub mod roll;
 pub mod screens;
@@ -39,11 +41,12 @@ use smokebomb_shared::{DieKind, SignedRoll};
 use display::Framebuffer;
 use font::Fonts;
 use gfx::{Layer, Painter, Transform};
-use menu::{Draft, Settings};
+use menu::{Draft, PlayMode, Settings};
 use motion::{Motion, MotionDetector};
 use nest::{Nest, NestFace};
 use orientation::TextOrientation;
 use pack::PackIndex;
+use pigs::Pigs;
 use potato::{Potato, PotatoCommand};
 use roll::RollEngine;
 use screens::Ctx;
@@ -103,6 +106,13 @@ pub struct Firmware<P: Platform> {
     motion: MotionDetector,
     settings: Settings,
     potato: Potato,
+    pigs: Pigs,
+    /// Seconds into the pigs' tumble, and how far in they were when the
+    /// die landed. Runs only while the die is shaken or thrown.
+    pig_clock: f32,
+    pig_land: f32,
+    /// When the die landed, so the pigs settle from there.
+    pig_landed_ms: u64,
     roller: RollEngine,
     smoke: Smoke,
     /// A max or dud waiting for the smoke to clear (SIM_SPEC C6).
@@ -157,6 +167,10 @@ impl<P: Platform> Firmware<P> {
             motion: MotionDetector::new(),
             settings,
             potato: Potato::new(),
+            pigs: Pigs::default(),
+            pig_clock: 0.0,
+            pig_land: 0.0,
+            pig_landed_ms: 0,
             roller,
             smoke,
             pending_special: None,
@@ -216,9 +230,24 @@ impl<P: Platform> Firmware<P> {
 
     /// The saved mode decides whether throws roll or belong to a game.
     fn apply_settings(&mut self) {
-        self.smoke.set_amount(self.settings.smoke_amount());
+        // Pig Toss has pigs on the faces instead of smoke.
+        self.smoke
+            .set_amount(if self.settings.play() == PlayMode::PigToss {
+                smoke::Amount::Off
+            } else {
+                self.settings.smoke_amount()
+            });
         self.sm.set_rolls(self.settings.play().rolls());
         self.potato = Potato::new();
+        // Saving the menu keeps a game going unless the table changed size.
+        if self.pigs.players() != self.settings.players {
+            self.pigs = Pigs::new(self.settings.players);
+        }
+    }
+
+    /// The Pig Toss game: scores, whose turn and the last throw.
+    pub fn pigs(&self) -> &Pigs {
+        &self.pigs
     }
 
     /// The Hot Potato round in play, if any.
@@ -328,6 +357,12 @@ impl<P: Platform> Firmware<P> {
                     _ => {}
                 }
             }
+            if event == Event::Tap
+                && self.settings.play() == PlayMode::PigToss
+                && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. })
+            {
+                self.bank_pigs()?;
+            }
             if event == Event::Docked(true) {
                 for cmd in self.potato.reset() {
                     self.run_potato(cmd)?;
@@ -415,6 +450,35 @@ impl<P: Platform> Firmware<P> {
         self.ui.game_started();
         for cmd in self.potato.light(now, fuse, range.1) {
             self.run_potato(cmd)?;
+        }
+        Ok(())
+    }
+
+    /// A throw landed in Pig Toss: draw both pigs' poses. It is a game,
+    /// not a signed roll, so the roll chain stays as it was.
+    fn throw_pigs(&mut self) -> HalResult<()> {
+        let poses = [
+            pigs::Pose::from_random(self.hw.rng.next_u32()?),
+            pigs::Pose::from_random(self.hw.rng.next_u32()?),
+        ];
+        let throw = self.pigs.throw(poses);
+        self.pending_special = None;
+        if self.settings.haptics_on() {
+            let effect = if throw.outcome == pigs::Outcome::Bust {
+                smokebomb_hal::HapticEffect::Buzz
+            } else {
+                smokebomb_hal::HapticEffect::Tick
+            };
+            self.hw.haptics.play(effect)?;
+        }
+        Ok(())
+    }
+
+    /// A tap in Pig Toss: bank the turn and pass the die.
+    fn bank_pigs(&mut self) -> HalResult<()> {
+        let banked = self.pigs.bank();
+        if banked != pigs::Banked::Nothing && self.settings.haptics_on() {
+            self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
         }
         Ok(())
     }
@@ -516,6 +580,7 @@ impl<P: Platform> Firmware<P> {
             self.smoke.clear();
         }
         let dt = self.frame_dt(now);
+        self.step_pigs(dt, before, after, now);
         self.smoke.step(dt);
         if let Some(face) = self.ui.take_boot_burst(now) {
             self.smoke.burst(face);
@@ -527,6 +592,23 @@ impl<P: Platform> Firmware<P> {
                 self.ui.set_special(now, special);
                 self.pending_special = None;
             }
+        }
+    }
+
+    /// Run the pigs' tumble while the die is shaken or thrown, and note when
+    /// it lands so they can settle from there.
+    fn step_pigs(&mut self, dt: f32, before: &Mode, after: &Mode, now: u64) {
+        let flying = |m: &Mode| matches!(m, Mode::Shaking | Mode::Airborne | Mode::Settling);
+        if flying(after) {
+            if !flying(before) {
+                self.pig_clock = 0.0;
+            }
+            // Rattling in the hand is quicker than the tumble.
+            self.pig_clock += dt * if matches!(after, Mode::Shaking) { 1.7 } else { 1.0 };
+        }
+        if matches!(after, Mode::Reveal { .. }) && !matches!(before, Mode::Reveal { .. }) {
+            self.pig_land = self.pig_clock;
+            self.pig_landed_ms = now;
         }
     }
 
@@ -664,6 +746,9 @@ impl<P: Platform> Firmware<P> {
                     self.hw.haptics.play(effect)?;
                 }
             }
+            Command::Roll if self.settings.play() == PlayMode::PigToss => {
+                self.throw_pigs()?;
+            }
             Command::Roll => {
                 let (die, count) = self.settings.active();
                 let signed =
@@ -794,7 +879,13 @@ impl<P: Platform> Firmware<P> {
         let up = self.display_up();
         let quarters = Face::ALL.map(|f| self.display_quarter(f));
         let setup = self.settings.setup();
-        let label = setup.label();
+        let pigs_on = self.settings.play() == PlayMode::PigToss;
+        let label = if pigs_on {
+            // Between throws the label says whose go it is.
+            self.pigs.status()
+        } else {
+            setup.label()
+        };
         let battery = self.hw.power.battery()?.percent;
         let potato_view = if matches!(mode, Mode::Menu | Mode::Nest) {
             None
@@ -804,6 +895,27 @@ impl<P: Platform> Firmware<P> {
             Some(PotatoView::Fuse(self.potato.heat(now), self.potato.pulse(now)))
         } else {
             None
+        };
+        // Pig Toss: the pigs tumble while the die is in the air, and settle
+        // into their poses once it lands, for as long as the result is up.
+        let pig_scene = if !pigs_on || matches!(mode, Mode::Menu | Mode::Nest | Mode::Off) {
+            None
+        } else if matches!(mode, Mode::Shaking | Mode::Airborne | Mode::Settling) {
+            Some(pigfx::Scene::Tumbling(self.pig_clock))
+        } else {
+            self.pigs
+                .last()
+                .filter(|_| self.ui.showing_result(now))
+                .map(|t| pigfx::Scene::Settling {
+                    land: self.pig_land,
+                    u: now.saturating_sub(self.pig_landed_ms) as f32 / 1000.0 / pigfx::SETTLE_S,
+                    poses: t.poses,
+                })
+        };
+        let pig_alpha = if matches!(mode, Mode::Shaking | Mode::Airborne | Mode::Settling) {
+            1.0
+        } else {
+            self.ui.result_dim(now)
         };
         let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
         let asleep = self.asleep;
@@ -817,9 +929,16 @@ impl<P: Platform> Firmware<P> {
             orientation,
             last_roll,
             menu,
+            pigs,
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
+        let pigs_throw = if pigs_on { pigs.last().copied() } else { None };
+        let has_result = if pigs_on {
+            pigs_throw.is_some()
+        } else {
+            record.is_some()
+        };
         let blackout = ui.blackout() || asleep;
 
         for face in Face::ALL {
@@ -828,7 +947,7 @@ impl<P: Platform> Firmware<P> {
             if blackout {
                 continue;
             }
-            let mut content = ui.content(now, face, up, &mode, record.is_some());
+            let mut content = ui.content(now, face, up, &mode, has_result);
             // Lifted from the Nest a moment ago: its screens hang on.
             if nest_faces[face.index()].is_some() && !matches!(content, FaceContent::Menu) {
                 content = FaceContent::Nest;
@@ -879,7 +998,10 @@ impl<P: Platform> Firmware<P> {
                 FaceContent::Boot { t, top } => screens::draw_boot(&mut c, face.index(), top, t),
                 FaceContent::Wake { alpha } => screens::draw_wake_label(&mut c, setup, &label, alpha),
                 FaceContent::Result { alpha } => {
-                    if let Some(r) = record {
+                    if let Some(t) = pigs_throw {
+                        let banked = pigs.scores()[t.player as usize];
+                        screens::draw_pigs_text(&mut c, &t, pigs.turn(), banked, alpha);
+                    } else if let Some(r) = record {
                         screens::draw_result(&mut c, r, ui.special(), alpha);
                     }
                 }
@@ -907,6 +1029,12 @@ impl<P: Platform> Firmware<P> {
                     }
                 }
                 FaceContent::LowBattery { alpha } => screens::draw_bolt(&mut c, alpha),
+            }
+            if let Some(scene) = pig_scene {
+                if face != up.opposite() {
+                    // Each face shows a different moment of the same throw.
+                    pigfx::draw(c.painter, scene, face.index() as f32 * 0.9, pig_alpha);
+                }
             }
             match potato_face {
                 Some(PotatoView::Fuse(heat, pulse)) => screens::draw_fuse(&mut c, heat, pulse),
