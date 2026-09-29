@@ -108,30 +108,29 @@ fn die_solid<A: AssetStore>(c: &mut Ctx<A>, die: DieKind, cx: f32, cy: f32, r: f
                 style,
             );
         }
-        // A ball: the hundred-sided die is a sphere of tiny facets.
-        _ => ball(c, cx, cy, r, style),
+        // The tens die of a percentile roll, marked with a percent sign.
+        _ => percentile(c, cx, cy, r, style),
     }
 }
 
-/// A sphere drawn as a globe: its outline, an equator and two latitudes,
-/// and two tilted meridians.
-fn ball<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Style) {
-    const N: usize = 24;
-    let ellipse = |ox: f32, oy: f32, rx: f32, ry: f32| -> [P; N + 1] {
-        core::array::from_fn(|k| {
-            let a = TAU * k as f32 / N as f32;
-            (cx + (ox + cosf(a) * rx) * r, cy + (oy + sinf(a) * ry) * r)
-        })
-    };
-    let faint = Style::new(FG, style.alpha * 0.7, 0.0);
-    c.painter.stroke_arc(cx, cy, r * 0.98, 0.0, TAU, LINE, style);
-    let equator = ellipse(0.0, 0.0, 0.98, 0.3);
-    let north = ellipse(0.0, -0.55, 0.83, 0.2);
-    let south = ellipse(0.0, 0.55, 0.83, 0.2);
+/// The percentile die: a d10 with its facet lines faint and a percent sign
+/// on the front.
+fn percentile<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Style) {
+    let m = |p: P| at(cx, cy, r, p);
+    let (t, rt, b, l) = (m((0.0, -1.0)), m((0.85, -0.12)), m((0.0, 1.0)), m((-0.85, -0.12)));
+    let (p1, p2) = (m((-0.42, 0.34)), m((0.42, 0.34)));
+    strokes(c, &[&[t, rt, b, l, t]], style);
+    let faint = Style::new(FG, style.alpha * 0.45, 0.0);
     c.painter
-        .stroke_paths(&[&equator, &north, &south], LINE * 0.7, faint);
-    let mid = ellipse(0.0, 0.0, 0.42, 0.98);
-    c.painter.stroke_paths(&[&mid], LINE * 0.7, faint);
+        .stroke_paths(&[&[l, p1, b], &[rt, p2, b]], LINE * 0.7, faint);
+    let (px, py, s) = (cx, cy + r * 0.02, r * 0.34);
+    let ring = |dx: f32, dy: f32| (px + dx * s, py + dy * s);
+    let (a, b) = (ring(-0.5, -0.62), ring(0.5, 0.62));
+    let ro = s * 0.3;
+    c.painter.stroke_arc(a.0, a.1, ro, 0.0, TAU, LINE * 0.8, style);
+    c.painter.stroke_arc(b.0, b.1, ro, 0.0, TAU, LINE * 0.8, style);
+    c.painter
+        .stroke_polyline(&[ring(0.8, -1.0), ring(-0.8, 1.0)], LINE * 0.8, style);
 }
 
 /// The pentagonal trapezohedron of a d10, seen from the side.
