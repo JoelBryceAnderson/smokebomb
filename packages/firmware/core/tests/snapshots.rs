@@ -542,7 +542,7 @@ fn menu() {
 #[test]
 fn menu_settings() {
     // Open the menu, tip to the Settings page, then tip up through the items.
-    const ITEMS: usize = 9;
+    const ITEMS: usize = 7;
     let names: Vec<String> = (1..=ITEMS).map(|i| format!("item{i}")).collect();
     let mut times: Vec<(f64, &str)> = vec![(10.0, "10.00")];
     for (i, name) in names.iter().enumerate() {

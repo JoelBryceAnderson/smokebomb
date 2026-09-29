@@ -978,7 +978,7 @@ mod tests {
     }
 
     /// The default settings with some items chosen (by index into
-    /// `SETTINGS`: 2 is Smoke, 4 is Sleep after).
+    /// `SETTINGS`: 2 is Smoke, 3 is Sleep after).
     fn settings_with(choices: &[(usize, u8)]) -> smokebomb_firmware::smokebomb_core::menu::Settings {
         let mut s = smokebomb_firmware::smokebomb_core::menu::Settings::default();
         for &(item, option) in choices {
@@ -992,11 +992,31 @@ mod tests {
     }
 
     #[test]
+    fn about_shows_the_dies_own_id_and_keeps_it_when_settings_are_replaced() {
+        use smokebomb_firmware::smokebomb_core::menu::short_id;
+
+        let mut rig = Rig::new();
+        let id = short_id(&smokebomb_hal_simulator::SIM_SERIAL);
+        assert_ne!(id, 0);
+        assert_eq!(rig.fw.settings().device_id, id);
+        rig.fw.set_settings(settings_with(&[(2, 1)]));
+        assert_eq!(rig.fw.settings().device_id, id, "loading settings keeps the id");
+        rig.run(7.0);
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings, on Brightness
+        rig.tip(TipDir::Down); // About
+        let draft = rig.fw.menu_draft().unwrap();
+        assert_eq!(draft.setting().0, "About");
+        assert!(draft.setting_value().ends_with(&format!("SB-{id:04X}")));
+    }
+
+    #[test]
     fn the_screens_sleep_after_the_chosen_idle_time_and_wake_on_a_tap() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
         let mut rig = Rig::new();
-        rig.fw.set_settings(settings_with(&[(4, 0)])); // Sleep after 30 s
+        rig.fw.set_settings(settings_with(&[(3, 0)])); // Sleep after 30 s
         rig.run(7.0); // boot
         rig.tap(Face::PosZ);
         assert!(lit(&rig), "the tap shows the setup");
@@ -1017,7 +1037,7 @@ mod tests {
     #[test]
     fn touching_the_die_puts_off_sleep() {
         let mut rig = Rig::new();
-        rig.fw.set_settings(settings_with(&[(4, 0)]));
+        rig.fw.set_settings(settings_with(&[(3, 0)]));
         rig.run(7.0);
         rig.run(25.0);
         rig.tap(Face::PosZ);
@@ -1032,7 +1052,7 @@ mod tests {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
         let mut rig = Rig::new();
-        rig.fw.set_settings(settings_with(&[(4, 0)]));
+        rig.fw.set_settings(settings_with(&[(3, 0)]));
         rig.run(45.0);
         assert!(!rig.sim.lock().display_on);
         rig.world.start_shake();
@@ -1052,7 +1072,7 @@ mod tests {
     #[test]
     fn sleep_never_stays_awake() {
         let mut rig = Rig::new();
-        rig.fw.set_settings(settings_with(&[(4, 4)])); // Never
+        rig.fw.set_settings(settings_with(&[(3, 4)])); // Never
         rig.run(7.0);
         assert_eq!(rig.fw.settings().sleep_after_ms(), None);
         rig.run(200.0);

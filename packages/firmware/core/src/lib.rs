@@ -26,8 +26,8 @@ pub mod ui;
 
 use heapless::Vec;
 use smokebomb_hal::{
-    Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Peripherals, Platform, Power, Rng, Touch,
-    FRAME_BYTES,
+    Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Peripherals, Platform, Power, Rng,
+    SecureElement, Touch, FRAME_BYTES,
 };
 use smokebomb_shared::{DieKind, SignedRoll};
 
@@ -133,12 +133,16 @@ impl<P: Platform> Firmware<P> {
         let smoke = Smoke::load(&mut hw.assets, &pack, hw.rng.next_u32()?);
         let fonts = Fonts::load(&mut hw.assets, &pack);
         let roller = RollEngine::new(&mut hw.secure_element)?;
+        let settings = Settings {
+            device_id: menu::short_id(&hw.secure_element.serial()?),
+            ..Settings::default()
+        };
         hw.display.set_enabled(true)?;
         Ok(Self {
             hw,
             sm: StateMachine::new(),
             motion: MotionDetector::new(),
-            settings: Settings::default(),
+            settings,
             potato: Potato::new(),
             roller,
             smoke,
@@ -175,7 +179,11 @@ impl<P: Platform> Firmware<P> {
 
     /// Replaces the settings, as when they're loaded from flash at boot.
     pub fn set_settings(&mut self, settings: Settings) {
-        self.settings = settings;
+        // The die's id is its identity, not a setting: keep it.
+        self.settings = Settings {
+            device_id: self.settings.device_id,
+            ..settings
+        };
         self.apply_settings();
     }
 
@@ -647,8 +655,7 @@ impl<P: Platform> Firmware<P> {
 
     /// Push saved settings to the hardware they control. Smoke and the mode
     /// are applied by `apply_settings`, and Sleep after by `update_sleep`.
-    /// Large text, night mode and verified rolls are stored and not acted on
-    /// yet.
+    /// Owner and About are display-only.
     fn apply_hardware_settings(&mut self) -> HalResult<()> {
         let level = (self.settings.brightness_pct() as u16 * 255 / 100) as u8;
         for face in Face::ALL {

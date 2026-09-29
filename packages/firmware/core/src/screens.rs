@@ -392,7 +392,8 @@ pub fn draw_menu<A: AssetStore>(
             .fill_triangle([(-w, 46.0 - h), (w, 46.0 - h), (0.0, 46.0 + h)], arrows);
 
         if m.page == Page::Settings {
-            let (name, value) = m.setting();
+            let name = m.setting().0;
+            let value = m.setting_value();
             c.text(
                 name,
                 0.0,
@@ -401,10 +402,10 @@ pub fn draw_menu<A: AssetStore>(
                 Style::new(FG, alpha, 10.0),
             );
             c.text(
-                value,
+                &value,
                 0.0,
                 27.0,
-                fit_px(value, 18, 150.0),
+                fit_px(&value, 18, 150.0),
                 Style::new(FG, 0.72 * alpha, 0.0),
             );
         } else {
