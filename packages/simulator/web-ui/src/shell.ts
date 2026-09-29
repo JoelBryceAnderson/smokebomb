@@ -1,11 +1,11 @@
-// Corner screws and the charging-face etching (design brief §1 and §2).
+// Charging contacts and the charging-face etching (design brief §1 and §2).
 import * as THREE from "three";
 
 const MM = 1 / 13.25; // scene units per mm
 
-/** Screw centre from the face centre, in mm, on both axes (the updated mockup: 12.9 mm, 1.9 mm heads). */
-const SCREW_AT = 12.9 * MM;
-const HEX_R = 1.1 * MM; // 1.9 mm across flats
+/** Contact centre from the face centre, in mm, on both axes. 13.2 keeps them clear of the panel's ledge glass; do not move inward. */
+const CONTACT_AT = 13.2 * MM;
+const HEX_R = 0.81 * MM; // 1.4 mm across flats
 const HEX_GAP = 0.15 * MM;
 
 export interface FaceDef {
@@ -14,38 +14,46 @@ export interface FaceDef {
 }
 
 /**
- * Four hexagonal screws per face. The heads are flush with the shell, so
- * they take its finish for free; what is drawn here is the dark hairline
- * ring around each head and the slot across it, both flush inlays. All
- * slots point at the window centre, and a hex flat faces it too.
- * On the five cup faces they are engraved; on the charging face (the lid) the
- * slot is an insulating gap splitting each head into a + half and a ground
- * half, and the Nest's two pins straddle it, so every rotation lines up.
+ * The four charging contacts on the charging face (the lid); the five cup
+ * faces are plain metal. Each contact is a separate plated head, solid and
+ * one-piece, so the slot across it is only cosmetic. Under it sits the dark
+ * hairline gap ring; all slots point at the window centre and a hex flat
+ * faces it too. + is on two diagonal corners and ground on the other two, an
+ * active bridge rectifier takes either polarity, so every rotation charges.
  */
-export function addScrews(die: THREE.Group, faces: FaceDef[], half: number, material: THREE.Material) {
+export function addContacts(
+  die: THREE.Group,
+  face: FaceDef,
+  half: number,
+  darkMaterial: THREE.Material,
+  contactMaterial: THREE.Material,
+) {
   const ringGeo = new THREE.RingGeometry(HEX_R, HEX_R + HEX_GAP, 6, 1);
-  const slotGeo = new THREE.PlaneGeometry(1.8 * MM, 0.2 * MM);
-  for (const d of faces) {
-    for (const [sx, sy] of [
-      [1, 1],
-      [1, -1],
-      [-1, 1],
-      [-1, -1],
-    ]) {
-      const g = new THREE.Group();
-      const ring = new THREE.Mesh(ringGeo, material);
-      ring.rotation.z = Math.atan2(-sy, -sx) - Math.PI / 6;
-      const slot = new THREE.Mesh(slotGeo, material);
-      slot.rotation.z = Math.atan2(-sy, -sx);
-      slot.position.z = 0.0002;
-      g.add(ring, slot);
-      g.rotation.set(...d.rot);
-      // ~0.01 mm above the metal (0.00075 u) to stay clear of z-fighting.
-      g.position.set(...d.n).multiplyScalar(half + 0.0009);
-      g.translateX(sx * SCREW_AT);
-      g.translateY(sy * SCREW_AT);
-      die.add(g);
-    }
+  const headGeo = new THREE.CircleGeometry(HEX_R, 6);
+  const slotGeo = new THREE.PlaneGeometry(1.3 * MM, 0.2 * MM);
+  for (const [sx, sy] of [
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
+  ]) {
+    const g = new THREE.Group();
+    const flat = Math.atan2(-sy, -sx) - Math.PI / 6;
+    const head = new THREE.Mesh(headGeo, contactMaterial);
+    head.rotation.z = flat;
+    const ring = new THREE.Mesh(ringGeo, darkMaterial);
+    ring.rotation.z = flat;
+    ring.position.z = 0.0001;
+    const slot = new THREE.Mesh(slotGeo, darkMaterial);
+    slot.rotation.z = Math.atan2(-sy, -sx);
+    slot.position.z = 0.0002;
+    g.add(head, ring, slot);
+    g.rotation.set(...face.rot);
+    // ~0.01 mm above the metal (0.00075 u) to stay clear of z-fighting.
+    g.position.set(...face.n).multiplyScalar(half + 0.0009);
+    g.translateX(sx * CONTACT_AT);
+    g.translateY(sy * CONTACT_AT);
+    die.add(g);
   }
 }
 
@@ -163,49 +171,3 @@ export function makeEtching(half: number, anisotropy: number, faces: FaceDef[]) 
     },
   };
 }
-
-/**
- * Engraved screws, as shading: the groove and slot are cut into the shell's
- * normals, so they catch light like real cuts. It is computed from the
- * fragment's object-space position rather than a texture, so it stays crisp
- * at any zoom and lines up on every face. Folding the face coordinates with
- * abs() maps all four screws of a face onto one, and a hex with a flat toward
- * the window centre is symmetric under that fold.
- */
-export const ENGRAVE_GLSL = `
-  // Height of the engraving in mm (0 on the flat metal, negative in the cuts) for a face-local point in mm.
-  float engraveHeight(vec2 q) {
-    const float AT = ${(SCREW_AT / MM).toFixed(3)};
-    const float APO = 0.8660254;
-    const float DEPTH = 0.12;
-    vec2 p = abs(q) - vec2(AT);
-    // flat normals of a hex with a flat toward the window centre (the 225 degree diagonal)
-    float d = max(max(abs(dot(p, vec2(0.7071, 0.7071))),
-                      abs(dot(p, vec2(-0.2588, 0.9659)))),
-                      abs(dot(p, vec2(0.9659, -0.2588))));
-    float rIn = ${(HEX_R / MM).toFixed(3)} * APO;
-    float rOut = ${((HEX_R + HEX_GAP) / MM).toFixed(3)} * APO;
-    float w = max(0.035, fwidth(d) * 0.75);
-    float ring = smoothstep(rIn - w, rIn + w, d) * (1.0 - smoothstep(rOut - w, rOut + w, d));
-    // slot: a bar along the diagonal toward the centre
-    float along = abs(dot(p, vec2(0.7071, 0.7071)));
-    float across = abs(dot(p, vec2(-0.7071, 0.7071)));
-    float slot = (1.0 - smoothstep(0.9 - w, 0.9 + w, along)) * (1.0 - smoothstep(0.1 - w, 0.1 + w, across));
-    return -DEPTH * max(ring, slot);
-  }
-`;
-
-export const ENGRAVE_NORMAL = `
-  {
-    vec3 an = abs(vObjNrm);
-    float flatFace = step(0.98, max(an.x, max(an.y, an.z)));
-    vec2 fq = an.x > an.y && an.x > an.z ? vObjPos.yz : (an.y > an.z ? vObjPos.xz : vObjPos.xy);
-    float h = engraveHeight(fq * ${(1 / MM).toFixed(3)}) * ${MM.toFixed(6)} * flatFace;
-    vec3 dpx = dFdx(-vViewPosition), dpy = dFdy(-vViewPosition);
-    float dhx = dFdx(h), dhy = dFdy(h);
-    vec3 r1 = cross(dpy, normal), r2 = cross(normal, dpx);
-    float det = dot(dpx, r1);
-    vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
-    normal = normalize(abs(det) * normal - grad);
-  }
-`;

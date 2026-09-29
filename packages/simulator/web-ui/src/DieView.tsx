@@ -4,7 +4,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { PANEL_SIZE, Pose, SpinAxis, TipDirection } from "./protocol";
 import { FINISHES, FinishKey, GLOW_INTENSITY, LIGHTING, SCREW_DARK } from "./finishes";
-import { addScrews, addSeam, makeEtching, ENGRAVE_GLSL, ENGRAVE_NORMAL } from "./shell";
+import { addContacts, addSeam, CHARGING_FACE, makeEtching } from "./shell";
 
 // Mockup scale (SIM_SPEC A1): 1 scene unit = 13.25 mm, 34 mm die, 2.5 mm edges.
 const MM = 1 / 13.25;
@@ -18,7 +18,10 @@ const WINDOW_RADIUS = 0.19;
 
 // Each face's mesh rotation, as in the mockup, so canvas axes match the
 // firmware's `orientation::BASES`.
-const FACE_DEFS: { n: [number, number, number]; rot: [number, number, number] }[] = [
+const FACE_DEFS: {
+  n: [number, number, number];
+  rot: [number, number, number];
+}[] = [
   { n: [1, 0, 0], rot: [0, Math.PI / 2, 0] },
   { n: [-1, 0, 0], rot: [0, -Math.PI / 2, 0] },
   { n: [0, 1, 0], rot: [-Math.PI / 2, 0, 0] },
@@ -73,7 +76,14 @@ const SWIPE_PX = 36;
 /** Multi-turn spin rate: a quarter turn per ~120 px of drag. */
 const SPIN_RAD_PER_PX = 0.013;
 
-function roundRectPath(c: CanvasRenderingContext2D | THREE.Path, x: number, y: number, w: number, h: number, r: number) {
+function roundRectPath(
+  c: CanvasRenderingContext2D | THREE.Path,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
   c.moveTo(x + r, y);
   c.lineTo(x + w - r, y);
   c.quadraticCurveTo(x + w, y, x + w, y + r);
@@ -91,8 +101,26 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const api = useRef<DieViewHandle | null>(null);
-  const cbs = useRef({ onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey });
-  cbs.current = { onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey };
+  const cbs = useRef({
+    onTouch,
+    onRotate,
+    swipeToTip,
+    onTip,
+    multiTurn,
+    onSpin,
+    onSpinEnd,
+    onMultiKey,
+  });
+  cbs.current = {
+    onTouch,
+    onRotate,
+    swipeToTip,
+    onTip,
+    multiTurn,
+    onSpin,
+    onSpinEnd,
+    onMultiKey,
+  };
 
   useImperativeHandle(ref, () => ({
     drawFrames: (f) => api.current?.drawFrames(f),
@@ -133,7 +161,10 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       sh.uniforms.heatOn = heat.on;
       sh.uniforms.heatShift = heat.shift;
       sh.vertexShader = sh.vertexShader
-        .replace("#include <common>", "#include <common>\nvarying vec3 vHeatPos;\nvarying vec3 vObjPos;\nvarying vec3 vObjNrm;")
+        .replace(
+          "#include <common>",
+          "#include <common>\nvarying vec3 vHeatPos;\nvarying vec3 vObjPos;\nvarying vec3 vObjNrm;",
+        )
         .replace(
           "#include <begin_vertex>",
           "#include <begin_vertex>\nvHeatPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvObjPos = transformed;\nvObjNrm = normal;",
@@ -146,13 +177,11 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
           varying vec3 vObjPos;
           varying vec3 vObjNrm;
           uniform float heatOn;
-          uniform float heatShift;
-          ${ENGRAVE_GLSL}`,
+          uniform float heatShift;`,
         )
         .replace(
           "#include <normal_fragment_maps>",
           `#include <normal_fragment_maps>
-          ${ENGRAVE_NORMAL}
           if (heatOn > 0.5) {
             float ndv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
             float t = fract(ndv * 0.9 + heatShift + dot(vHeatPos, vec3(0.05, 0.035, 0.045))) * 5.0;
@@ -175,14 +204,15 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     const ambient = new THREE.AmbientLight(0xffffff, LIGHTING.day.ambient);
     scene.add(key, ambient);
 
-    // Screws: 4 per face, and the charging face's etching.
+    // The charging face's four contacts, its etching and the lid seam.
     const darkMat = new THREE.MeshStandardMaterial({
       ...SCREW_DARK,
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2,
     });
-    addScrews(die, FACE_DEFS, HALF, darkMat);
+    const contactMat = new THREE.MeshStandardMaterial({ envMap });
+    addContacts(die, FACE_DEFS[CHARGING_FACE], HALF, darkMat, contactMat);
     addSeam(die, HALF, EDGE_RADIUS, darkMat);
     const etching = makeEtching(HALF, renderer.capabilities.getMaxAnisotropy(), FACE_DEFS);
     etching.mesh.material.polygonOffset = true;
@@ -225,7 +255,10 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       const texture = new THREE.CanvasTexture(out);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      const flat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
+      const flat = new THREE.MeshBasicMaterial({
+        map: texture,
+        toneMapped: false,
+      });
       // Screen glass (sapphire window), design brief §4: near-black, glossy, with the screen as emissive light.
       const glass = new THREE.MeshPhysicalMaterial({
         color: 0x1c1c22,
@@ -254,7 +287,11 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     sg.fillRect(0, 0, 128, 128);
     const shadow = new THREE.Mesh(
       new THREE.PlaneGeometry(3.6 * K, 3.6 * K),
-      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shadowCanvas), transparent: true, depthWrite: false }),
+      new THREE.MeshBasicMaterial({
+        map: new THREE.CanvasTexture(shadowCanvas),
+        transparent: true,
+        depthWrite: false,
+      }),
     );
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = -HALF - 0.003;
@@ -298,6 +335,10 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
         shellMat.envMapIntensity = f.envMapIntensity;
         shellMat.emissive.setHex(f.emissive ?? 0x000000);
         shellMat.emissiveIntensity = f.emissive ? (night ? GLOW_INTENSITY.night : GLOW_INTENSITY.day) : 0;
+        contactMat.color.setHex(f.contact.color);
+        contactMat.metalness = f.contact.metalness;
+        contactMat.roughness = f.contact.roughness;
+        contactMat.envMapIntensity = f.envMapIntensity;
         heat.on.value = f.heatTint ? 1 : 0;
         isNight = night;
         applyGlass();

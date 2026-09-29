@@ -15,15 +15,41 @@ export interface Finish {
   envMapIntensity: number;
   /** Emissive sRGB hex (glow ceramic). */
   emissive?: number;
+  /** Plating of the four charging-face contacts (brief §4). sRGB hex. */
+  contact: { color: number; metalness: number; roughness: number };
   /** Per-pixel heat-tint shader (titanium). */
   heatTint?: boolean;
 }
 
 /** In the order of the selector. The first is the default. */
 export const FINISHES: Finish[] = [
-  { key: "stealth", label: "Stealth black", color: 0x68696e, metalness: 0.9, roughness: 0.38, envMapIntensity: 1 },
-  { key: "chrome", label: "Polished chrome", color: 0xccd0d4, metalness: 1, roughness: 0.04, envMapIntensity: 1 },
-  { key: "ceramic", label: "White ceramic", color: 0xf9f8f6, metalness: 0, roughness: 0.22, envMapIntensity: 1 },
+  {
+    key: "stealth",
+    label: "Stealth black",
+    color: 0x68696e,
+    metalness: 0.9,
+    roughness: 0.38,
+    envMapIntensity: 1,
+    contact: { color: 0x76777c, metalness: 1, roughness: 0.3 },
+  },
+  {
+    key: "chrome",
+    label: "Polished chrome",
+    color: 0xccd0d4,
+    metalness: 1,
+    roughness: 0.04,
+    envMapIntensity: 1,
+    contact: { color: 0xcdd1d5, metalness: 1, roughness: 0.06 },
+  },
+  {
+    key: "ceramic",
+    label: "White ceramic",
+    color: 0xf9f8f6,
+    metalness: 0,
+    roughness: 0.22,
+    envMapIntensity: 1,
+    contact: { color: 0x76777c, metalness: 1, roughness: 0.3 },
+  },
   {
     key: "glow",
     label: "Glow ceramic",
@@ -31,10 +57,19 @@ export const FINISHES: Finish[] = [
     metalness: 0,
     roughness: 0.3,
     envMapIntensity: 1,
+    contact: { color: 0x76777c, metalness: 1, roughness: 0.3 },
     emissive: 0xbaffe3,
   },
   // 18k yellow gold: physical reflectance, with stronger reflections.
-  { key: "gold", label: "Gold (18k yellow)", color: 0xfbd48b, metalness: 1, roughness: 0.18, envMapIntensity: 1.35 },
+  {
+    key: "gold",
+    label: "Gold (18k yellow)",
+    color: 0xfbd48b,
+    metalness: 1,
+    roughness: 0.18,
+    envMapIntensity: 1.35,
+    contact: { color: 0xf9d8a5, metalness: 1, roughness: 0.16 },
+  },
   {
     key: "rainbow",
     label: "Heat-tinted titanium",
@@ -42,6 +77,7 @@ export const FINISHES: Finish[] = [
     metalness: 1,
     roughness: 0.22,
     envMapIntensity: 1,
+    contact: { color: 0xe5e6e7, metalness: 1, roughness: 0.12 },
     heatTint: true,
   },
 ];
@@ -57,5 +93,5 @@ export const LIGHTING = {
   night: { exposure: 0.32, key: 0.05, ambient: 0.02 },
 };
 
-/** Screw gap and slot, and the laser etching (SIM brief §1, §2). */
+/** Contact gap ring and slot, the lid seam and the laser etching (SIM brief §1, §2). */
 export const SCREW_DARK = { color: 0x38383b, roughness: 0.8, metalness: 0.2 };

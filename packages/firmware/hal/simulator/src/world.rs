@@ -206,7 +206,7 @@ impl World {
     }
 
     /// The die is in the Nest with its charging face down, so the pogo
-    /// pins reach the screws. Any of the face's four rotations works.
+    /// pins reach the contacts. Any of the face's four rotations works.
     pub fn on_charger(&self) -> bool {
         self.docked && (self.pose.rotation * face_normal(CHARGING_FACE)).y < -0.9
     }
