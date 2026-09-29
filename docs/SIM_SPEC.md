@@ -258,20 +258,34 @@ The mockup has three pages: How many dice, Which die, Settings. The firmware add
 |---|---|---|
 | Dice | Mode, How many dice, Which die, Settings | How many dice |
 | Pass the Pot | Mode, How many pots, Settings | How many pots |
+| Hot Potato | Mode, Fuse length, Settings | Fuse length |
 
 | Page | Title | Values |
 |---|---|---|
-| Mode | Mode | Dice, Pass the Pot |
+| Mode | Mode | Dice, Pass the Pot, Hot Potato |
 | Count | How many dice | 1–10 |
 | Die | Which die | d4, d6, d8, d10, d12, d20, d100 |
 | Pot | How many pots | 1–3 |
+| Fuse | Fuse length | Short (10–20 s), Medium (20–40 s), Long (40–90 s) |
 | Settings | Settings | Brightness 70%; Haptics Strong; Smoke Full; Large text Off; Sleep after 2 min; Night mode Auto; Bluetooth On; Verified rolls Off; Owner "Joel"; Restart "Hold to restart"; About "v0.1.0 · SB-0042". Values are display-only. |
 
 - **X1, Mode page.** Mode sits one tip *right* of How many dice, so the dice flow is unchanged: hold, tip up or down for the count, one tip left for the die, hold to save.
 - **Setups are kept apart.** The dice setup (die, count) and each game's options are saved separately, so leaving Dice for Pass the Pot and coming back leaves `3d6` as it was.
 - **Pass the Pot is a mode, not a die.** It no longer appears under Which die, and the count no longer clamps. It is still rolled and signed as `pass_the_pot` (H6).
 - **Page dots** show the ring: four in Dice mode, three in a game mode.
+- **Hot Potato is not a roll.** See X2. The dice setup, Pass the Pot's count and the fuse length are all kept when switching.
 - **`Settings.modes` off** removes the Mode page and the die is always in Dice mode: the mockup's three-page menu. The golden frames are captured this way.
+
+**X2, Hot Potato** (extension; not in the mockup)
+
+Shake the die to light the fuse, then pass it around. Whoever holds it when it goes off is out. It never rolls or signs anything.
+
+- **Fuse.** On a shake from idle the die draws a fuse from the TRNG, uniform in the chosen range (Short 10–20 s, Medium 20–40 s, Long 40–90 s). Only a shake lights it; throws, taps and being set down don't change it.
+- **Lit.** Every face except the one facing down shows a glowing core (radius 16 → 40 canvas as it heats) with "PASS IT" beneath. Each tick flashes the glow (260 ms fade) and plays the 10 ms tick haptic. The gap between ticks falls from 900 ms to 110 ms as the *heat* rises. Heat is time lit ÷ the longest fuse the setting allows, so it never gives the real fuse away. The smoke plays its shake clip.
+- **Boom.** When the fuse runs out: buzz haptic, the throw smoke clip, a shockwave (0.7 s) and BOOM on every face except the one facing down, with "Tap to reset" from 1.2 s. A tap resets it after 0.8 s; otherwise it resets by itself after 6 s and fades out from 4.6 s.
+- **No menu mid-round.** A hold does nothing while the fuse is lit (and no hold ring shows). It opens the menu as usual once the die has gone off. Opening the menu, docking or changing mode resets the round.
+- **Shakes in the menu.** A shake or throw with the menu open closes it without saving and leaves the die idle; in a game that doesn't roll it doesn't start a round.
+- **Label.** The wake label and menu status read "Hot Potato" and "Potato". The success screen says "Shake to light" instead of "Ready to roll".
 
 **Tips**
 

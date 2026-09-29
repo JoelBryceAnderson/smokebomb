@@ -12,7 +12,7 @@ use smokebomb_shared::{DieKind, PotFace, RollRecord};
 use crate::display::FG;
 use crate::font::{fit_px, Align, Fonts};
 use crate::gfx::{Painter, Style};
-use crate::menu::{short_label, Draft, Page, SETTINGS};
+use crate::menu::{Draft, Page, SETTINGS};
 
 /// The lit area's half-size in canvas units.
 pub const ACTIVE: f32 = 83.0;
@@ -297,6 +297,55 @@ fn draw_pot_tokens<A: AssetStore>(c: &mut Ctx<A>, values: &[u8], value: u8, alph
     }
 }
 
+// ---------- Hot Potato ----------
+
+/// A lit fuse: a glow that swells with `heat` (0–1) and flashes on each
+/// tick (`pulse`, 0–1), with a nudge underneath.
+pub fn draw_fuse<A: AssetStore>(c: &mut Ctx<A>, heat: f32, pulse: f32) {
+    let core = 16.0 + 24.0 * heat;
+    c.painter.fill_circle(
+        0.0,
+        -6.0,
+        core,
+        Style::new(FG, 0.30 + 0.45 * heat, 10.0 + 14.0 * heat),
+    );
+    c.painter
+        .fill_circle(0.0, -6.0, core * 0.55, Style::new(FG, 0.55 + 0.45 * pulse, 12.0));
+    if pulse > 0.0 {
+        c.painter.fill_circle(
+            0.0,
+            -6.0,
+            core + 14.0 * (1.0 - pulse),
+            Style::new(FG, 0.35 * pulse, 0.0),
+        );
+    }
+    c.text("PASS IT", 0.0, 62.0, 14, Style::new(FG, 0.7, 0.0));
+}
+
+/// The fuse ran out: a shockwave, then BOOM, and a nudge to reset. `t` is
+/// seconds since it went off.
+pub fn draw_boom<A: AssetStore>(c: &mut Ctx<A>, t: f32) {
+    let p = (t / 0.7).clamp(0.0, 1.0);
+    let e = 1.0 - (1.0 - p) * (1.0 - p) * (1.0 - p);
+    if p < 1.0 {
+        c.painter
+            .fill_circle(0.0, 0.0, 8.0 + 92.0 * e, Style::new(FG, 0.9 * (1.0 - p), 20.0));
+    }
+    let fade = (1.0 - (t - 4.6) / 1.0).clamp(0.0, 1.0);
+    let a = (t / 0.12).min(1.0) * fade;
+    c.text(
+        "BOOM",
+        0.0,
+        -4.0,
+        fit_px("BOOM", 44, 150.0),
+        Style::new(FG, a, 16.0),
+    );
+    if t > 1.2 {
+        let a = ((t - 1.2) / 0.4).min(1.0) * fade;
+        c.text("Tap to reset", 0.0, 52.0, 13, Style::new(FG, 0.7 * a, 0.0));
+    }
+}
+
 // ---------- menu (C3, C4) ----------
 
 /// How far menu content slides during a tip, canvas units.
@@ -319,8 +368,7 @@ pub fn draw_menu<A: AssetStore>(
     }
     c.shifted(ox, oy, scale, |c| {
         let status = Style::new(FG, 0.85 * alpha, 0.0);
-        let (die, count) = m.active();
-        c.text_left(&short_label(die, count), -66.0, -66.0, 14, status);
+        c.text_left(&m.setup().short_label(), -66.0, -66.0, 14, status);
         c.painter.stroke_rect(44.0, -71.0, 20.0, 10.0, 1.5, status);
         c.painter.fill_rect(64.0, -68.0, 2.0, 4.0, status);
         c.painter
@@ -440,9 +488,9 @@ impl Path {
     }
 }
 
-/// After a save: a check draws itself, then the setup and a nudge to roll.
+/// After a save: a check draws itself, then the setup and a nudge to play.
 /// `t` is seconds since the save.
-pub fn draw_success<A: AssetStore>(c: &mut Ctx<A>, label: &str, t: f32) {
+pub fn draw_success<A: AssetStore>(c: &mut Ctx<A>, label: &str, nudge: &str, t: f32) {
     let a = (t / 0.15).min(1.0)
         * if t < 0.9 {
             1.0
@@ -466,7 +514,7 @@ pub fn draw_success<A: AssetStore>(c: &mut Ctx<A>, label: &str, t: f32) {
     }
     c.painter.stroke_polyline(&check, 5.0, Style::new(FG, a, 8.0));
     c.text(label, 0.0, 6.0, fit_px(label, 50, 150.0), Style::new(FG, a, 14.0));
-    c.text("Ready to roll", 0.0, 48.0, 15, Style::new(FG, a * 0.75, 0.0));
+    c.text(nudge, 0.0, 48.0, 15, Style::new(FG, a * 0.75, 0.0));
 }
 
 /// The whole-face flash when a setup is saved.

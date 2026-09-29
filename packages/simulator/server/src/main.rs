@@ -425,6 +425,82 @@ mod tests {
     }
 
     #[test]
+    fn hot_potato_lights_on_a_shake_goes_off_and_resets_without_rolling() {
+        use smokebomb_firmware::smokebomb_core::menu::PlayMode;
+        use smokebomb_firmware::smokebomb_core::potato::{PotatoState, BOOM_MS};
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+        use smokebomb_hal::HapticEffect;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Mode ▶ Hot Potato, then Fuse length ▶ Short, and save.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Right);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().play(), PlayMode::HotPotato);
+        assert!(rig.fw.potato().is_idle());
+        rig.sim.lock().haptics.clear();
+
+        // A shake lights the fuse and the die doesn't roll.
+        rig.world.start_shake();
+        rig.run(1.0);
+        assert!(rig.fw.potato().is_lit(), "{:?}", rig.fw.potato().state());
+        rig.world.end_shake(false);
+        rig.run(3.0);
+        assert!(rig.fw.potato().is_lit());
+        assert_eq!(*rig.fw.mode(), Mode::Idle, "the roll flow stays out of it");
+        assert!(rig.fw.last_roll().is_none());
+        let PotatoState::Lit { fuse_ms, .. } = *rig.fw.potato().state() else {
+            panic!("not lit");
+        };
+        assert!((10_000..=20_000).contains(&fuse_ms), "short fuse: {fuse_ms}");
+
+        // Holding doesn't open the menu mid-round.
+        rig.hold(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(rig.fw.menu_draft().is_none());
+
+        // It goes off within the fuse.
+        for _ in 0..(25.0 / 0.1) as usize {
+            if matches!(rig.fw.potato().state(), PotatoState::Boom { .. }) {
+                break;
+            }
+            rig.run(0.1);
+        }
+        assert!(matches!(rig.fw.potato().state(), PotatoState::Boom { .. }));
+        let haptics: Vec<_> = rig.sim.lock().haptics.iter().copied().collect();
+        assert!(haptics.iter().filter(|h| **h == HapticEffect::Tick).count() > 10);
+        assert!(haptics.contains(&HapticEffect::Buzz));
+        assert!(rig.fw.last_roll().is_none());
+
+        // A tap resets it once BOOM has had its moment.
+        rig.run(1.0);
+        rig.sim.lock().touch_mask = 1 << Face::PosZ.index();
+        rig.run(0.1);
+        rig.sim.lock().touch_mask = 0;
+        rig.run(0.1);
+        assert!(rig.fw.potato().is_idle());
+
+        // Or BOOM times out by itself.
+        rig.world.start_shake();
+        rig.run(1.0);
+        rig.world.end_shake(false);
+        for _ in 0..(25.0 / 0.1) as usize {
+            if matches!(rig.fw.potato().state(), PotatoState::Boom { .. }) {
+                break;
+            }
+            rig.run(0.1);
+        }
+        assert!(matches!(rig.fw.potato().state(), PotatoState::Boom { .. }));
+        rig.run(BOOM_MS as f64 / 1000.0 + 0.5);
+        assert!(rig.fw.potato().is_idle());
+    }
+
+    #[test]
     fn holding_on_restart_restarts_without_saving() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 

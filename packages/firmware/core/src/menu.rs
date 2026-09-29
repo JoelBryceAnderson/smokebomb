@@ -38,17 +38,24 @@ const RESTART: u8 = 9;
 pub enum PlayMode {
     Dice,
     PassThePot,
+    HotPotato,
 }
 
 impl PlayMode {
     /// Menu order on the Mode page.
-    pub const ALL: [PlayMode; 2] = [PlayMode::Dice, PlayMode::PassThePot];
+    pub const ALL: [PlayMode; 3] = [PlayMode::Dice, PlayMode::PassThePot, PlayMode::HotPotato];
 
     pub const fn name(self) -> &'static str {
         match self {
             PlayMode::Dice => "Dice",
             PlayMode::PassThePot => "Pass the Pot",
+            PlayMode::HotPotato => "Hot Potato",
         }
+    }
+
+    /// Whether a throw rolls and signs dice in this mode.
+    pub const fn rolls(self) -> bool {
+        !matches!(self, PlayMode::HotPotato)
     }
 
     /// The menu's pages in this mode. Tipping left goes to the next one, so
@@ -58,6 +65,7 @@ impl PlayMode {
         match (self, modes) {
             (PlayMode::Dice, true) => &[Page::Mode, Page::Count, Page::Die, Page::Settings],
             (PlayMode::PassThePot, true) => &[Page::Mode, Page::Pot, Page::Settings],
+            (PlayMode::HotPotato, true) => &[Page::Mode, Page::Fuse, Page::Settings],
             _ => &[Page::Count, Page::Die, Page::Settings],
         }
     }
@@ -75,6 +83,8 @@ pub enum Page {
     Die,
     /// Pass the Pot's option: how many pots to pass.
     Pot,
+    /// Hot Potato's option: how long the fuse may run.
+    Fuse,
     Settings,
 }
 
@@ -85,7 +95,80 @@ impl Page {
             Page::Count => "How many dice",
             Page::Die => "Which die",
             Page::Pot => "How many pots",
+            Page::Fuse => "Fuse length",
             Page::Settings => "Settings",
+        }
+    }
+}
+
+/// How long Hot Potato's fuse can run. The die picks a random time inside the
+/// range each round, so nobody can count it down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fuse {
+    Short,
+    Medium,
+    Long,
+}
+
+impl Fuse {
+    pub const ALL: [Fuse; 3] = [Fuse::Short, Fuse::Medium, Fuse::Long];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Fuse::Short => "Short",
+            Fuse::Medium => "Medium",
+            Fuse::Long => "Long",
+        }
+    }
+
+    /// The shortest and longest fuse, in milliseconds.
+    pub const fn range_ms(self) -> (u32, u32) {
+        match self {
+            Fuse::Short => (10_000, 20_000),
+            Fuse::Medium => (20_000, 40_000),
+            Fuse::Long => (40_000, 90_000),
+        }
+    }
+}
+
+/// What a saved setup is, for the labels the die shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Setup {
+    /// Dice to roll: `d20`, `3d6`, `Pass the Pot ×2`.
+    Roll(DieKind, u8),
+    HotPotato,
+}
+
+impl Setup {
+    /// The wake label and the success screen's line.
+    pub fn label(self) -> String<24> {
+        match self {
+            Setup::Roll(die, count) => crate::screens::setup_label(die, count),
+            Setup::HotPotato => {
+                let mut s = String::new();
+                let _ = s.push_str("Hot Potato");
+                s
+            }
+        }
+    }
+
+    /// The line under the label on the success screen.
+    pub const fn nudge(self) -> &'static str {
+        match self {
+            Setup::Roll(..) => "Ready to roll",
+            Setup::HotPotato => "Shake to light",
+        }
+    }
+
+    /// The menu's status bar: `3d6`, `Pot ×2`, `Potato`.
+    pub fn short_label(self) -> String<24> {
+        match self {
+            Setup::Roll(die, count) => short_label(die, count),
+            Setup::HotPotato => {
+                let mut s = String::new();
+                let _ = s.push_str("Potato");
+                s
+            }
         }
     }
 }
@@ -103,6 +186,7 @@ pub struct Settings {
     pub die: DieKind,
     pub count: u8,
     pub pot_count: u8,
+    pub fuse: Fuse,
 }
 
 impl Default for Settings {
@@ -114,6 +198,7 @@ impl Default for Settings {
             die: DieKind::D20,
             count: 1,
             pot_count: 1,
+            fuse: Fuse::Medium,
         }
     }
 }
@@ -128,11 +213,23 @@ impl Settings {
         }
     }
 
-    /// The die and count a throw rolls in the current mode.
+    /// The die and count a throw rolls in the current mode. A game that
+    /// doesn't roll leaves this at the dice setup.
     pub fn active(&self) -> (DieKind, u8) {
         match self.play() {
-            PlayMode::Dice => (self.die, self.count),
+            PlayMode::Dice | PlayMode::HotPotato => (self.die, self.count),
             PlayMode::PassThePot => (DieKind::PassThePot, self.pot_count),
+        }
+    }
+
+    /// What the die tells the person it's set up for.
+    pub fn setup(&self) -> Setup {
+        match self.play() {
+            PlayMode::HotPotato => Setup::HotPotato,
+            _ => {
+                let (die, count) = self.active();
+                Setup::Roll(die, count)
+            }
         }
     }
 }
@@ -146,6 +243,7 @@ pub struct Draft {
     pub die: DieKind,
     pub count: u8,
     pub pot_count: u8,
+    pub fuse: Fuse,
     /// Index into [`SETTINGS`].
     pub setting: u8,
 }
@@ -160,6 +258,7 @@ impl Draft {
             die: s.die,
             count: s.count,
             pot_count: s.pot_count,
+            fuse: s.fuse,
             setting: 0,
         }
     }
@@ -199,6 +298,10 @@ impl Draft {
                     Page::Pot => {
                         next.pot_count = step(self.pot_count as usize - 1, by, MAX_POT_DICE) as u8 + 1;
                     }
+                    Page::Fuse => {
+                        let i = Fuse::ALL.iter().position(|f| *f == self.fuse).unwrap_or(0);
+                        next.fuse = Fuse::ALL[step(i, by, Fuse::ALL.len())];
+                    }
                     Page::Settings => {
                         next.setting = step(self.setting as usize, by, SETTINGS.len()) as u8;
                     }
@@ -218,9 +321,20 @@ impl Draft {
         s.die = self.die;
         s.count = self.count;
         s.pot_count = self.pot_count;
+        s.fuse = self.fuse;
     }
 
-    /// The setup the draft would roll.
+    /// The setup the draft would save.
+    pub fn setup(&self) -> Setup {
+        let mut s = Settings {
+            modes: self.modes,
+            ..Settings::default()
+        };
+        self.commit(&mut s);
+        s.setup()
+    }
+
+    /// The die and count the draft would roll.
     pub fn active(&self) -> (DieKind, u8) {
         let mut s = Settings {
             modes: self.modes,
@@ -238,6 +352,7 @@ impl Draft {
             Page::Count => write!(s, "{}", self.count),
             Page::Die => write!(s, "{}", self.die.wire_name()),
             Page::Pot => write!(s, "{}", self.pot_count),
+            Page::Fuse => write!(s, "{}", self.fuse.name()),
             Page::Settings => write!(s, "{}", SETTINGS[self.setting as usize].0),
         };
         s
@@ -345,6 +460,34 @@ mod tests {
         assert_eq!(d.tipped(TipDir::Up).pot_count, 2);
         assert_eq!(d.tipped(TipDir::Down).pot_count, 3);
         assert_eq!(d.tipped(TipDir::Down).tipped(TipDir::Up).pot_count, 1);
+    }
+
+    #[test]
+    fn hot_potato_has_a_fuse_page_and_does_not_roll() {
+        let mode = draft().tipped(TipDir::Right);
+        let potato = mode.tipped(TipDir::Up).tipped(TipDir::Up);
+        assert_eq!(potato.play, PlayMode::HotPotato);
+        assert!(!potato.play.rolls());
+        assert_eq!(potato.setup(), Setup::HotPotato);
+        assert_eq!(potato.setup().label().as_str(), "Hot Potato");
+        assert_eq!(potato.setup().short_label().as_str(), "Potato");
+        let fuse = potato.tipped(TipDir::Left);
+        assert_eq!(fuse.page, Page::Fuse);
+        assert_eq!(fuse.fuse, Fuse::Medium);
+        assert_eq!(fuse.tipped(TipDir::Up).fuse, Fuse::Long);
+        assert_eq!(fuse.tipped(TipDir::Up).tipped(TipDir::Up).fuse, Fuse::Short);
+        assert_eq!(fuse.tipped(TipDir::Down).value().as_str(), "Short");
+        assert_eq!(fuse.tipped(TipDir::Left).page, Page::Settings);
+    }
+
+    #[test]
+    fn fuse_ranges_grow() {
+        for f in Fuse::ALL {
+            let (lo, hi) = f.range_ms();
+            assert!(lo < hi);
+        }
+        assert!(Fuse::Short.range_ms().1 <= Fuse::Medium.range_ms().1);
+        assert!(Fuse::Medium.range_ms().1 <= Fuse::Long.range_ms().1);
     }
 
     #[test]

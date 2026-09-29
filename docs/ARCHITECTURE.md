@@ -175,6 +175,12 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   each game's options are saved apart, and `Settings::active()` gives the
   die and count a throw rolls. `Settings.modes = false` removes the Mode
   page (the golden frames use this).
+- **Hot Potato** (`potato.rs`). A game that doesn't roll. The pure `Potato`
+  machine (Idle, Lit, Boom) takes the time and a fuse the firmware drew from
+  the RNG, and returns the same `Command`s as the roll machine. In this mode
+  `StateMachine::set_rolls(false)` stops the roll flow reacting to motion;
+  the state machine still owns the menu and the Nest. Shakes light the fuse,
+  taps reset a spent die, and holds are ignored mid-round. Nothing is signed.
 - **Draft.** The menu works on a `Draft` (`menu.rs`): page, mode, die, count,
   pot count and the Settings item. Only a hold saves it into `Settings`. Holding on
   Restart restarts the die instead; a throw, docking or 25 s without a tip
