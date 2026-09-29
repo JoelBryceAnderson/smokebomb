@@ -158,6 +158,8 @@ pub struct Smoke {
     rng: SmokeRng,
     phase: Phase,
     charge: f32,
+    /// The most a shake charges the smoke to (1 = a full cloud).
+    charge_cap: f32,
     /// Gravity "up" in die coordinates (unit length).
     up: [f32; 3],
     reduced: bool,
@@ -195,6 +197,7 @@ impl Smoke {
             rng: SmokeRng::new(seed),
             phase: Phase::Calm,
             charge: 0.0,
+            charge_cap: 1.0,
             up: [0.0, 1.0, 0.0],
             reduced: false,
             amount: Amount::Full,
@@ -277,7 +280,18 @@ impl Smoke {
             self.particles.retain(|q| q.hold);
             self.charge = 0.0;
         }
+        self.charge_cap = 1.0;
         self.phase = Phase::Shaking;
+    }
+
+    /// Smoke that builds like a shake's but stops at `cap` (0–1) of a full
+    /// cloud, so what's on the faces stays readable. Call it every frame to
+    /// let the cap follow something (Hot Potato's heat).
+    pub fn smolder(&mut self, cap: f32) {
+        if self.phase != Phase::Shaking {
+            self.shake_start();
+        }
+        self.charge_cap = cap.clamp(0.0, 1.0);
     }
 
     /// Thrown: the held smoke rides along, topped up to a full cloud.
@@ -392,7 +406,7 @@ impl Smoke {
         let mut slosh = [0.0; 3];
         match self.phase {
             Phase::Shaking => {
-                self.charge = (self.charge + dt / CHARGE_S).min(1.0);
+                self.charge = (self.charge + dt / CHARGE_S).min(self.charge_cap);
                 agitate = 3.0 + self.charge * 3.0;
                 // The mockup sloshes in world space; the die only knows its
                 // own axes, which serve as well while it's being shaken.
@@ -840,6 +854,7 @@ mod tests {
             rng: SmokeRng::new(1),
             phase: Phase::Calm,
             charge: 0.0,
+            charge_cap: 1.0,
             up: [0.0, 1.0, 0.0],
             reduced: false,
             amount: Amount::Full,

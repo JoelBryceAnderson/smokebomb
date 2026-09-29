@@ -741,3 +741,18 @@ fn a_scripted_throw_reveals_after_landing() {
     assert!((t - 11.6).abs() < 0.05, "revealed at {t:.3} s");
     assert_eq!(run.fw.last_roll().unwrap().record.values.as_slice(), &[12]);
 }
+
+#[test]
+fn hot_potato_round() {
+    // Shake to light the fuse (a 15 s fuse from the TRNG), watch it heat up,
+    // and go off.
+    let run =
+        Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::HotPotato);
+    run.sim.lock().rng_script.push_back(1 << 31);
+    run_timeline(
+        "hot-potato",
+        run,
+        &[10.5, 14.0, 18.0, 22.0, 25.0, 27.0, 29.0],
+        vec![(9.0, Run::shake), (9.4, Run::throw_release)],
+    );
+}
