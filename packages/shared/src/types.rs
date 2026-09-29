@@ -74,7 +74,7 @@ pub enum DieKind {
 }
 
 impl DieKind {
-    /// Menu order (SIM_SPEC C3, "Which die").
+    /// Every kind, in wire order.
     pub const ALL: [DieKind; 8] = [
         DieKind::D4,
         DieKind::D6,
@@ -84,6 +84,18 @@ impl DieKind {
         DieKind::D20,
         DieKind::D100,
         DieKind::PassThePot,
+    ];
+
+    /// The numeric dice, in menu order (SIM_SPEC C3, "Which die"). Pass the
+    /// Pot is a game, chosen under Mode.
+    pub const NUMERIC: [DieKind; 7] = [
+        DieKind::D4,
+        DieKind::D6,
+        DieKind::D8,
+        DieKind::D10,
+        DieKind::D12,
+        DieKind::D20,
+        DieKind::D100,
     ];
 
     /// Range of the raw value drawn for each die: `1..=sides()`.

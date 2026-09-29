@@ -60,8 +60,8 @@ async fn main() -> anyhow::Result<()> {
         // the first tick still gets the real mode in its hello.
         status: Arc::new(Mutex::new(StatusSnapshot {
             mode: format!("{:?}", firmware.mode()),
-            die: firmware.settings().die.wire_name(),
-            die_count: firmware.settings().count,
+            die: firmware.settings().active().0.wire_name(),
+            die_count: firmware.settings().active().1,
             last_roll: None,
         })),
     };
@@ -223,9 +223,9 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
 
         let mut status = state.status.lock().await;
         status.mode = mode;
-        let s = fw.settings();
-        status.die = s.die.wire_name();
-        status.die_count = s.count;
+        let (die, count) = fw.settings().active();
+        status.die = die.wire_name();
+        status.die_count = count;
         if let Some(roll) = roll {
             status.last_roll = Some((&roll).into());
         }
@@ -326,17 +326,21 @@ mod tests {
 
     use smokebomb_firmware::board;
     use smokebomb_hal::Face;
-    use smokebomb_hal_simulator::world::{SpinAxis, TipDir, DEFAULT_VIEWER_RIGHT};
+    use smokebomb_hal_simulator::world::{Hand, SpinAxis, TipDir, DEFAULT_VIEWER_RIGHT};
 
     impl Rig {
         fn new() -> Self {
+            Self::with_world(World::new())
+        }
+
+        fn with_world(world: World) -> Self {
             let sim = board::SimHandle::new();
             sim.lock().manual_time_ms = Some(0);
             let fw = board::boot(&sim).unwrap();
             Self {
                 sim,
                 fw,
-                world: World::new(),
+                world,
                 t: 0.0,
                 menu_was_open: false,
             }
@@ -467,6 +471,136 @@ mod tests {
         assert_eq!(shown, live);
     }
 
+    /// The page is on the face in front of the viewer.
+    fn assert_page_in_front(rig: &Rig, what: &str) {
+        let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
+        let front = rig.fw.menu_front().expect("menu open");
+        let n = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(front);
+        assert!(
+            n.dot(toward_viewer) > 0.9,
+            "{what}: the page is on {front:?}, which isn't in front"
+        );
+    }
+
+    fn firmware_dir(dir: TipDir) -> smokebomb_firmware::smokebomb_core::tips::TipDir {
+        use smokebomb_firmware::smokebomb_core::tips::TipDir as F;
+        match dir {
+            TipDir::Up => F::Up,
+            TipDir::Down => F::Down,
+            TipDir::Left => F::Left,
+            TipDir::Right => F::Right,
+        }
+    }
+
+    impl Rig {
+        /// Hold +Z until the menu opens, then let go.
+        fn open_menu(&mut self) {
+            self.sim.lock().touch_mask = 1 << Face::PosZ.index();
+            while self.fw.menu_front().is_none() {
+                self.run(DT);
+            }
+            self.sim.lock().touch_mask = 0;
+        }
+
+        /// Wait until the die can move again, then `extra` seconds.
+        fn wait_then(&mut self, extra: f64) {
+            while !self.world.twist(0.0) {
+                self.run(DT);
+            }
+            self.run(0.35 + extra); // the zero twist, then the pause
+        }
+    }
+
+    /// A real hand: tremor, a gyro bias, tips that are off-axis and too long
+    /// or short, squared up afterwards to look at the page. Every tip still
+    /// counts once and the page stays on the face in front.
+    #[test]
+    fn sloppy_hands_keep_the_page_in_front() {
+        for seed in 0..SLOPPY_SEEDS {
+            sloppy_hands(seed);
+        }
+    }
+
+    const SLOPPY_SEEDS: u64 = 8;
+
+    fn sloppy_hands(seed: u64) {
+        let mut rig = Rig::with_world(World::with_seed(seed));
+        rig.run(7.0);
+        rig.world.set_hand(Hand {
+            tremor_dps: 10.0,
+            gyro_bias_dps: [1.5, -1.0, 0.8],
+            tip_axis_error_deg: 15.0,
+            tip_angle_error_deg: 15.0,
+            resquare: true,
+        });
+        rig.open_menu();
+        rig.wait_then(0.2);
+        let mut expected = *rig.fw.menu_draft().unwrap();
+        let dirs = [
+            TipDir::Left,
+            TipDir::Up,
+            TipDir::Up,
+            TipDir::Right,
+            TipDir::Down,
+            TipDir::Left,
+            TipDir::Left,
+            TipDir::Up,
+            TipDir::Right,
+            TipDir::Down,
+            TipDir::Down,
+            TipDir::Left,
+            TipDir::Up,
+            TipDir::Right,
+            TipDir::Up,
+            TipDir::Left,
+        ];
+        for (i, dir) in dirs.into_iter().enumerate() {
+            assert!(rig.world.tip(dir, DEFAULT_VIEWER_RIGHT));
+            expected = expected.tipped(firmware_dir(dir));
+            rig.wait_then([0.1, 0.4, 0.2, 0.6][i % 4]);
+            let what = format!("seed {seed}, tip {i} ({dir:?})");
+            assert_page_in_front(&rig, &what);
+            assert_eq!(*rig.fw.menu_draft().unwrap(), expected, "{what}");
+        }
+    }
+
+    /// Twisting the die about the line of sight isn't a tip: the setup
+    /// doesn't change, the page stays in front the right way up, and tips
+    /// afterwards still land where they should.
+    #[test]
+    fn a_twist_is_not_a_tip() {
+        use smokebomb_firmware::smokebomb_core::orientation;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.open_menu();
+        rig.wait_then(0.2);
+        let mut expected = *rig.fw.menu_draft().unwrap();
+        for degrees in [30.0, -30.0, 90.0] {
+            assert!(rig.world.twist(degrees));
+            rig.wait_then(0.5);
+            assert_page_in_front(&rig, &format!("twist {degrees}°"));
+            assert_eq!(*rig.fw.menu_draft().unwrap(), expected, "twist {degrees}°");
+        }
+        // Rolled a quarter turn: the page is drawn upright for where the sky
+        // now is.
+        let front = rig.fw.menu_front().unwrap();
+        let sky = rig.fw.orientation().quarter(front);
+        assert_eq!(
+            rig.fw.menu_page_quarter(front),
+            Some(sky),
+            "upright after the roll"
+        );
+        let _ = orientation::Quarter::R0;
+        for dir in [TipDir::Left, TipDir::Up, TipDir::Right, TipDir::Down] {
+            assert!(rig.world.tip(dir, DEFAULT_VIEWER_RIGHT));
+            expected = expected.tipped(firmware_dir(dir));
+            rig.wait_then(0.3);
+            assert_page_in_front(&rig, &format!("{dir:?} after the roll"));
+            assert_eq!(*rig.fw.menu_draft().unwrap(), expected, "{dir:?} after the roll");
+        }
+    }
+
     /// Tips in quick succession, each starting the moment the last one
     /// ends (and the first straight after the menu turns to the viewer):
     /// every one counts, and the page is always on the face in front.
@@ -570,14 +704,14 @@ mod tests {
             rig.tip(TipDir::Left);
             rig.run(0.3);
         }
-        // 13 pages on, 3 pages to a cycle: one on from How many dice.
+        // 13 pages on, 4 pages to a cycle: one on from How many dice.
         assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Die);
         for _ in 0..7 {
             rig.tip(TipDir::Up);
             rig.run(0.3);
         }
-        // Seven values up from d20, wrapping: d100, Pot, d4, d6, d8, d10, d12.
-        assert_eq!(rig.fw.menu_draft().unwrap().die, smokebomb_shared::DieKind::D12);
+        // Seven values up from d20 is a lap of the seven dice: d100, d4, d6, d8, d10, d12, d20.
+        assert_eq!(rig.fw.menu_draft().unwrap().die, smokebomb_shared::DieKind::D20);
         let front = rig.fw.menu_front().unwrap();
         let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
         let n = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(front);
@@ -614,10 +748,10 @@ mod tests {
         // Back one and a bit: settles one face back (Which die).
         rig.spin(SpinAxis::Yaw, 1.3);
         assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Die);
-        // Three faces up: d20 → d100 → Pass the Pot → d4.
+        // Three faces up: d20 → d100 → d4 → d6.
         rig.spin(SpinAxis::Pitch, -3.0);
         let draft = rig.fw.menu_draft().unwrap();
-        assert_eq!(draft.die, smokebomb_shared::DieKind::D4);
+        assert_eq!(draft.die, smokebomb_shared::DieKind::D6);
         // The firmware's front face is the one really facing the viewer.
         let front = rig.fw.menu_front().unwrap();
         let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
@@ -654,6 +788,116 @@ mod tests {
     }
 
     #[test]
+    fn the_mode_page_switches_to_pass_the_pot_and_back_keeping_the_dice() {
+        use smokebomb_firmware::smokebomb_core::menu::{Page, PlayMode};
+        use smokebomb_shared::DieKind;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Set up 2d12 first.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().active(), (DieKind::D12, 2));
+
+        // Mode is one tip right of the count.
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Count);
+        rig.tip(TipDir::Right);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Mode);
+        rig.tip(TipDir::Up);
+        assert_eq!(rig.fw.menu_draft().unwrap().play, PlayMode::PassThePot);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().active(), (DieKind::PassThePot, 1));
+
+        // And back: the dice setup is still 2d12.
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Pot);
+        rig.tip(TipDir::Right);
+        rig.tip(TipDir::Down);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().active(), (DieKind::D12, 2));
+    }
+
+    #[test]
+    fn hot_potato_lights_on_a_shake_goes_off_and_resets_without_rolling() {
+        use smokebomb_firmware::smokebomb_core::menu::PlayMode;
+        use smokebomb_firmware::smokebomb_core::potato::{PotatoState, BOOM_MS};
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+        use smokebomb_hal::HapticEffect;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Mode ▶ Hot Potato, then Fuse length ▶ Short, and save.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Right);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().play(), PlayMode::HotPotato);
+        assert!(rig.fw.potato().is_idle());
+        rig.sim.lock().haptics.clear();
+
+        // A shake lights the fuse and the die doesn't roll.
+        rig.world.start_shake();
+        rig.run(1.0);
+        assert!(rig.fw.potato().is_lit(), "{:?}", rig.fw.potato().state());
+        rig.world.end_shake(false);
+        rig.run(3.0);
+        assert!(rig.fw.potato().is_lit());
+        assert_eq!(*rig.fw.mode(), Mode::Idle, "the roll flow stays out of it");
+        assert!(rig.fw.last_roll().is_none());
+        let PotatoState::Lit { fuse_ms, .. } = *rig.fw.potato().state() else {
+            panic!("not lit");
+        };
+        assert!((10_000..=20_000).contains(&fuse_ms), "short fuse: {fuse_ms}");
+
+        // Holding doesn't open the menu mid-round.
+        rig.hold(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(rig.fw.menu_draft().is_none());
+
+        // It goes off within the fuse.
+        for _ in 0..(25.0 / 0.1) as usize {
+            if matches!(rig.fw.potato().state(), PotatoState::Boom { .. }) {
+                break;
+            }
+            rig.run(0.1);
+        }
+        assert!(matches!(rig.fw.potato().state(), PotatoState::Boom { .. }));
+        let haptics: Vec<_> = rig.sim.lock().haptics.iter().copied().collect();
+        assert!(haptics.iter().filter(|h| **h == HapticEffect::Tick).count() > 10);
+        assert!(haptics.contains(&HapticEffect::Buzz));
+        assert!(rig.fw.last_roll().is_none());
+
+        // A tap resets it once BOOM has had its moment.
+        rig.run(1.0);
+        rig.sim.lock().touch_mask = 1 << Face::PosZ.index();
+        rig.run(0.1);
+        rig.sim.lock().touch_mask = 0;
+        rig.run(0.1);
+        assert!(rig.fw.potato().is_idle());
+
+        // Or BOOM times out by itself.
+        rig.world.start_shake();
+        rig.run(1.0);
+        rig.world.end_shake(false);
+        for _ in 0..(25.0 / 0.1) as usize {
+            if matches!(rig.fw.potato().state(), PotatoState::Boom { .. }) {
+                break;
+            }
+            rig.run(0.1);
+        }
+        assert!(matches!(rig.fw.potato().state(), PotatoState::Boom { .. }));
+        rig.run(BOOM_MS as f64 / 1000.0 + 0.5);
+        assert!(rig.fw.potato().is_idle());
+    }
+
+    #[test]
     fn tapping_power_off_darkens_the_die_and_a_tap_boots_it() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
@@ -661,7 +905,8 @@ mod tests {
         rig.run(7.0);
         rig.hold(Face::PosZ);
         rig.tip(TipDir::Up); // 2 dice, not saved
-        rig.tip(TipDir::Right); // Settings
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings
         rig.tip(TipDir::Down); // About
         rig.tip(TipDir::Down); // Power off
         rig.tap(Face::PosZ);
@@ -686,7 +931,8 @@ mod tests {
         let mut rig = Rig::new();
         rig.run(7.0);
         rig.hold(Face::PosZ);
-        rig.tip(TipDir::Right); // Settings, on Brightness (70%)
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings, on Brightness (70%)
         rig.tap(Face::PosZ);
         assert_eq!(*rig.fw.mode(), Mode::Menu, "a tap doesn't leave the menu");
         assert_eq!(rig.fw.menu_draft().unwrap().setting().1, "100%");
@@ -697,6 +943,41 @@ mod tests {
     }
 
     #[test]
+    fn a_powered_off_die_does_not_light_hot_potato() {
+        use smokebomb_firmware::smokebomb_core::menu::PlayMode;
+        use smokebomb_firmware::smokebomb_core::state::Mode;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        // Mode ▶ Hot Potato, and save.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Right);
+        rig.tip(TipDir::Up);
+        rig.tip(TipDir::Up);
+        rig.hold(Face::PosZ);
+        assert_eq!(rig.fw.settings().play(), PlayMode::HotPotato);
+        // Fuse length ▶ Settings ▶ Power off, and tap.
+        rig.hold(Face::PosZ);
+        rig.tip(TipDir::Left);
+        rig.tip(TipDir::Down);
+        rig.tip(TipDir::Down);
+        rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+
+        // A shake doesn't light the fuse, and a tap wakes the die instead of
+        // passing the potato.
+        rig.world.start_shake();
+        rig.run(1.0);
+        rig.world.end_shake(false);
+        rig.run(2.0);
+        assert_eq!(*rig.fw.mode(), Mode::Off);
+        assert!(rig.fw.potato().is_idle());
+        rig.tap(Face::PosZ);
+        assert_eq!(*rig.fw.mode(), Mode::Idle);
+        assert!(rig.fw.potato().is_idle());
+    }
+
+    #[test]
     fn a_hold_on_power_off_saves_and_returns_like_anywhere_else() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
@@ -704,7 +985,8 @@ mod tests {
         rig.run(7.0);
         rig.hold(Face::PosZ);
         rig.tip(TipDir::Up); // 2 dice
-        rig.tip(TipDir::Right); // Settings
+        rig.tip(TipDir::Left); // Die
+        rig.tip(TipDir::Left); // Settings
         rig.tip(TipDir::Down); // About
         rig.tip(TipDir::Down); // Power off
         rig.hold(Face::PosZ);

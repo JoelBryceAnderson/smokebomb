@@ -166,13 +166,27 @@ against recorded throws on real hardware.
 
 Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
 
-- **Draft.** The menu works on a `Draft` (`menu.rs`): page, die, count and
-  the Settings item and each item's chosen option. On the Settings page a tap
-  steps the selected item to its next value. Only a hold saves the draft into
-  `Settings`, and a hold always saves and returns to the roll. A tap on
-  Power off darkens the die without saving (`Mode::Off`; the next tap boots it); a throw, docking or 25 s without a
-  tip discards the draft. Saving applies brightness, haptics-off and
-  Bluetooth; the other items are stored and not acted on yet.
+- **Modes.** `Settings.play` (`PlayMode`) says what the die is being used
+  for. Dice keeps the count and die pages; each game brings its own options
+  page (Pass the Pot: how many pots). The Mode page is one tip right of the
+  first page, so the dice flow is as short as it was. The dice setup and
+  each game's options are saved apart, and `Settings::active()` gives the
+  die and count a throw rolls. `Settings.modes = false` removes the Mode
+  page (most snapshot scenarios use this).
+- **Hot Potato** (`potato.rs`). A game that doesn't roll. The pure `Potato`
+  machine (Idle, Lit, Boom) takes the time and a fuse the firmware drew from
+  the RNG, and returns `PotatoCommand`s (ignite, tick, boom, clear) that the firmware turns into haptics and smoke. In this mode
+  `StateMachine::set_rolls(false)` stops the roll flow reacting to motion;
+  the state machine still owns the menu and the Nest. Shakes light the fuse,
+  taps reset a spent die, and holds are ignored mid-round. Nothing is signed.
+- **Draft.** The menu works on a `Draft` (`menu.rs`): page, mode, die, count,
+  pot count and the Settings item, plus each Settings item's chosen option.
+  On the Settings page a tap steps the selected item to its next value. Only a
+  hold saves the draft into `Settings`, and a hold always saves and returns to
+  the roll. A tap on Power off darkens the die without saving (`Mode::Off`;
+  the next tap boots it); a throw, docking or 25 s without a tip discards the
+  draft. Saving applies brightness, haptics-off and Bluetooth; the other items
+  are stored and not acted on yet.
 - **Tips** (`tips.rs`). The menu keeps a `Frame`: the front face (the held
   one) and the sky and viewer's-right axes in die coordinates. A
   `TipTracker` waits for the die to be still for 120 ms after the menu
@@ -180,13 +194,28 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   quick turn. Left and right tips turn about gravity, which the
   accelerometer can't see. The tracker classifies the turn against the frame
   once it passes 8°, reports progress (angle ÷ 90°) while it turns, and
-  settles it once the die has rested for 200 ms near a face (within 30°, or
+  settles it once the die has rested for 150 ms near a face (within 30°, or
   at the nearest face after a second's rest between faces). One turn can pass
   several faces: it counts one step per face, backwards steps included, and
-  whatever it leaves over carries into the next turn, so the count follows
-  the die's real orientation through slow turns with stops. Settled steps
-  update the draft and turn the frame analytically. Rates are integrated
-  over the IMU's sample period, not the wall clock.
+  its overshoot along the tip's axis carries into the next turn, so the
+  count follows the die's real orientation through slow turns with stops.
+  Settled steps update the draft and turn the frame analytically. Rates are
+  integrated over the IMU's sample period, not the wall clock.
+- **Real hands.** A hand doesn't tip on rails: it trembles, tips off-axis
+  and too far or not far enough, twists the die, and squares it up again to
+  read it; the gyro also drifts. So:
+  - stillness is judged on a 100 ms moving average of the rate, so tremor
+    doesn't break a rest, and a turn starts from everything since the die
+    was last still;
+  - a turn mostly about the line of sight is a twist or a regrip, not a
+    tip: it counts nothing;
+  - at every rest the frame is squared to gravity (`Frame::resync`): a
+    tilt onto the next face counts as the up/down tip it amounts to, and a
+    roll about the line of sight just turns the page upright. Turn about
+    vertical is invisible to gravity; only the gyro's count keeps it.
+
+  The thresholds (`tips.rs` constants) are tuned against the simulator's
+  hand model and need tuning on hardware.
 - **Haptics.** A tick each time the nearest face changes (45° into each
   face passed): one for a quick tip, which feels like the mockup's buzz at
   the start of its tip, and one per face on a long turn however many stops
@@ -380,7 +409,10 @@ result (placeholder digits until the renderer lands).
     the server turns the held face squarely toward the viewer (0.35 s);
   - multi-turn spins (simulator only): with F held, the die follows a drag
     about a tip axis across any number of faces, then settles on the
-    nearest.
+    nearest;
+  - twists about the line of sight, and a `Hand` model for tests: tremor,
+    gyro bias, tips off-axis and off-angle, and squaring the die up toward
+    the viewer after each tip.
 
   Each tick produces the pose the browser draws and the IMU sample the
   firmware reads, so what the firmware senses always matches what you see.

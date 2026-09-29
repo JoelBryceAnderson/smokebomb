@@ -252,15 +252,42 @@ The boot is interrupted by a throw or by opening the menu.
 
 `fitPx(str, max, width = 150)` = `min(max, floor(width / (len * 0.58)))` in canvas units (× 0.5783 for px).
 
-**Pages** (tip left or right to change page, wrapping)
+**Pages** (tip left or right to change page, wrapping; tip up = next value, down = previous, wrapping)
 
-| # | Title | Values (tip up = next, down = previous; wraps) |
+The mockup has three pages: How many dice, Which die, Settings. The firmware adds a Mode page (extension X1, below), so what the ring holds depends on the mode.
+
+| Mode | Ring (tip left goes to the next page) | Opens on |
 |---|---|---|
-| 0 | How many dice | 1–10 (1–3 for Pass the Pot) |
-| 1 | Which die | d4, d6, d8, d10, d12, d20, d100, Pass the Pot |
-| 2 | Settings | Brightness 70%; Haptics Strong; Smoke Full; Large text Off; Sleep after 2 min; Night mode Auto; Bluetooth On; Verified rolls Off; Owner "Joel"; Power off "Tap to power off"; About "v0.1.0 · SB-0042". **Decided (H11):** a tap steps the selected item to its next value (see the options below); Owner, Power off and About aren't editable. |
+| Dice | Mode, How many dice, Which die, Settings | How many dice |
+| Pass the Pot | Mode, How many pots, Settings | How many pots |
+| Hot Potato | Mode, Fuse length, Settings | Fuse length |
 
-Choosing Pass the Pot while the count is above 3 clamps the count to 3.
+| Page | Title | Values |
+|---|---|---|
+| Mode | Mode | Dice, Pass the Pot, Hot Potato |
+| Count | How many dice | 1–10 |
+| Die | Which die | d4, d6, d8, d10, d12, d20, d100 |
+| Pot | How many pots | 1–3 |
+| Fuse | Fuse length | Short (10–20 s), Medium (20–40 s), Long (40–90 s) |
+| Settings | Settings | Brightness 70%; Haptics Strong; Smoke Full; Large text Off; Sleep after 2 min; Night mode Auto; Bluetooth On; Verified rolls Off; Owner "Joel"; Power off "Tap to power off"; About "v0.1.0 · SB-0042". **Decided (H11):** a tap steps the selected item to its next value; Owner, Power off and About aren't editable. |
+
+- **X1, Mode page.** Mode sits one tip *right* of How many dice, so the dice flow is unchanged: hold, tip up or down for the count, one tip left for the die, hold to save.
+- **Setups are kept apart.** The dice setup (die, count) and each game's options are saved separately, so leaving Dice for Pass the Pot and coming back leaves `3d6` as it was.
+- **Pass the Pot is a mode, not a die.** It no longer appears under Which die, and the count no longer clamps. It is still rolled and signed as `pass_the_pot` (H6).
+- **Page dots** show the ring: four in Dice mode, three in a game mode.
+- **Hot Potato is not a roll.** See X2. The dice setup, Pass the Pot's count and the fuse length are all kept when switching.
+- **`Settings.modes` off** removes the Mode page and the die is always in Dice mode: the mockup's three-page menu. Most snapshot scenarios run this way; `menu-modes` runs the default menu.
+
+**X2, Hot Potato** (extension; not in the mockup)
+
+Shake the die to light the fuse, then pass it around. Whoever holds it when it goes off is out. It never rolls or signs anything.
+
+- **Fuse.** On a shake from idle the die draws a fuse from the TRNG, uniform in the chosen range (Short 10–20 s, Medium 20–40 s, Long 40–90 s). Only a shake lights it; throws, taps and being set down don't change it.
+- **Lit.** Every face except the one facing down shows a glowing core (radius 16 → 40 canvas as it heats) with "PASS IT" beneath. Each tick flashes the glow (260 ms fade) and plays the 10 ms tick haptic. The gap between ticks falls from 900 ms to 110 ms as the *heat* rises. Heat is time lit ÷ the longest fuse the setting allows, so it never gives the real fuse away. The smoke builds as if the die were being shaken.
+- **Boom.** When the fuse runs out: buzz haptic, a full cloud of smoke that drains over the faces with embers (the throw and landing smoke), a shockwave (0.7 s) and BOOM on every face except the one facing down, with "Tap to reset" from 1.2 s. A tap resets it after 0.8 s; otherwise it resets by itself after 6 s and fades out from 4.6 s.
+- **No menu mid-round.** A hold does nothing while the fuse is lit (and no hold ring shows). It opens the menu as usual once the die has gone off. Opening the menu, docking or changing mode resets the round.
+- **Shakes in the menu.** A shake or throw with the menu open closes it without saving and leaves the die idle; in a game that doesn't roll it doesn't start a round.
+- **Label.** The wake label and menu status read "Hot Potato" and "Potato". The success screen says "Shake to light" instead of "Ready to roll".
 
 **Tips**
 
@@ -571,7 +598,7 @@ Decided 2026-09-28.
 | H4 | **Fidelity target** for firmware rendering | **Native 96×96 rendering, compared against reference frames within a tolerance.** Pixel-identical output to the mockup isn't a goal: the firmware can't afford the mockup's 256×256 canvas-and-downsample pipeline. *Superseded in part by H10: the reference frames are now snapshots of the firmware.* |
 | H5 | **Normal results through smoke** | **Keep the mockup:** the result fades in from 0.35 s after landing while smoke drains. Only max/dud effects wait for clear air. |
 | H6 | **Pass the Pot in the signed roll** | **Sign the raw d6 value** (1 → ←, 2 → P, 3 → →, 4–6 → •), exactly as the mockup draws it. Requires roll format v2 and a 10-dice limit. |
-| H7 | **Menu frame on hardware when the held face points up.** "Front" and "up" coincide, so right/up are undefined. | **Hardware question, still open.** The firmware takes the frame from the held face and gravity once the die has been still for 120 ms after the menu opens, and falls back to an arbitrary perpendicular "up" if the held face points up. The simulator turns the die like the mockup's snap, so it never hits the fallback. |
+| H7 | **Menu frame on hardware when the held face points up or down.** "Front" and "up" coincide, so right/up are undefined. Happens when you look down at a face in your palm, or up at one overhead. | **Use the way the screen already reads.** The firmware takes the frame from the held face and gravity once the die has been still for 120 ms after the menu opens. When gravity is along the held face (more than 45° from vertical), "up" is the face's current text orientation (B2's locked orientation on a top or bottom face), so the menu opens the way that screen already looks. The simulator turns the die like the mockup's snap, so it never needs this. |
 | H8 | **Label weight** (G14) | **700 everywhere, matching what the mockup renders.** The firmware ships one Space Grotesk cut (Bold). |
 | H9 | **Screens after a roll.** The mockup re-orients every face continuously, so picking the die up to read a result turns the text and can light the old bottom face. | **Freeze at the reveal.** Each face's text orientation and the dark face are fixed when the result is revealed and stay fixed while the result lasts (including a dimmed result brought back by a touch). A shake or throw, the menu, docking or a restart releases them. Departs from the mockup, whose die never leaves the table. |
 | H10 | **The mockup as a reference.** Once the firmware worked, keeping it 1:1 with the mockup meant editing the mockup for every design change. | **The firmware leads.** The mockup capture tool and its golden frames are removed (they remain in git history). Screens are checked by **snapshot tests**: sheets generated from the firmware and committed in `packages/firmware/core/tests/snapshots/`, regenerated with `UPDATE_SNAPSHOTS=1` when a change is intended. Statistical smoke comparisons against the mockup are replaced by exact snapshots of a seeded run. This document stays as the description of the design; it is no longer a promise to match the mockup. |

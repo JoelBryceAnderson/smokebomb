@@ -19,6 +19,7 @@
 
 use std::path::{Path, PathBuf};
 
+use smokebomb_core::menu::Settings;
 use smokebomb_core::smoke::SmokeRng;
 use smokebomb_core::Firmware;
 use smokebomb_hal::{Face, FACE_COUNT};
@@ -65,15 +66,20 @@ struct Run {
 impl Run {
     /// The die starts with +Y up.
     fn new() -> Self {
-        Self::start(None)
+        Self::start(None, false)
     }
 
     /// Driven by the simulator's world model, like the simulator itself.
     fn with_world() -> Self {
-        Self::start(Some(World::with_seed(WORLD_SEED)))
+        Self::start(Some(World::with_seed(WORLD_SEED)), false)
     }
 
-    fn start(world: Option<World>) -> Self {
+    /// The world model with the default menu, which has a Mode page.
+    fn with_world_and_modes() -> Self {
+        Self::start(Some(World::with_seed(WORLD_SEED)), true)
+    }
+
+    fn start(world: Option<World>, modes: bool) -> Self {
         let sim = SimHandle::new();
         {
             let mut s = sim.lock();
@@ -82,6 +88,12 @@ impl Run {
             s.battery_percent = 78;
         }
         let mut fw = Firmware::new(sim.peripherals()).unwrap();
+        // Most menu scenarios were written for the plain three-page dice
+        // menu; `menu-modes` covers the default one, with its Mode page.
+        fw.set_settings(Settings {
+            modes,
+            ..Settings::default()
+        });
         fw.smoke_mut().set_rng(SmokeRng::new(SMOKE_SEED));
         let mut run = Self {
             sim,
@@ -520,6 +532,29 @@ fn menu_settings() {
         inputs.push((10.1 + 0.5 * i as f64, |r| r.tip(TipDir::Up)));
     }
     run_scenario("menu-settings", Run::with_world(), &times, inputs);
+}
+
+#[test]
+fn menu_modes() {
+    // The default menu opens on How many dice; one tip right is the Mode
+    // page. Choose Pass the Pot, then Hot Potato, tip to its Fuse length and
+    // pick Long, then hold to save: the success screen says how to start.
+    run_timeline(
+        "menu-modes",
+        Run::with_world_and_modes(),
+        &[10.0, 10.55, 11.05, 11.55, 12.05, 13.4, 13.9, 15.5],
+        vec![
+            (8.1, Run::press),
+            (9.3, Run::release),
+            (9.5, |r| r.tip(TipDir::Right)),
+            (10.1, |r| r.tip(TipDir::Up)),
+            (10.6, |r| r.tip(TipDir::Up)),
+            (11.1, |r| r.tip(TipDir::Left)),
+            (11.6, |r| r.tip(TipDir::Up)),
+            (12.3, Run::press),
+            (13.25, Run::release),
+        ],
+    );
 }
 
 #[test]
