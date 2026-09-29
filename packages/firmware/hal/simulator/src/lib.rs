@@ -129,7 +129,7 @@ impl SimState {
         // Power needs the die seated with the charging face down (any of the
         // four rotations), a Nest in a live socket, and clean contacts.
         self.vbus =
-            world.seated() && world.face_down() == Face::NegY && self.nest_plugged && !self.dirty_contacts;
+            world.seated() && world.face_down() == CHARGING_FACE && self.nest_plugged && !self.dirty_contacts;
         if self.vbus && !self.charger_fault && self.battery_percent < 100 {
             self.battery_frac += self.charge_rate * dt as f32 / 60.0;
             let whole = self.battery_frac.floor();

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DieView, DieViewHandle } from "./DieView";
 import { FACE_NAMES, Pose, RollView, TipDirection } from "./protocol";
 import { useSimulator } from "./useSimulator";
+import { DEFAULT_FINISH, FINISHES, FinishKey } from "./finishes";
 
 const POT_GLYPHS = ["←", "P", "→", "•", "•", "•"];
 
@@ -57,7 +58,22 @@ export function App() {
   const [reduced, setReduced] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [multiTurn, setMultiTurn] = useState(false);
   const [multiKey, setMultiKey] = useState(false);
+  const [finish, setFinish] = useState<FinishKey>(DEFAULT_FINISH);
+  const [night, setNight] = useState(false);
+  const [glass, setGlass] = useState(false);
   const shaking = useRef(false);
+
+  // The finish recolours the shell, screws and (later) the Nest band, never the screens.
+  // Glow ceramic only reads in the dark, so choosing it switches to night.
+  const chooseFinish = (key: FinishKey) => {
+    setFinish(key);
+    if (key === "glow") setNight(true);
+  };
+  useEffect(() => die.current?.setLook(finish, night), [finish, night]);
+  useEffect(() => die.current?.setGlass(glass), [glass]);
+  // Etched on the charging face: the last six hex digits of the die's serial, once a roll has shown it.
+  const serial = state.rolls[0]?.device_serial.slice(-6).toUpperCase() ?? "000042";
+  useEffect(() => die.current?.setSerial(serial), [serial]);
 
   useEffect(() => {
     send({ type: "reduced_motion", on: reduced });
@@ -217,6 +233,32 @@ export function App() {
             Or hold F while you drag: the die follows your finger across as many screens as you like and
             settles on the nearest one when you let go. Each screen passed is one step.
           </p>
+        </section>
+
+        <section>
+          <h2>Finish</h2>
+          <div className="chips" role="radiogroup" aria-label="Finish">
+            {FINISHES.map((f) => (
+              <button
+                key={f.key}
+                role="radio"
+                aria-checked={finish === f.key}
+                className={finish === f.key ? "chip on" : "chip"}
+                onClick={() => chooseFinish(f.key)}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <label className="check">
+            <input type="checkbox" checked={night} onChange={(e) => setNight(e.target.checked)} />
+            Night (lights off)
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={glass} onChange={(e) => setGlass(e.target.checked)} />
+            Sapphire glass reflections
+          </label>
+          <p className="muted">Off shows the screens unlit, so the 16 levels are exact. On adds the glass's reflections.</p>
         </section>
 
         <section>

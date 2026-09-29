@@ -24,7 +24,7 @@ use crate::orientation::{Quarter, BASES};
 
 /// The die's charging face (the lid), in its own frame: −Y, which is the
 /// bottom in the resting pose.
-pub const CHARGE_FACE: Face = Face::NegY;
+pub const CHARGE_FACE: Face = smokebomb_hal::CHARGING_FACE;
 
 /// The field must exceed this on entry and fall below [`NEAR_EXIT_MG`] to
 /// leave, so a reading at the edge doesn't flicker.
