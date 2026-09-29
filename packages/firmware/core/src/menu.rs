@@ -45,28 +45,28 @@ impl Item {
     }
 }
 
-/// The Settings page's items, as the mockup shows them (the defaults are its
-/// values). Owner and About are display-only; the phone sets the owner.
-pub const SETTINGS: [Item; 11] = [
+/// The Settings page's items. Owner, Power off and About are fixed rows; the
+/// phone will set the owner, and About shows the real version and the die's
+/// id (see [`Draft::setting_value`]). (The mockup had three more: Large text,
+/// Night mode and Verified rolls. See SIM_SPEC H13.)
+pub const SETTINGS: [Item; 8] = [
     Item::choice("Brightness", &["30%", "50%", "70%", "100%"], 2),
-    Item::choice("Haptics", &["Off", "Light", "Strong"], 2),
+    Item::choice("Haptics", &["Off", "On"], 1),
     Item::choice("Smoke", &["Off", "Light", "Full"], 2),
-    Item::choice("Large text", &["Off", "On"], 0),
     Item::choice("Sleep after", &["30 s", "1 min", "2 min", "5 min", "Never"], 2),
-    Item::choice("Night mode", &["Off", "Auto", "On"], 1),
     Item::choice("Bluetooth", &["Off", "On"], 1),
-    Item::choice("Verified rolls", &["Off", "On"], 0),
     Item::fixed("Owner", &["Joel"]),
     Item::fixed("Power off", &["Tap to power off"]),
-    Item::fixed("About", &["v0.1.0 · SB-0042"]),
+    Item::fixed("About", &[""]),
 ];
 
 const BRIGHTNESS: usize = 0;
 const HAPTICS: usize = 1;
 const SMOKE: usize = 2;
-const SLEEP: usize = 4;
-const BLUETOOTH: usize = 6;
-const POWER_OFF: u8 = 9;
+const SLEEP: usize = 3;
+const BLUETOOTH: usize = 4;
+const POWER_OFF: u8 = 6;
+const ABOUT: u8 = 7;
 
 /// The chosen option of every Settings item.
 pub type Choices = [u8; SETTINGS.len()];
@@ -239,6 +239,20 @@ pub struct Settings {
     pub fuse: Fuse,
     /// The chosen option of each [`SETTINGS`] item.
     pub choices: Choices,
+    /// A short id made from the die's serial, which About shows. It is the
+    /// die's identity, not a preference: the firmware fills it in from the
+    /// secure element, and loading saved settings must not replace it.
+    pub device_id: u16,
+}
+
+/// A 16-bit id from a die's serial (FNV-1a folded), for About: every byte
+/// counts, and the same serial always gives the same id.
+pub fn short_id(serial: &[u8]) -> u16 {
+    let mut h: u32 = 0x811c_9dc5;
+    for &b in serial {
+        h = (h ^ b as u32).wrapping_mul(16_777_619);
+    }
+    ((h >> 16) ^ h) as u16
 }
 
 impl Default for Settings {
@@ -252,6 +266,7 @@ impl Default for Settings {
             pot_count: 3,
             fuse: Fuse::Medium,
             choices: default_choices(),
+            device_id: 0,
         }
     }
 }
@@ -327,6 +342,7 @@ pub struct Draft {
     /// Index into [`SETTINGS`].
     pub setting: u8,
     pub choices: Choices,
+    pub device_id: u16,
 }
 
 impl Draft {
@@ -342,6 +358,7 @@ impl Draft {
             fuse: s.fuse,
             setting: 0,
             choices: s.choices,
+            device_id: s.device_id,
         }
     }
 
@@ -423,6 +440,18 @@ impl Draft {
         let item = &SETTINGS[self.setting as usize];
         let i = self.choices[self.setting as usize] as usize;
         (item.name, item.options[i.min(item.options.len() - 1)])
+    }
+
+    /// The text the Settings page shows for the selected item: its value, or
+    /// for About the firmware version and the die's id.
+    pub fn setting_value(&self) -> String<24> {
+        let mut s = String::new();
+        if self.setting == ABOUT {
+            let _ = write!(s, "v{} · SB-{:04X}", env!("CARGO_PKG_VERSION"), self.device_id);
+        } else {
+            let _ = s.push_str(self.setting().1);
+        }
+        s
     }
 
     pub fn commit(&self, s: &mut Settings) {
@@ -680,9 +709,9 @@ mod tests {
     }
 
     #[test]
-    fn power_off_is_the_tenth_setting() {
+    fn power_off_is_the_seventh_setting() {
         let mut d = settings_page();
-        for _ in 0..9 {
+        for _ in 0..6 {
             assert!(!d.power_off_selected());
             d = d.tipped(TipDir::Up);
         }
@@ -723,7 +752,7 @@ mod tests {
         let mut s = Settings::default();
         assert_eq!(s.smoke_amount(), Amount::Full);
         assert_eq!(s.sleep_after_ms(), Some(120_000));
-        // Smoke is the third item, Sleep after the fifth.
+        // Smoke is the third item, Sleep after the fourth.
         let mut d = settings_page().tipped(TipDir::Up).tipped(TipDir::Up);
         assert_eq!(d.setting().0, "Smoke");
         d = d.tapped();
@@ -732,13 +761,63 @@ mod tests {
         d = d.tapped();
         d.commit(&mut s);
         assert_eq!(s.smoke_amount(), Amount::Light);
-        d = d.tipped(TipDir::Up).tipped(TipDir::Up);
+        d = d.tipped(TipDir::Up);
         assert_eq!(d.setting().0, "Sleep after");
         for expect in [Some(300_000), None, Some(30_000), Some(60_000)] {
             d = d.tapped();
             d.commit(&mut s);
             assert_eq!(s.sleep_after_ms(), expect);
         }
+    }
+
+    #[test]
+    fn the_settings_are_the_ones_that_do_something() {
+        let names: [&str; 8] = core::array::from_fn(|i| SETTINGS[i].name);
+        assert_eq!(
+            names,
+            [
+                "Brightness",
+                "Haptics",
+                "Smoke",
+                "Sleep after",
+                "Bluetooth",
+                "Owner",
+                "Power off",
+                "About"
+            ]
+        );
+        assert_eq!(Settings::default().choices[HAPTICS], 1, "haptics start on");
+    }
+
+    #[test]
+    fn the_short_id_uses_every_byte_of_the_serial() {
+        let a = [0x01, 0x23, 0x5B, 0x0E, 0, 0, 0, 0, 0xEE];
+        assert_eq!(short_id(&a), short_id(&a));
+        for i in 0..a.len() {
+            let mut b = a;
+            b[i] ^= 1;
+            assert_ne!(short_id(&a), short_id(&b), "byte {i}");
+        }
+    }
+
+    #[test]
+    fn about_shows_the_version_and_the_dies_id() {
+        let s = Settings {
+            device_id: 0xA1B2,
+            ..Settings::default()
+        };
+        let mut d = Draft::new(&s).tipped(TipDir::Left).tipped(TipDir::Left);
+        d = d.tipped(TipDir::Down); // wraps to About
+        assert_eq!(d.setting().0, "About");
+        assert_eq!(
+            d.setting_value().as_str(),
+            concat!("v", env!("CARGO_PKG_VERSION"), " · SB-A1B2")
+        );
+        // Other rows show their value.
+        assert_eq!(
+            d.tipped(TipDir::Down).setting_value().as_str(),
+            "Tap to power off"
+        );
     }
 
     #[test]

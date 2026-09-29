@@ -187,8 +187,11 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   the roll. A tap on Power off darkens the die without saving (`Mode::Off`;
   the next tap boots it); a throw, docking or 25 s without a tip discards the
   draft. Saving applies brightness, Bluetooth, haptics-off and the smoke
-  amount; Sleep after runs from the main loop (`update_sleep`); large text,
-  night mode and verified rolls are stored and not acted on yet.
+  amount; Sleep after runs from the main loop (`update_sleep`). Owner is
+  still a placeholder; About shows the firmware version and an id made from
+  the secure element's serial (`Settings.device_id`, kept when settings are
+  replaced). The die always signs its rolls; whether a roll counts as verified
+  is decided by the session on the phone and server.
 - **Tips** (`tips.rs`). The menu keeps a `Frame`: the front face (the held
   one) and the sky and viewer's-right axes in die coordinates. A
   `TipTracker` waits for the die to be still for 120 ms after the menu
