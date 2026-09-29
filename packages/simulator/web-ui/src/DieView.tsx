@@ -4,7 +4,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { PANEL_SIZE, Pose, SpinAxis, TipDirection } from "./protocol";
 import { FINISHES, FinishKey, GLOW_INTENSITY, LIGHTING, SCREW_DARK } from "./finishes";
-import { addScrews, makeEtching } from "./shell";
+import { addScrews, addSeam, makeEtching } from "./shell";
 
 // Mockup scale (SIM_SPEC A1): 1 scene unit = 13.25 mm, 34 mm die, 2.5 mm edges.
 const MM = 1 / 13.25;
@@ -44,6 +44,8 @@ export interface DieViewHandle {
   setLook(finish: FinishKey, night: boolean): void;
   /** The device serial etched on the charging face. */
   setSerial(serial: string): void;
+  /** Sapphire glass over the screens (reflective PBR) instead of the exact unlit screen. */
+  setGlass(on: boolean): void;
 }
 
 interface Props {
@@ -98,6 +100,7 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     viewerRight: () => api.current?.viewerRight() ?? [1, 0, 0],
     setLook: (f, n) => api.current?.setLook(f, n),
     setSerial: (x) => api.current?.setSerial(x),
+    setGlass: (on) => api.current?.setGlass(on),
   }));
 
   useEffect(() => {
@@ -173,6 +176,7 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       polygonOffsetUnits: -2,
     });
     addScrews(die, FACE_DEFS, HALF, darkMat);
+    addSeam(die, HALF, EDGE_RADIUS, darkMat);
     const etching = makeEtching(HALF, renderer.capabilities.getMaxAnisotropy(), FACE_DEFS);
     etching.mesh.material.polygonOffset = true;
     etching.mesh.material.polygonOffsetFactor = -1;
@@ -182,6 +186,14 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     etching.update(serial);
     // The etching font loads late; redraw once it is there.
     document.fonts?.load('600 20px "Space Grotesk"').then(() => etching.redraw());
+    let glassOn = false;
+    let isNight = false;
+    const applyGlass = () => {
+      for (const f of faces) {
+        f.mesh.material = glassOn ? f.glass : f.flat;
+        f.glass.emissiveIntensity = isNight ? 4.8 : 2.2;
+      }
+    };
     const dieX = new THREE.Vector3();
     const dieZ = new THREE.Vector3();
 
@@ -206,11 +218,23 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       const texture = new THREE.CanvasTexture(out);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      const mesh = new THREE.Mesh(windowGeo, new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }));
+      const flat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
+      // Screen glass (sapphire window), design brief §4: near-black, glossy, with the screen as emissive light.
+      const glass = new THREE.MeshPhysicalMaterial({
+        color: 0x1c1c22,
+        roughness: 0.05,
+        metalness: 0,
+        clearcoat: 1,
+        clearcoatRoughness: 0.03,
+        emissive: 0xffffff,
+        emissiveMap: texture,
+        envMap,
+      });
+      const mesh = new THREE.Mesh<THREE.BufferGeometry, THREE.Material>(windowGeo, flat);
       mesh.rotation.set(...d.rot);
       mesh.position.set(...d.n).multiplyScalar(HALF + 0.002);
       die.add(mesh);
-      return { ctx, panel, panelCtx, image, texture, mesh };
+      return { ctx, panel, panelCtx, image, texture, mesh, flat, glass };
     });
 
     const shadowCanvas = document.createElement("canvas");
@@ -268,10 +292,16 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
         shellMat.emissive.setHex(f.emissive ?? 0x000000);
         shellMat.emissiveIntensity = f.emissive ? (night ? GLOW_INTENSITY.night : GLOW_INTENSITY.day) : 0;
         heat.on.value = f.heatTint ? 1 : 0;
+        isNight = night;
+        applyGlass();
         const l = night ? LIGHTING.night : LIGHTING.day;
         renderer.toneMappingExposure = l.exposure;
         key.intensity = l.key;
         ambient.intensity = l.ambient;
+      },
+      setGlass(on) {
+        glassOn = on;
+        applyGlass();
       },
       setSerial(x) {
         if (x !== serial) {
@@ -442,7 +472,10 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       renderer.dispose();
       pmrem.dispose();
       etching.mesh.geometry.dispose();
-      faces.forEach((f) => f.texture.dispose());
+      faces.forEach((f) => {
+        f.texture.dispose();
+        f.glass.dispose();
+      });
       mount.removeChild(renderer.domElement);
     };
   }, []);

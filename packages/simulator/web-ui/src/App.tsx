@@ -45,6 +45,7 @@ export function App() {
   const [multiKey, setMultiKey] = useState(false);
   const [finish, setFinish] = useState<FinishKey>(DEFAULT_FINISH);
   const [night, setNight] = useState(false);
+  const [glass, setGlass] = useState(false);
   const shaking = useRef(false);
 
   // The finish recolours the shell, screws and (later) the Nest band, never the screens.
@@ -54,6 +55,7 @@ export function App() {
     if (key === "glow") setNight(true);
   };
   useEffect(() => die.current?.setLook(finish, night), [finish, night]);
+  useEffect(() => die.current?.setGlass(glass), [glass]);
   // Etched on the charging face: the last six hex digits of the die's serial, once a roll has shown it.
   const serial = state.rolls[0]?.device_serial.slice(-6).toUpperCase() ?? "000042";
   useEffect(() => die.current?.setSerial(serial), [serial]);
@@ -205,6 +207,11 @@ export function App() {
             <input type="checkbox" checked={night} onChange={(e) => setNight(e.target.checked)} />
             Night (lights off)
           </label>
+          <label className="check">
+            <input type="checkbox" checked={glass} onChange={(e) => setGlass(e.target.checked)} />
+            Sapphire glass reflections
+          </label>
+          <p className="muted">Off shows the screens unlit, so the 16 levels are exact. On adds the glass's reflections.</p>
         </section>
 
         <section>

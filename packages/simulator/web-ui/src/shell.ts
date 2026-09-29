@@ -3,9 +3,9 @@ import * as THREE from "three";
 
 const MM = 1 / 13.25; // scene units per mm
 
-/** Screw centre from the face centre, in mm, on both axes. */
-const SCREW_AT = 13.1 * MM;
-const HEX_R = 0.8 * MM;
+/** Screw centre from the face centre, in mm, on both axes (the updated mockup: 12.9 mm, 1.9 mm heads). */
+const SCREW_AT = 12.9 * MM;
+const HEX_R = 1.1 * MM; // 1.9 mm across flats
 const HEX_GAP = 0.15 * MM;
 
 export interface FaceDef {
@@ -18,11 +18,13 @@ export interface FaceDef {
  * they take its finish for free; what is drawn here is the dark hairline
  * ring around each head and the slot across it, both flush inlays. All
  * slots point at the window centre, and a hex flat faces it too.
- * On the charging face the heads are the contacts (+), the ring is ground.
+ * On the five cup faces they are engraved; on the charging face (the lid) the
+ * slot is an insulating gap splitting each head into a + half and a ground
+ * half, and the Nest's two pins straddle it, so every rotation lines up.
  */
 export function addScrews(die: THREE.Group, faces: FaceDef[], half: number, material: THREE.Material) {
   const ringGeo = new THREE.RingGeometry(HEX_R, HEX_R + HEX_GAP, 6, 1);
-  const slotGeo = new THREE.PlaneGeometry(1.2 * MM, 0.16 * MM);
+  const slotGeo = new THREE.PlaneGeometry(1.8 * MM, 0.2 * MM);
   for (const d of faces) {
     for (const [sx, sy] of [
       [1, 1],
@@ -45,6 +47,32 @@ export function addScrews(die: THREE.Group, faces: FaceDef[], half: number, mate
       die.add(g);
     }
   }
+}
+
+/**
+ * The seam where the lid (the charging face plus the lower half of its four
+ * edges) meets the five-sided cup: a hairline in the plane that cuts the
+ * bottom edges halfway round their radius, following the die's own curves.
+ */
+export function addSeam(die: THREE.Group, half: number, edgeRadius: number, material: THREE.Material) {
+  const ec = half - edgeRadius;
+  const a = ec + edgeRadius / Math.SQRT2;
+  const r = edgeRadius / Math.SQRT2;
+  const pts: THREE.Vector3[] = [];
+  const corners: [number, number, number][] = [
+    [ec, ec, 0],
+    [-ec, ec, Math.PI / 2],
+    [-ec, -ec, Math.PI],
+    [ec, -ec, Math.PI * 1.5],
+  ];
+  for (const [cx, cz, a0] of corners) {
+    for (let k = 0; k <= 24; k++) {
+      const t = a0 + ((Math.PI / 2) * k) / 24;
+      pts.push(new THREE.Vector3(cx + r * Math.cos(t), -a, cz + r * Math.sin(t)));
+    }
+  }
+  const path = new THREE.CatmullRomCurve3(pts, true, "centripetal");
+  die.add(new THREE.Mesh(new THREE.TubeGeometry(path, 400, 0.06 * MM, 6, true), material));
 }
 
 /** The face that goes down in the Nest: index 3, −Y. */
