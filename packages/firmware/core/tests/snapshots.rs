@@ -450,6 +450,52 @@ fn tap_shows_the_setup() {
     );
 }
 
+/// The setup label's icon for every die, Pass the Pot and Hot Potato: pick
+/// the setup, tap, and capture the label at full brightness.
+#[test]
+fn setup_icons() {
+    use smokebomb_core::menu::PlayMode;
+    use smokebomb_shared::DieKind;
+
+    fn pick(run: &mut Run, play: PlayMode, die: DieKind) {
+        run.fw.set_settings(Settings {
+            modes: true,
+            play,
+            die,
+            ..Settings::default()
+        });
+        run.tap();
+    }
+    macro_rules! die {
+        ($k:ident) => {
+            (|run: &mut Run| pick(run, PlayMode::Dice, DieKind::$k)) as Input
+        };
+    }
+    let inputs: Vec<(f64, Input)> = vec![
+        (9.0, die!(D4)),
+        (10.0, die!(D6)),
+        (11.0, die!(D8)),
+        (12.0, die!(D10)),
+        (13.0, die!(D12)),
+        (14.0, die!(D20)),
+        (15.0, die!(D100)),
+        (16.0, |run| pick(run, PlayMode::PassThePot, DieKind::D6)),
+        (17.0, |run| pick(run, PlayMode::HotPotato, DieKind::D6)),
+    ];
+    let times: Vec<(f64, &str)> = vec![
+        (9.5, "d4"),
+        (10.5, "d6"),
+        (11.5, "d8"),
+        (12.5, "d10"),
+        (13.5, "d12"),
+        (14.5, "d20"),
+        (15.5, "d100"),
+        (16.5, "pot"),
+        (17.5, "potato"),
+    ];
+    run_scenario("setup-icons", Run::new(), &times, inputs);
+}
+
 const THROW_AT: f64 = 10.4;
 
 #[test]
