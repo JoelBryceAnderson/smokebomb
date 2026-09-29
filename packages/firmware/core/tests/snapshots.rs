@@ -523,6 +523,28 @@ fn menu_settings() {
 }
 
 #[test]
+fn menu_settings_tap_and_power_off() {
+    // On the Settings page a tap changes the item (Brightness 70% → 100%).
+    // Tip down to Power off and tap: every screen goes dark and stays dark
+    // until a tap boots the die.
+    run_timeline(
+        "menu-settings-tap",
+        Run::with_world(),
+        &[10.0, 10.6, 11.9, 12.6, 20.0, 20.6, 27.5],
+        vec![
+            (8.1, Run::press),
+            (9.3, Run::release),
+            (9.5, |r| r.tip(TipDir::Right)),
+            (10.2, Run::tap),
+            (10.8, |r| r.tip(TipDir::Down)),
+            (11.3, |r| r.tip(TipDir::Down)),
+            (12.2, Run::tap),
+            (20.2, Run::tap),
+        ],
+    );
+}
+
+#[test]
 fn a_scripted_throw_reveals_after_landing() {
     let mut run = Run::new();
     run.advance_to(THROW_AT - 1.0 / FPS);

@@ -1,9 +1,11 @@
 //! On-die setup menu (SIM_SPEC C3).
 //!
 //! Hold any screen to open the menu there. Tipping the die moves through it:
-//! left and right turn the page, up and down change the value. Everything
-//! happens on a [`Draft`]; holding again saves it, and a throw, docking or
-//! 25 s without input leaves the setup as it was.
+//! left and right turn the page, up and down change the value (on the
+//! Settings page, up and down pick the item). A tap changes the selected
+//! Settings item, or powers the die off on Power off. Everything happens on a
+//! [`Draft`]; a hold always saves it and returns to the roll, and a throw,
+//! docking or 25 s without input leaves the setup as it was.
 
 use core::fmt::Write as _;
 
@@ -12,24 +14,66 @@ use smokebomb_shared::DieKind;
 
 use crate::tips::TipDir;
 
-/// The Settings page's items, as the mockup shows them. They are
-/// display-only for now: tipping up and down moves through them, and
-/// holding on Restart restarts the die.
-pub const SETTINGS: [(&str, &str); 11] = [
-    ("Brightness", "70%"),
-    ("Haptics", "Strong"),
-    ("Smoke", "Full"),
-    ("Large text", "Off"),
-    ("Sleep after", "2 min"),
-    ("Night mode", "Auto"),
-    ("Bluetooth", "On"),
-    ("Verified rolls", "Off"),
-    ("Owner", "Joel"),
-    ("Restart", "Hold to restart"),
-    ("About", "v0.1.0 · SB-0042"),
+/// One row of the Settings page. A tap steps `options`; a row without any is
+/// display-only (or, for [`POWER_OFF`], an action).
+pub struct Item {
+    pub name: &'static str,
+    /// The values a tap cycles through, or the single text a fixed row shows.
+    pub options: &'static [&'static str],
+    /// Which option a fresh die starts on.
+    pub default: u8,
+}
+
+impl Item {
+    const fn choice(name: &'static str, options: &'static [&'static str], default: u8) -> Self {
+        Self {
+            name,
+            options,
+            default,
+        }
+    }
+
+    const fn fixed(name: &'static str, text: &'static [&'static str]) -> Self {
+        Self::choice(name, text, 0)
+    }
+
+    /// Does a tap change this row?
+    pub const fn editable(&self) -> bool {
+        self.options.len() > 1
+    }
+}
+
+/// The Settings page's items, as the mockup shows them (the defaults are its
+/// values). Owner and About are display-only; the phone sets the owner.
+pub const SETTINGS: [Item; 11] = [
+    Item::choice("Brightness", &["30%", "50%", "70%", "100%"], 2),
+    Item::choice("Haptics", &["Off", "Light", "Strong"], 2),
+    Item::choice("Smoke", &["Off", "Light", "Full"], 2),
+    Item::choice("Large text", &["Off", "On"], 0),
+    Item::choice("Sleep after", &["30 s", "1 min", "2 min", "5 min", "Never"], 2),
+    Item::choice("Night mode", &["Off", "Auto", "On"], 1),
+    Item::choice("Bluetooth", &["Off", "On"], 1),
+    Item::choice("Verified rolls", &["Off", "On"], 0),
+    Item::fixed("Owner", &["Joel"]),
+    Item::fixed("Power off", &["Tap to power off"]),
+    Item::fixed("About", &["v0.1.0 · SB-0042"]),
 ];
 
-const RESTART: u8 = 9;
+const BRIGHTNESS: usize = 0;
+const HAPTICS: usize = 1;
+const BLUETOOTH: usize = 6;
+const POWER_OFF: u8 = 9;
+
+/// The chosen option of every Settings item.
+pub type Choices = [u8; SETTINGS.len()];
+
+fn default_choices() -> Choices {
+    let mut c = [0; SETTINGS.len()];
+    for (c, item) in c.iter_mut().zip(&SETTINGS) {
+        *c = item.default;
+    }
+    c
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -63,6 +107,25 @@ impl Page {
 pub struct Settings {
     pub die: DieKind,
     pub count: u8,
+    /// The chosen option of each [`SETTINGS`] item.
+    pub choices: Choices,
+}
+
+impl Settings {
+    /// Screen brightness, percent.
+    pub fn brightness_pct(&self) -> u8 {
+        const PCT: [u8; 4] = [30, 50, 70, 100];
+        PCT[self.choices[BRIGHTNESS] as usize % PCT.len()]
+    }
+
+    /// Haptics off: the die stays silent.
+    pub fn haptics_on(&self) -> bool {
+        self.choices[HAPTICS] != 0
+    }
+
+    pub fn bluetooth_on(&self) -> bool {
+        self.choices[BLUETOOTH] != 0
+    }
 }
 
 impl Default for Settings {
@@ -71,6 +134,7 @@ impl Default for Settings {
         Self {
             die: DieKind::D20,
             count: 1,
+            choices: default_choices(),
         }
     }
 }
@@ -83,6 +147,7 @@ pub struct Draft {
     pub count: u8,
     /// Index into [`SETTINGS`].
     pub setting: u8,
+    pub choices: Choices,
 }
 
 impl Draft {
@@ -93,6 +158,7 @@ impl Draft {
             die: s.die,
             count: s.count,
             setting: 0,
+            choices: s.choices,
         }
     }
 
@@ -132,14 +198,35 @@ impl Draft {
         (0..steps.unsigned_abs()).fold(self, |m, _| m.tipped(d))
     }
 
-    /// Holding on this draft restarts the die instead of saving.
-    pub fn restart_selected(&self) -> bool {
-        self.page == Page::Settings && self.setting == RESTART
+    /// A tap on this draft powers the die off.
+    pub fn power_off_selected(&self) -> bool {
+        self.page == Page::Settings && self.setting == POWER_OFF
+    }
+
+    /// The draft after a tap: the selected Settings item moves to its next
+    /// option, wrapping. Taps do nothing on the other pages or on a fixed row.
+    pub fn tapped(self) -> Self {
+        let item = &SETTINGS[self.setting as usize];
+        if self.page != Page::Settings || !item.editable() {
+            return self;
+        }
+        let mut next = self;
+        let c = &mut next.choices[self.setting as usize];
+        *c = step(*c as usize, 1, item.options.len()) as u8;
+        next
     }
 
     pub fn commit(&self, s: &mut Settings) {
         s.die = self.die;
         s.count = self.count;
+        s.choices = self.choices;
+    }
+
+    /// The selected Settings item's name and current value.
+    pub fn setting(&self) -> (&'static str, &'static str) {
+        let item = &SETTINGS[self.setting as usize];
+        let i = self.choices[self.setting as usize] as usize;
+        (item.name, item.options[i.min(item.options.len() - 1)])
     }
 
     /// The page's big value (not used on the Settings page).
@@ -148,7 +235,7 @@ impl Draft {
         let _ = match self.page {
             Page::Count => write!(s, "{}", self.count),
             Page::Die => write!(s, "{}", die_name(self.die)),
-            Page::Settings => write!(s, "{}", SETTINGS[self.setting as usize].0),
+            Page::Settings => write!(s, "{}", self.setting().0),
         };
         s
     }
@@ -214,6 +301,7 @@ mod tests {
             die: DieKind::D100,
             count: 7,
             setting: 0,
+            choices: default_choices(),
         };
         let pot = d.tipped(TipDir::Up);
         assert_eq!(pot.die, DieKind::PassThePot);
@@ -226,14 +314,14 @@ mod tests {
     }
 
     #[test]
-    fn restart_is_the_tenth_setting() {
+    fn power_off_is_the_tenth_setting() {
         let mut d = draft().tipped(TipDir::Right);
         for _ in 0..9 {
-            assert!(!d.restart_selected());
+            assert!(!d.power_off_selected());
             d = d.tipped(TipDir::Up);
         }
-        assert_eq!(SETTINGS[d.setting as usize].0, "Restart");
-        assert!(d.restart_selected());
+        assert_eq!(d.setting().0, "Power off");
+        assert!(d.power_off_selected());
     }
 
     #[test]
@@ -243,6 +331,45 @@ mod tests {
         assert_eq!(d.stepped(TipDir::Up, 3).count, 4);
         assert_eq!(d.stepped(TipDir::Up, -2).count, 9);
         assert_eq!(d.stepped(TipDir::Up, 0), d);
+    }
+
+    #[test]
+    fn a_tap_steps_the_selected_setting_and_wraps() {
+        let mut d = draft().tipped(TipDir::Right); // Settings, on Brightness
+        assert_eq!(d.setting(), ("Brightness", "70%"));
+        d = d.tapped();
+        assert_eq!(d.setting(), ("Brightness", "100%"));
+        d = d.tapped();
+        assert_eq!(d.setting(), ("Brightness", "30%"));
+        // Each item has its own choice.
+        let d = d.tipped(TipDir::Up).tapped();
+        assert_eq!(d.setting(), ("Haptics", "Off"));
+        assert_eq!(d.tipped(TipDir::Down).setting(), ("Brightness", "30%"));
+    }
+
+    #[test]
+    fn a_tap_does_nothing_off_the_settings_page_or_on_fixed_rows() {
+        let d = draft();
+        assert_eq!(d.tapped(), d);
+        assert_eq!(d.tipped(TipDir::Left).tapped(), d.tipped(TipDir::Left));
+        let mut d = draft().tipped(TipDir::Right);
+        for name in ["Owner", "Power off", "About"] {
+            while d.setting().0 != name {
+                d = d.tipped(TipDir::Up);
+            }
+            assert_eq!(d.tapped(), d, "{name}");
+        }
+    }
+
+    #[test]
+    fn saving_keeps_the_choices_and_defaults_match_the_mockup() {
+        let mut s = Settings::default();
+        assert_eq!(s.brightness_pct(), 70);
+        assert!(s.haptics_on() && s.bluetooth_on());
+        let d = draft().tipped(TipDir::Right).tapped().tipped(TipDir::Up).tapped();
+        d.commit(&mut s);
+        assert_eq!(s.brightness_pct(), 100);
+        assert!(!s.haptics_on());
     }
 
     #[test]
