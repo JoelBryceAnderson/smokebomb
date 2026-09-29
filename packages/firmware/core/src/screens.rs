@@ -9,10 +9,11 @@ use libm::{floorf, powf, roundf, sinf, sqrtf};
 use smokebomb_hal::AssetStore;
 use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
-use crate::display::FG;
+use crate::display::{DUD, FG};
 use crate::font::{fit_px, Align, Fonts};
 use crate::gfx::{Painter, Style};
 use crate::menu::{Draft, Page, SETTINGS};
+use crate::smoke::Special;
 
 /// The lit area's half-size in canvas units.
 pub const ACTIVE: f32 = 83.0;
@@ -214,8 +215,16 @@ fn big_size(chars: usize) -> f32 {
 }
 
 /// A roll's result: every face except the one facing down shows this.
-pub fn draw_result<A: AssetStore>(c: &mut Ctx<A>, record: &RollRecord, value: u8, alpha: f32) {
-    let label = setup_label(record.die, record.values.len() as u8);
+/// A max says so in its label; a dud greys out and says "dud" (C6).
+pub fn draw_result<A: AssetStore>(c: &mut Ctx<A>, record: &RollRecord, special: Option<Special>, alpha: f32) {
+    let setup = setup_label(record.die, record.values.len() as u8);
+    let mut label: String<32> = String::new();
+    let _ = match special {
+        Some(Special::Max) => write!(label, "max {setup}"),
+        Some(Special::Dud) => write!(label, "dud"),
+        None => write!(label, "{setup}"),
+    };
+    let value = if special == Some(Special::Dud) { DUD } else { FG };
     if !record.die.is_numeric() {
         draw_pot_tokens(c, &record.values, value, alpha);
         c.text(

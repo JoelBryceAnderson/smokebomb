@@ -157,12 +157,14 @@ Glow: the mockup draws text with a soft glow (shadow blur of 18 canvas units for
   4. Change the snapped angle only when the raw angle drifts more than **45° + 0.3 rad** from the current one. This hysteresis prevents flicker.
 - **Top and bottom faces** (the axis of the face pointing up): keep a **locked orientation**, whatever they last had. The die can't know where the viewer is.
 - **No clear up direction:** keep the current angle.
+- **While a result is up** (decision H9): every face keeps the orientation it had when the result was revealed, like a printed die. Turning the die over to read it doesn't turn the text. A shake or throw, the menu, docking or a restart clears the result, and the faces follow gravity again. In the menu, pages are drawn upright for the face they'll be on once it's in front.
 
 ### B3. The face-down screen
 The face touching the table is dark:
 - no result,
 - no smoke spawned on it (particles can still drift onto it and are drawn there),
 - no wake label (decision H2; the mockup still draws it there and should be updated to match).
+- While a result is up, "the face down" means the face that was down when it was revealed (H9): picking the die up doesn't light it or darken another.
 
 ---
 
@@ -281,8 +283,8 @@ The mockup has three pages: How many dice, Which die, Settings. The firmware add
 Shake the die to light the fuse, then pass it around. Whoever holds it when it goes off is out. It never rolls or signs anything.
 
 - **Fuse.** On a shake from idle the die draws a fuse from the TRNG, uniform in the chosen range (Short 10–20 s, Medium 20–40 s, Long 40–90 s). Only a shake lights it; throws, taps and being set down don't change it.
-- **Lit.** Every face except the one facing down shows a glowing core (radius 16 → 40 canvas as it heats) with "PASS IT" beneath. Each tick flashes the glow (260 ms fade) and plays the 10 ms tick haptic. The gap between ticks falls from 900 ms to 110 ms as the *heat* rises. Heat is time lit ÷ the longest fuse the setting allows, so it never gives the real fuse away. The smoke plays its shake clip.
-- **Boom.** When the fuse runs out: buzz haptic, the throw smoke clip, a shockwave (0.7 s) and BOOM on every face except the one facing down, with "Tap to reset" from 1.2 s. A tap resets it after 0.8 s; otherwise it resets by itself after 6 s and fades out from 4.6 s.
+- **Lit.** Every face except the one facing down shows a glowing core (radius 16 → 40 canvas as it heats) with "PASS IT" beneath. Each tick flashes the glow (260 ms fade) and plays the 10 ms tick haptic. The gap between ticks falls from 900 ms to 110 ms as the *heat* rises. Heat is time lit ÷ the longest fuse the setting allows, so it never gives the real fuse away. The smoke builds as if the die were being shaken.
+- **Boom.** When the fuse runs out: buzz haptic, a full cloud of smoke that drains over the faces with embers (the throw and landing smoke), a shockwave (0.7 s) and BOOM on every face except the one facing down, with "Tap to reset" from 1.2 s. A tap resets it after 0.8 s; otherwise it resets by itself after 6 s and fades out from 4.6 s.
 - **No menu mid-round.** A hold does nothing while the fuse is lit (and no hold ring shows). It opens the menu as usual once the die has gone off. Opening the menu, docking or changing mode resets the round.
 - **Shakes in the menu.** A shake or throw with the menu open closes it without saving and leaves the die idle; in a game that doesn't roll it doesn't start a round.
 - **Label.** The wake label and menu status read "Hot Potato" and "Potato". The success screen says "Shake to light" instead of "Ready to roll".
@@ -578,6 +580,7 @@ Differences found when this document was checked against the mockup source (2026
 | G14 | B1 | Labels in weight 600 | The mockup never loads 600, so labels render at 700. Decided: match the mockup (H8) |
 | G15 | C2 | — | Default setup is a single d20 |
 | G16 | C3 | Unspecified | Letting go after the saving hold is a tap (wake label for 3 s from the release). The 0.8 s hold completes on the 49th frame at 60 Hz (the mockup's clock sums float frame times), so the firmware waits for *more than* 0.8 s |
+| G17 | D2 | Unspecified | A lingering particle lingers through its boundary frame: the mockup's clock is a sum of frame times that falls just short of `spawn + 0.75` there. The firmware lingers for *at least* the time |
 
 **Golden frames.** `tools/mockup-capture` runs the pinned mockup headless (seeded randomness, virtual time) and saves each face's 96×96 output at fixed moments in nine scenarios: boot, tap, throw, quick throw, Pass the Pot, menu, menu settings, restart and Nest. These are the reference for decision H4; `packages/firmware/core/tests/golden.rs` scores the firmware against them. The captures confirm G1 (the wake label is lit on the face-down screen).
 
@@ -589,7 +592,7 @@ Decided 2026-09-28.
 
 | # | Question | Decision |
 |---|---|---|
-| H1 | **Smoke rendering.** Part D is a live, gravity-reactive particle system, which can't be baked into frame sequences. It conflicted with the earlier "pre-rendered smoke in 64 MB QSPI" decision. | **Live particle simulation in firmware.** "Pre-rendered" now means *assets* in QSPI: smoke sprite stamps and Space Grotesk bitmaps. A theme is a sprite set plus parameters, not a video. On hardware the smoke layer is drawn at half resolution (48×48) to fit the frame budget (late-life sprites reach ~60 px radius; 380 of them at full resolution is ~1M pixel blends per frame). The simulator may draw it at full resolution. |
+| H1 | **Smoke rendering.** Part D is a live, gravity-reactive particle system, which can't be baked into frame sequences. It conflicted with the earlier "pre-rendered smoke in 64 MB QSPI" decision. | **Live particle simulation in firmware.** "Pre-rendered" now means *assets* in QSPI: smoke sprite stamps and Space Grotesk bitmaps. A theme is a sprite set plus parameters, not a video. On hardware the smoke layer is drawn at half resolution (48×48) to fit the frame budget (late-life sprites reach ~60 px radius; 380 of them at full resolution is ~1M pixel blends per frame). The simulator may draw it at full resolution. *Measured in the simulator:* a full cloud (shake plus landing, ~500 particles, with edge wrapping) is ~4M sprite pixels a tick at full resolution, so ~1M at half; the hardware budget still needs measuring (ARCHITECTURE, Smoke). |
 | H2 | **Face-down wake label** | **Dark.** Departs from the mockup (G1); the mockup should be updated. |
 | H3 | **Neighbour previews** in the menu | **Off**, as in the mockup. The product film should be updated. |
 | H4 | **Fidelity target** for firmware rendering | **Native 96×96 rendering, compared against captured mockup frames within a tolerance.** Pixel-identical output isn't a goal: the firmware can't afford the mockup's 256×256 canvas-and-downsample pipeline. |
@@ -597,3 +600,4 @@ Decided 2026-09-28.
 | H6 | **Pass the Pot in the signed roll** | **Sign the raw d6 value** (1 → ←, 2 → P, 3 → →, 4–6 → •), exactly as the mockup draws it. Requires roll format v2 and a 10-dice limit. |
 | H7 | **Menu frame on hardware when the held face points up.** "Front" and "up" coincide, so right/up are undefined. | **Hardware question, still open.** The firmware takes the frame from the held face and gravity once the die has been still for 120 ms after the menu opens, and falls back to an arbitrary perpendicular "up" if the held face points up. The simulator turns the die like the mockup's snap, so it never hits the fallback. |
 | H8 | **Label weight** (G14) | **700 everywhere, matching what the mockup renders.** The firmware ships one Space Grotesk cut (Bold). |
+| H9 | **Screens after a roll.** The mockup re-orients every face continuously, so picking the die up to read a result turns the text and can light the old bottom face. | **Freeze at the reveal.** Each face's text orientation and the dark face are fixed when the result is revealed and stay fixed while the result lasts (including a dimmed result brought back by a touch). A shake or throw, the menu, docking or a restart releases them. Departs from the mockup, whose die never leaves the table. |

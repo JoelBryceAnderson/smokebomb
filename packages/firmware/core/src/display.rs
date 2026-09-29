@@ -70,15 +70,6 @@ impl Framebuffer {
         *p = (*p as f32 + (value - *p as f32) * a + 0.5) as u8;
     }
 
-    /// Add a packed 4bpp frame on top (level `l` → `l * 17`), saturating.
-    pub fn add_packed(&mut self, packed: &FrameBytes) {
-        for (i, px) in self.buf.iter_mut().enumerate() {
-            let b = packed[i / 2];
-            let level = if i % 2 == 0 { b >> 4 } else { b & 0x0f };
-            *px = px.saturating_add(level * 17);
-        }
-    }
-
     /// Fill a rectangle given in content coordinates, rotated by `rot` about
     /// the panel centre.
     pub fn fill_rect(&mut self, x: usize, y: usize, w: usize, h: usize, value: u8, rot: Quarter) {

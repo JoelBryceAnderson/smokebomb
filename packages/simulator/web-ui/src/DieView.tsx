@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { PANEL_SIZE, Pose, TipDirection } from "./protocol";
+import { PANEL_SIZE, Pose, SpinAxis, TipDirection } from "./protocol";
 
 // Mockup scale (SIM_SPEC A1): 1 scene unit = 13.25 mm, 34 mm die, 2.5 mm edges.
 const MM = 1 / 13.25;
@@ -47,10 +47,23 @@ interface Props {
   /** While the menu is open, a swipe tips the die instead of turning it (as in the mockup). */
   swipeToTip: boolean;
   onTip(dir: TipDirection): void;
+  /**
+   * Multi-turn: in the menu, a drag spins the die about one tip axis and
+   * follows the pointer across as many faces as you like; letting go settles
+   * it on the nearest face. On with the checkbox, or while the F key is held.
+   */
+  multiTurn: boolean;
+  /** Radians since the spin began: positive yaw is a right tip, negative pitch an up tip. */
+  onSpin(axis: SpinAxis, angle: number): void;
+  onSpinEnd(): void;
+  /** The multi-turn key (F) went down or up. */
+  onMultiKey(held: boolean): void;
 }
 
 /** Swipe distance that counts as a tip (SIM_SPEC C3). */
 const SWIPE_PX = 36;
+/** Multi-turn spin rate: a quarter turn per ~120 px of drag. */
+const SPIN_RAD_PER_PX = 0.013;
 
 function roundRectPath(c: CanvasRenderingContext2D | THREE.Path, x: number, y: number, w: number, h: number, r: number) {
   c.moveTo(x + r, y);
@@ -65,13 +78,13 @@ function roundRectPath(c: CanvasRenderingContext2D | THREE.Path, x: number, y: n
 }
 
 export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
-  { onTouch, onRotate, swipeToTip, onTip },
+  { onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey },
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const api = useRef<DieViewHandle | null>(null);
-  const cbs = useRef({ onTouch, onRotate, swipeToTip, onTip });
-  cbs.current = { onTouch, onRotate, swipeToTip, onTip };
+  const cbs = useRef({ onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey });
+  cbs.current = { onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey };
 
   useImperativeHandle(ref, () => ({
     drawFrames: (f) => api.current?.drawFrames(f),
@@ -206,7 +219,36 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       face: number | null;
       dragging: boolean;
       swiped: boolean;
+      /** Set once a multi-turn drag has picked its axis. */
+      spin: SpinAxis | null;
     } | null = null;
+    // Holding F makes a menu drag a multi-turn (see `multiTurn`). A plain
+    // key rather than a modifier: Ctrl-click is a right-click on a Mac.
+    let fHeld = false;
+    const setF = (held: boolean) => {
+      if (held !== fHeld) {
+        fHeld = held;
+        cbs.current.onMultiKey(held);
+      }
+    };
+    // Match the physical key, so it works whatever the keyboard layout or
+    // modifiers; ignore it only while typing into a text field.
+    const isF = (e: KeyboardEvent) => e.code === "KeyF" || e.key === "f" || e.key === "F";
+    const typing = (e: KeyboardEvent) => {
+      const t = e.target;
+      if (t instanceof HTMLTextAreaElement || (t instanceof HTMLElement && t.isContentEditable)) return true;
+      return t instanceof HTMLInputElement && !["checkbox", "radio", "button", "range"].includes(t.type);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isF(e) && !typing(e)) setF(true);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (isF(e)) setF(false);
+    };
+    const onBlur = () => setF(false);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
     const faceAt = (e: PointerEvent): number | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       const ndc = new THREE.Vector2(
@@ -223,7 +265,16 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     const onDown = (e: PointerEvent) => {
       renderer.domElement.setPointerCapture(e.pointerId);
       const face = faceAt(e);
-      press = { x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, face, dragging: false, swiped: false };
+      press = {
+        x: e.clientX,
+        y: e.clientY,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        face,
+        dragging: false,
+        swiped: false,
+        spin: null,
+      };
       if (face !== null) cbs.current.onTouch(face, true);
     };
     const onMove = (e: PointerEvent) => {
@@ -235,7 +286,14 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       }
       const dx = e.clientX - press.x;
       const dy = e.clientY - press.y;
-      if (cbs.current.swipeToTip) {
+      const multi = cbs.current.multiTurn || fHeld;
+      if (cbs.current.swipeToTip && press.dragging && !press.swiped && !press.spin && multi) {
+        // Multi-turn: the drag's dominant direction picks the axis.
+        press.spin = Math.abs(dx) > Math.abs(dy) ? "yaw" : "pitch";
+      }
+      if (press.spin) {
+        cbs.current.onSpin(press.spin, (press.spin === "yaw" ? dx : dy) * SPIN_RAD_PER_PX);
+      } else if (cbs.current.swipeToTip) {
         // One tip per swipe, by dominant direction.
         if (!press.swiped && Math.hypot(dx, dy) > SWIPE_PX) {
           press.swiped = true;
@@ -250,6 +308,7 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     // Touch browsers may cancel a pointer mid-gesture; treat it as a release.
     const onUp = () => {
       if (press?.face != null) cbs.current.onTouch(press.face, false);
+      if (press?.spin) cbs.current.onSpinEnd();
       press = null;
     };
     const noMenu = (e: Event) => e.preventDefault();
@@ -283,6 +342,9 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     loop();
 
     return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
       cancelAnimationFrame(raf);
       observer.disconnect();
       renderer.dispose();

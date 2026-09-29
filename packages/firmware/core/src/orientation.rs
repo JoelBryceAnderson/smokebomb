@@ -115,18 +115,9 @@ impl TextOrientation {
                 slot.get_or_insert(0.0);
                 continue;
             }
-            // Text "down" is the opposite of the sky, projected onto the face.
-            let k = dot(up, b.n);
-            let down = [
-                -(up[0] - b.n[0] * k),
-                -(up[1] - b.n[1] * k),
-                -(up[2] - b.n[2] * k),
-            ];
-            if dot(down, down) < 1e-4 * dot(up, up) {
+            let Some(raw) = upright_angle(b, up) else {
                 continue; // no clear direction: keep what's there
-            }
-            let (lx, ly) = (dot(down, b.x), dot(down, b.y));
-            let raw = libm::atan2f(-lx, -ly);
+            };
             let snapped = libm::roundf(raw / FRAC_PI_2) * FRAC_PI_2;
             let current = *slot.get_or_insert(snapped);
             let diff = libm::atan2f(libm::sinf(raw - current), libm::cosf(raw - current));
@@ -135,6 +126,93 @@ impl TextOrientation {
             }
         }
     }
+}
+
+/// Gravity "up" that holds through shaking and tumbling: the gyro turns it
+/// with the die every sample, and the accelerometer pulls it back into line
+/// whenever it reads close to 1 g (at rest, or held gently). Shaking and free
+/// fall swamp the accelerometer, so raw readings alone would swing the smoke
+/// around; the mockup uses the die's true orientation.
+#[derive(Clone, Copy, Debug)]
+pub struct Gravity {
+    up: Option<[f32; 3]>,
+}
+
+impl Default for Gravity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Accelerometer readings within this of 1 g are trusted (mg).
+const TRUSTED_MG: f32 = 150.0;
+/// How far one trusted reading pulls the estimate toward itself.
+const PULL: f32 = 0.2;
+
+impl Gravity {
+    pub const fn new() -> Self {
+        Self { up: None }
+    }
+
+    /// Unit up vector in die coordinates; +Y until the first sample.
+    pub fn up(&self) -> [f32; 3] {
+        self.up.unwrap_or([0.0, 1.0, 0.0])
+    }
+
+    pub fn update(&mut self, sample: &ImuSample, dt: f32) {
+        let a = up_from(sample);
+        let mag = libm::sqrtf(dot(a, a));
+        let Some(up) = &mut self.up else {
+            if mag > 1.0 {
+                self.up = Some(a.map(|c| c / mag));
+            }
+            return;
+        };
+        // A direction fixed in the world turns backwards in die axes:
+        // d(up)/dt = −ω × up.
+        let w = sample.gyro_mdps.map(|g| (g as f32 / 1000.0).to_radians() * dt);
+        let turned = [
+            up[0] - (w[1] * up[2] - w[2] * up[1]),
+            up[1] - (w[2] * up[0] - w[0] * up[2]),
+            up[2] - (w[0] * up[1] - w[1] * up[0]),
+        ];
+        let mut next = turned;
+        if libm::fabsf(mag - 1000.0) < TRUSTED_MG {
+            for (n, c) in next.iter_mut().zip(a) {
+                *n += (c / mag - *n) * PULL;
+            }
+        }
+        let l = libm::sqrtf(dot(next, next));
+        if l > 1e-6 {
+            *up = next.map(|c| c / l);
+        }
+    }
+}
+
+/// The text angle that stands upright on a side face with the sky along
+/// `up`: text "down" is the opposite of the sky, projected onto the face.
+fn upright_angle(b: &FaceBasis, up: [f32; 3]) -> Option<f32> {
+    let k = dot(up, b.n);
+    let down = [
+        -(up[0] - b.n[0] * k),
+        -(up[1] - b.n[1] * k),
+        -(up[2] - b.n[2] * k),
+    ];
+    if dot(down, down) < 1e-4 * dot(up, up) {
+        return None;
+    }
+    let (lx, ly) = (dot(down, b.x), dot(down, b.y));
+    Some(libm::atan2f(-lx, -ly))
+}
+
+/// Upright text for `face` if the sky were along `up` (any length), or
+/// `None` when `face` would be the top or bottom face.
+pub fn upright(face: Face, up: [f32; 3]) -> Option<Quarter> {
+    let b = &BASES[face.index()];
+    if dominant_axis(b.n) == dominant_axis(up) {
+        return None;
+    }
+    upright_angle(b, up).map(Quarter::from_angle)
 }
 
 /// Gravity-up in die coordinates from an accelerometer sample: at rest the
@@ -161,6 +239,37 @@ fn dominant_axis(v: [f32; 3]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gravity_follows_the_gyro_through_free_fall_and_ignores_shaking() {
+        let mut g = Gravity::new();
+        let at_rest = ImuSample {
+            accel_mg: [0, 1000, 0],
+            gyro_mdps: [0; 3],
+        };
+        g.update(&at_rest, 1.0 / 60.0);
+        // A quarter turn about +Z in free fall (the accelerometer reads 0):
+        // the +X face comes up.
+        for _ in 0..60 {
+            let s = ImuSample {
+                accel_mg: [0, 0, 0],
+                gyro_mdps: [0, 0, 90_000],
+            };
+            g.update(&s, 1.0 / 60.0);
+        }
+        let up = g.up();
+        assert!(up[0] > 0.99, "{up:?}");
+        // Shaking: big swings of the accelerometer barely move it.
+        for i in 0..60 {
+            let swing = if i % 2 == 0 { 1300 } else { -1300 };
+            let s = ImuSample {
+                accel_mg: [1000, swing, 0],
+                gyro_mdps: [0; 3],
+            };
+            g.update(&s, 1.0 / 60.0);
+        }
+        assert!(g.up()[0] > 0.99, "{:?}", g.up());
+    }
 
     #[test]
     fn upright_die_keeps_side_text_upright() {

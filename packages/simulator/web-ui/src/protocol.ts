@@ -1,7 +1,7 @@
 // Mirror of packages/simulator/server/src/protocol.rs.
 
 /** Must match `PROTOCOL_VERSION` in the server's protocol.rs. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export const FACE_COUNT = 6;
 export const PANEL_SIZE = 96;
@@ -33,11 +33,16 @@ export type ServerEvent =
 
 export type TipDirection = "up" | "down" | "left" | "right";
 
+/** Multi-turn spin axis: yaw (left/right tips) or pitch (up/down tips). */
+export type SpinAxis = "yaw" | "pitch";
+
 export type ClientMessage =
   | { type: "touch"; face: number; pressed: boolean }
   | { type: "shake_start" }
   | { type: "shake_end"; throw: boolean }
   | { type: "tip"; dir: TipDirection; right: [number, number, number] }
+  | { type: "spin"; axis: SpinAxis; angle: number; right: [number, number, number] }
+  | { type: "spin_end" }
   | { type: "rotate"; yaw: number; pitch: number }
   | { type: "place_face_up"; face: number }
   | { type: "dock"; docked: boolean }

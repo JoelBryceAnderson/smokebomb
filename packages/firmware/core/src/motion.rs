@@ -26,12 +26,17 @@ const IMPACT_MG: i32 = 2_500;
 const SHAKE_DEVIATION_MG: i32 = 700;
 const STILL_DEVIATION_MG: i32 = 80;
 const STILL_GYRO_MDPS: i32 = 15_000;
+/// Stopped outright: what a thrown die reads once it has landed. A settled
+/// die reads well under this once the gyro's bias is calibrated out; if it
+/// never does, the landing falls back to the moment the die is at rest.
+const STOPPED_GYRO_MDPS: i32 = 1_000;
 /// How long the die must be motionless before it counts as at rest.
 pub const REST_MS: u64 = 300;
 
 pub struct MotionDetector {
     last: Option<Motion>,
     still_since: Option<u64>,
+    stopped: bool,
 }
 
 impl Default for MotionDetector {
@@ -45,7 +50,14 @@ impl MotionDetector {
         Self {
             last: None,
             still_since: None,
+            stopped: false,
         }
+    }
+
+    /// Stopped outright on the last sample: the moment a thrown die has
+    /// landed, before it counts as at rest.
+    pub fn stopped(&self) -> bool {
+        self.stopped
     }
 
     pub fn is_still(&self) -> bool {
@@ -56,6 +68,7 @@ impl MotionDetector {
     pub fn update(&mut self, s: &ImuSample, now_ms: u64) -> Option<Motion> {
         let mag = magnitude_mg(s);
         let gyro = s.gyro_mdps.iter().map(|g| g.abs()).max().unwrap_or(0);
+        self.stopped = (mag - ONE_G_MG).abs() <= STILL_DEVIATION_MG && gyro <= STOPPED_GYRO_MDPS;
 
         let instant = if mag < FREE_FALL_MG {
             Some(Motion::FreeFall)

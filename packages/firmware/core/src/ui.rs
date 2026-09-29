@@ -12,12 +12,18 @@
 //! content go the save flash, the fading menu and the hold ring; a restart
 //! blacks everything out. The landing flash arrives with the throw work.
 
-use crate::menu::{Draft, Setup};
-use crate::screens::BOOT_DURATION;
-use crate::state::Mode;
 use smokebomb_hal::Face;
 
+use crate::menu::{Draft, Setup};
+use crate::screens::{BOOT_DURATION, BURST_AT, LOOP_END};
+use crate::smoke::Special;
+use crate::state::Mode;
+
 const BOOT_MS: u64 = (BOOT_DURATION * 1000.0) as u64;
+/// The top face's centre pip bursts into smoke this long into the boot.
+const BURST_MS: u64 = ((LOOP_END + BURST_AT) * 1000.0 + 0.5) as u64;
+/// A max or dud keeps the result lit at least this long (SIM_SPEC C6).
+const SPECIAL_LIT_MS: u64 = 5_000;
 /// Wake label after boot and after setup changes (C2).
 pub const WAKE_AFTER_BOOT_MS: u64 = 2_200;
 /// Wake label after a tap (C2).
@@ -43,6 +49,7 @@ pub const RESTART_BLACKOUT_MS: u64 = 800;
 struct Boot {
     start: u64,
     top: Face,
+    burst: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -53,6 +60,8 @@ pub struct Ui {
     wake: Option<(u64, u64)>,
     /// (reveal, dim) times of the shown result.
     result: Option<(u64, u64)>,
+    /// A max or dud, once its effect has started.
+    special: Option<Special>,
     menu_open_at: Option<u64>,
     /// The menu fading out: when it closed, what it showed, and where.
     menu_fade: Option<(u64, Draft, Face)>,
@@ -118,6 +127,39 @@ impl Ui {
 
     pub fn booting(&self) -> bool {
         self.boot.is_some() || self.blackout_until.is_some()
+    }
+
+    /// The boot's smoke burst is due: the top face, once per boot.
+    pub fn take_boot_burst(&mut self, now: u64) -> Option<Face> {
+        let b = self.boot.as_mut()?;
+        if b.burst || now.saturating_sub(b.start) < BURST_MS {
+            return None;
+        }
+        b.burst = true;
+        Some(b.top)
+    }
+
+    /// A roll's result exists, from its reveal until something clears it (a
+    /// shake, the menu, docking, a restart), dimmed or not.
+    pub fn has_result(&self) -> bool {
+        self.result.is_some()
+    }
+
+    /// A result is up (revealed, possibly dimmed).
+    pub fn showing_result(&self, now: u64) -> bool {
+        self.result.is_some_and(|(reveal, _)| now >= reveal)
+    }
+
+    /// A max or dud's effect started: the result says so and stays lit.
+    pub fn set_special(&mut self, now: u64, special: Special) {
+        self.special = Some(special);
+        if let Some((reveal, dim)) = self.result {
+            self.result = Some((reveal, dim.max(now + SPECIAL_LIT_MS)));
+        }
+    }
+
+    pub fn special(&self) -> Option<Special> {
+        self.special
     }
 
     /// Restarting: every screen is dark.
@@ -189,12 +231,20 @@ impl Ui {
     pub fn tick(&mut self, now: u64, before: &Mode, after: &Mode, up: Face, docked: bool) {
         if !self.started {
             self.started = true;
-            self.boot = Some(Boot { start: now, top: up });
+            self.boot = Some(Boot {
+                start: now,
+                top: up,
+                burst: false,
+            });
         }
         if let Some(until) = self.blackout_until {
             if now >= until {
                 self.blackout_until = None;
-                self.boot = Some(Boot { start: now, top: up });
+                self.boot = Some(Boot {
+                    start: now,
+                    top: up,
+                    burst: false,
+                });
             }
         }
 
@@ -203,15 +253,18 @@ impl Ui {
         if entered(|m| matches!(m, Mode::Shaking)) {
             self.wake = None;
             self.result = None;
+            self.special = None;
         }
         if entered(|m| matches!(m, Mode::Menu)) || entered(|m| matches!(m, Mode::Nest)) {
             self.wake = None;
             self.result = None;
+            self.special = None;
             self.success = None;
         }
         if let Mode::Reveal { since_ms } = *after {
             if !matches!(before, Mode::Reveal { .. }) {
                 self.result = Some((since_ms, since_ms + RESULT_DIM_AFTER_MS));
+                self.special = None;
             }
         }
 
@@ -219,7 +272,7 @@ impl Ui {
             let interrupted = tumbling(after) || matches!(after, Mode::Menu | Mode::Reveal { .. });
             if interrupted {
                 self.boot = None;
-            } else if now - b.start >= BOOT_MS {
+            } else if now.saturating_sub(b.start) >= BOOT_MS {
                 self.boot = None;
                 if !docked {
                     self.wake(now, WAKE_AFTER_BOOT_MS);
@@ -262,11 +315,11 @@ impl Ui {
         if now < reveal {
             return 0.0;
         }
-        let fade_in = ((now - reveal) as f32 / RESULT_FADE_IN_MS).min(1.0);
+        let fade_in = ((now.saturating_sub(reveal)) as f32 / RESULT_FADE_IN_MS).min(1.0);
         let dimming = if now < dim {
             1.0
         } else {
-            (1.0 - (now - dim) as f32 / RESULT_DIM_FADE_MS).max(0.0)
+            (1.0 - (now.saturating_sub(dim)) as f32 / RESULT_DIM_FADE_MS).max(0.0)
         };
         fade_in * dimming
     }
@@ -274,7 +327,7 @@ impl Ui {
     fn wake_alpha(&self, now: u64) -> f32 {
         match self.wake {
             Some((start, until)) if now < until => {
-                let a = ((now - start) as f32 / 350.0)
+                let a = ((now.saturating_sub(start)) as f32 / 350.0)
                     .min((until - now) as f32 / 600.0)
                     .min(1.0);
                 a * 0.85
@@ -292,7 +345,7 @@ impl Ui {
         if let Some(b) = self.boot {
             if !matches!(mode, Mode::Nest | Mode::Menu) && !tumbling(mode) {
                 return FaceContent::Boot {
-                    t: (now - b.start) as f32 / 1000.0,
+                    t: (now.saturating_sub(b.start)) as f32 / 1000.0,
                     top: face == b.top,
                 };
             }
@@ -307,7 +360,7 @@ impl Ui {
             return FaceContent::Result { alpha: result };
         }
         if let Some((t, f, setup)) = self.success {
-            if f == face && now - t < SUCCESS_MS && !tumbling(mode) {
+            if f == face && now.saturating_sub(t) < SUCCESS_MS && !tumbling(mode) {
                 let t = since(now, t) / 1000.0;
                 return FaceContent::Success { t, setup };
             }

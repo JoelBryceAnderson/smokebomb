@@ -9,7 +9,6 @@
 
 #![no_std]
 
-pub mod animation;
 pub mod display;
 pub mod font;
 pub mod gfx;
@@ -20,6 +19,7 @@ pub mod pack;
 pub mod potato;
 pub mod roll;
 pub mod screens;
+pub mod smoke;
 pub mod state;
 pub mod tips;
 pub mod ui;
@@ -31,7 +31,6 @@ use smokebomb_hal::{
 };
 use smokebomb_shared::{DieKind, SignedRoll};
 
-use animation::AnimationPlayer;
 use display::Framebuffer;
 use font::Fonts;
 use gfx::{Layer, Painter, Transform};
@@ -39,9 +38,10 @@ use menu::{Draft, Settings};
 use motion::{Motion, MotionDetector};
 use orientation::TextOrientation;
 use pack::PackIndex;
-use potato::Potato;
+use potato::{Potato, PotatoCommand};
 use roll::RollEngine;
 use screens::Ctx;
+use smoke::{Smoke, Special};
 use state::{Command, Event, Mode, StateMachine};
 use tips::{Frame, TipDir, TipTracker, TipUpdate};
 use ui::{FaceContent, Ui};
@@ -53,12 +53,27 @@ pub const TICK_HZ: u32 = 60;
 /// Low-pass factor for the gravity estimate, per tick.
 const UP_FILTER: f32 = 0.25;
 
+/// The IMU delivers one sample per tick at its output data rate (the
+/// simulator likewise produces one per tick). Gyro rates are integrated over
+/// this sample period rather than the wall clock, so a late or bunched tick
+/// doesn't lose rotation.
+const IMU_SAMPLE_S: f32 = 1.0 / TICK_HZ as f32;
+
 /// How long a screen must be held to open the menu (SIM_SPEC C3).
 pub const MENU_HOLD_MS: u64 = 800;
 /// The hold ring appears once a touch is clearly a hold, not a tap.
 pub const HOLD_RING_AFTER_MS: u64 = 220;
 /// The menu closes without saving after this long without a tip.
 pub const MENU_IDLE_MS: u64 = 25_000;
+
+/// How the screens were oriented when a result was revealed. While the
+/// result lasts they stay that way, like a printed die: picking the die up to
+/// read it doesn't turn the text or light a different face (decision H9).
+#[derive(Clone, Copy, Debug)]
+struct Frozen {
+    quarters: [orientation::Quarter; smokebomb_hal::FACE_COUNT],
+    up: Face,
+}
 
 /// The open menu: its draft, which way the person is holding the die, and
 /// the tip being made.
@@ -68,6 +83,8 @@ struct MenuSession {
     tips: TipTracker,
     last_input: u64,
     turning: Option<(TipDir, f32)>,
+    /// The face the turn last passed (nearest whole progress), for haptics.
+    detent: i32,
 }
 
 pub struct Firmware<P: Platform> {
@@ -77,24 +94,29 @@ pub struct Firmware<P: Platform> {
     settings: Settings,
     potato: Potato,
     roller: RollEngine,
-    player: AnimationPlayer,
+    smoke: Smoke,
+    /// A max or dud waiting for the smoke to clear (SIM_SPEC C6).
+    pending_special: Option<Special>,
+    last_tick_ms: Option<u64>,
     fonts: Fonts,
     ui: Ui,
     frames: [Framebuffer; smokebomb_hal::FACE_COUNT],
     layer: Layer,
-    /// Packed 4bpp scratch for the panel and for streaming assets.
+    /// Packed 4bpp scratch for the panel.
     panel: FrameBytes,
     /// Filtered gravity-up direction in die coordinates (milli-g); `None`
     /// until the first IMU sample.
     up: Option<[f32; 3]>,
     orientation: TextOrientation,
+    gravity: orientation::Gravity,
     touch_since: Option<u64>,
     /// The face a touch started on (the lowest one, if several).
     touch_face: Face,
     menu_hold_fired: bool,
     menu: Option<MenuSession>,
-    last_imu_ms: Option<u64>,
     up_face: Face,
+    /// The screens' orientation, frozen while a result is up.
+    frozen: Option<Frozen>,
     last_roll: Option<SignedRoll>,
     docked: bool,
 }
@@ -102,7 +124,7 @@ pub struct Firmware<P: Platform> {
 impl<P: Platform> Firmware<P> {
     pub fn new(mut hw: Peripherals<P>) -> HalResult<Self> {
         let pack = PackIndex::load(&mut hw.assets);
-        let player = AnimationPlayer::load(&mut hw.assets, &pack);
+        let smoke = Smoke::load(&mut hw.assets, &pack, hw.rng.next_u32()?);
         let fonts = Fonts::load(&mut hw.assets, &pack);
         let roller = RollEngine::new(&mut hw.secure_element)?;
         hw.display.set_enabled(true)?;
@@ -113,7 +135,9 @@ impl<P: Platform> Firmware<P> {
             settings: Settings::default(),
             potato: Potato::new(),
             roller,
-            player,
+            smoke,
+            pending_special: None,
+            last_tick_ms: None,
             fonts,
             ui: Ui::new(),
             frames: [Framebuffer::new(); smokebomb_hal::FACE_COUNT],
@@ -121,12 +145,13 @@ impl<P: Platform> Firmware<P> {
             panel: [0; FRAME_BYTES],
             up: None,
             orientation: TextOrientation::new(),
+            gravity: orientation::Gravity::new(),
             touch_since: None,
             touch_face: Face::PosZ,
             menu_hold_fired: false,
             menu: None,
-            last_imu_ms: None,
             up_face: Face::PosY,
+            frozen: None,
             last_roll: None,
             docked: false,
         })
@@ -179,6 +204,18 @@ impl<P: Platform> Firmware<P> {
         self.menu.as_ref().map(|m| m.frame.front_face())
     }
 
+    /// The particle system, for tests that replay the mockup's random
+    /// sequence.
+    pub fn smoke_mut(&mut self) -> &mut Smoke {
+        &mut self.smoke
+    }
+
+    /// The text orientation the menu page on `face` is drawn in, if one is.
+    pub fn menu_page_quarter(&self, face: Face) -> Option<orientation::Quarter> {
+        let frame = page_frame(self.menu.as_ref()?, face)?;
+        Some(page_quarter(&frame, face, &self.orientation))
+    }
+
     /// The menu's draft, if it's open.
     pub fn menu_draft(&self) -> Option<&Draft> {
         self.menu.as_ref().map(|m| &m.draft)
@@ -197,18 +234,20 @@ impl<P: Platform> Firmware<P> {
                 *u += (r - *u) * UP_FILTER;
             }
             self.orientation.update(*up);
+            // Smoke falls with gravity even while the die is shaken or
+            // tumbling, as in the mockup.
+            self.gravity.update(&sample, IMU_SAMPLE_S);
+            self.smoke.set_up(self.gravity.up());
             if let Some(face) = motion::up_face(&sample) {
                 self.up_face = face;
             }
             if let Some(m) = self.motion.update(&sample, now) {
                 let _ = events.push(Event::Motion(m));
             }
-            let dt = self.last_imu_ms.map_or(0, |t| now - t) as f32 / 1000.0;
-            self.last_imu_ms = Some(now);
-            self.menu_tips(&sample, dt, now)?;
+            self.menu_tips(&sample, IMU_SAMPLE_S, now)?;
         }
         if let Some(m) = &self.menu {
-            if m.turning.is_none() && now - m.last_input >= MENU_IDLE_MS {
+            if m.turning.is_none() && now.saturating_sub(m.last_input) >= MENU_IDLE_MS {
                 let _ = events.push(Event::MenuTimeout);
             }
         }
@@ -237,7 +276,7 @@ impl<P: Platform> Firmware<P> {
                     Event::Motion(Motion::Shaking) if self.potato.is_idle() => self.light_potato(now)?,
                     Event::Tap => {
                         for cmd in self.potato.tap(now) {
-                            self.execute(cmd)?;
+                            self.run_potato(cmd)?;
                         }
                     }
                     // No opening the menu mid-round.
@@ -247,7 +286,7 @@ impl<P: Platform> Firmware<P> {
             }
             if event == Event::Docked(true) {
                 for cmd in self.potato.reset() {
-                    self.execute(cmd)?;
+                    self.run_potato(cmd)?;
                 }
             }
             if event == Event::Tap {
@@ -255,14 +294,16 @@ impl<P: Platform> Firmware<P> {
             }
             let commands = self.sm.handle(event, now);
             for cmd in commands {
-                self.execute(cmd)?;
+                self.execute(cmd, now)?;
             }
         }
         for cmd in self.potato.tick(now) {
-            self.execute(cmd)?;
+            self.run_potato(cmd)?;
         }
         let after = *self.sm.mode();
         self.ui.tick(now, &before, &after, self.up_face, self.docked);
+        self.update_smoke(now, &before, &after);
+        self.freeze_for_result(&before, &after);
 
         self.render(now)?;
         Ok(())
@@ -274,9 +315,107 @@ impl<P: Platform> Firmware<P> {
         let fuse = potato::fuse_from(self.hw.rng.next_u32()?, range);
         self.ui.game_started();
         for cmd in self.potato.light(now, fuse, range.1) {
-            self.execute(cmd)?;
+            self.run_potato(cmd)?;
         }
         Ok(())
+    }
+
+    /// Do what the game asked for: haptics and smoke.
+    fn run_potato(&mut self, cmd: PotatoCommand) -> HalResult<()> {
+        match cmd {
+            PotatoCommand::Ignite => {
+                self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
+                self.smoke.shake_start();
+            }
+            PotatoCommand::Tick => self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?,
+            PotatoCommand::Boom => {
+                self.hw.haptics.play(smokebomb_hal::HapticEffect::Buzz)?;
+                // A full cloud that drains over the faces, with embers.
+                self.smoke.throw();
+                self.smoke.land();
+            }
+            PotatoCommand::Clear => self.smoke.clear(),
+        }
+        Ok(())
+    }
+
+    /// Freeze the screens' orientation when a result is revealed, and let
+    /// it go once the result is cleared.
+    fn freeze_for_result(&mut self, before: &Mode, after: &Mode) {
+        let revealed = matches!(after, Mode::Reveal { .. }) && !matches!(before, Mode::Reveal { .. });
+        if revealed {
+            self.frozen = Some(Frozen {
+                quarters: Face::ALL.map(|f| self.orientation.quarter(f)),
+                up: self.up_face,
+            });
+        } else if !self.ui.has_result() {
+            self.frozen = None;
+        }
+    }
+
+    /// Which face is up, as the screens see it (frozen while a result is up).
+    pub fn display_up(&self) -> Face {
+        self.frozen.map_or(self.up_face, |f| f.up)
+    }
+
+    /// A face's text orientation, as drawn (frozen while a result is up).
+    pub fn display_quarter(&self, face: Face) -> orientation::Quarter {
+        self.frozen
+            .map_or_else(|| self.orientation.quarter(face), |f| f.quarters[face.index()])
+    }
+
+    /// Drive the smoke through the throw, in the mockup's frame order:
+    /// throw and landing first, then a step, then the boot burst.
+    fn update_smoke(&mut self, now: u64, before: &Mode, after: &Mode) {
+        let entered = |m: fn(&Mode) -> bool| !m(before) && m(after);
+        if entered(|m| matches!(m, Mode::Shaking)) {
+            self.smoke.shake_start();
+            self.pending_special = None;
+        }
+        if entered(|m| matches!(m, Mode::Airborne)) {
+            self.smoke.throw();
+            self.pending_special = None;
+        }
+        // Landed: the die has stopped after the tumble (the mockup's
+        // landing, about 0.35 s before the result shows). Shaken and set
+        // straight down counts as a throw that has landed.
+        let resting = self.motion.stopped() || matches!(after, Mode::Reveal { .. });
+        if self.smoke.shaking() && matches!(after, Mode::Reveal { .. }) {
+            self.smoke.throw();
+        }
+        if self.smoke.tumbling() && resting && !matches!(after, Mode::Airborne) {
+            self.smoke.land();
+        }
+        if entered(|m| matches!(m, Mode::Menu)) {
+            self.smoke.clear();
+        }
+        let dt = self.frame_dt(now);
+        self.smoke.step(dt);
+        if let Some(face) = self.ui.take_boot_burst(now) {
+            self.smoke.burst(face);
+        }
+        // A max or dud shows once the smoke has cleared from the result.
+        if let Some(special) = self.pending_special {
+            if self.ui.showing_result(now) && !self.smoke.has_smoke() && !self.smoke.tumbling() {
+                self.smoke.special(special);
+                self.ui.set_special(now, special);
+                self.pending_special = None;
+            }
+        }
+    }
+
+    /// Seconds since the last tick, for animation: exactly one tick period
+    /// when the tick came on time (a millisecond clock would otherwise make
+    /// steps of 16 and 17 ms), the measured gap when it didn't.
+    fn frame_dt(&mut self, now: u64) -> f32 {
+        let elapsed = self.last_tick_ms.map_or(0, |last| now.saturating_sub(last));
+        self.last_tick_ms = Some(now);
+        let nominal = 1000.0 / TICK_HZ as f32;
+        match elapsed {
+            0 => 0.0,
+            e if (e as f32 - nominal).abs() <= 2.0 => 1.0 / TICK_HZ as f32,
+            e => e as f32 / 1000.0,
+        }
     }
 
     /// Feed the gyro to the menu's tip tracker and apply finished tips.
@@ -293,16 +432,23 @@ impl<P: Platform> Firmware<P> {
         }
         match update {
             TipUpdate::Turning { dir, progress } => {
-                if m.turning.is_none() {
+                // A tick each time the nearest face changes (45° into each
+                // face passed): once for a quick tip, as the mockup's buzz
+                // at its start, and once per face on a long turn, however
+                // many stops it makes on the way.
+                let detent = libm::floorf(progress + 0.5) as i32;
+                if detent != m.detent {
                     self.hw.haptics.play(smokebomb_hal::HapticEffect::MenuTip)?;
-                    m.last_input = now;
                 }
+                m.detent = detent;
                 m.turning = Some((dir, progress));
+                m.last_input = now;
             }
-            TipUpdate::Done(dir) => {
-                m.draft = m.draft.tipped(dir);
-                m.frame = m.frame.after(dir);
+            TipUpdate::Done { dir, steps } => {
+                m.draft = m.draft.stepped(dir, steps);
+                m.frame = m.frame.stepped(dir, steps);
                 m.turning = None;
+                m.detent = 0;
                 m.last_input = now;
             }
             TipUpdate::Cancelled => m.turning = None,
@@ -332,7 +478,7 @@ impl<P: Platform> Firmware<P> {
             }
             // Held for more than 0.8 s: at 60 Hz that's 49 frames, as in the
             // mockup, whose float clock never quite reaches 0.8 after 48.
-            (true, Some(since)) if !self.menu_hold_fired && now - since > MENU_HOLD_MS => {
+            (true, Some(since)) if !self.menu_hold_fired && now.saturating_sub(since) > MENU_HOLD_MS => {
                 self.menu_hold_fired = true;
                 let _ = events.push(Event::LongPress);
             }
@@ -353,7 +499,7 @@ impl<P: Platform> Firmware<P> {
     /// How far the current touch is toward a hold (0–1), once the ring shows.
     fn hold_progress(&self, now: u64) -> Option<f32> {
         let since = self.touch_since?;
-        let held = now - since;
+        let held = now.saturating_sub(since);
         let ring = !self.menu_hold_fired
             && !self.potato.is_lit()
             && held > HOLD_RING_AFTER_MS
@@ -363,22 +509,18 @@ impl<P: Platform> Firmware<P> {
         })
     }
 
-    fn execute(&mut self, cmd: Command) -> HalResult<()> {
-        let now = self.hw.clock.now_ms();
+    /// Carry out a command. `now` is the tick's time: the clock moves on
+    /// while a tick runs, and everything in one tick must agree on when it is.
+    fn execute(&mut self, cmd: Command, now: u64) -> HalResult<()> {
         match cmd {
-            Command::PlayClip(clip) => self.player.play(clip),
-            Command::StopClip => self.player.stop(),
             Command::Haptic(effect) => self.hw.haptics.play(effect)?,
             Command::Roll => {
                 let (die, count) = self.settings.active();
-                let signed = self.roller.roll(
-                    &mut self.hw.rng,
-                    &mut self.hw.secure_element,
-                    die,
-                    count,
-                    self.hw.clock.now_ms(),
-                )?;
-                if is_max(&signed, die) {
+                let signed =
+                    self.roller
+                        .roll(&mut self.hw.rng, &mut self.hw.secure_element, die, count, now)?;
+                self.pending_special = special(&signed, die);
+                if self.pending_special == Some(Special::Max) {
                     self.hw
                         .haptics
                         .play(smokebomb_hal::HapticEffect::MaxCelebration)?;
@@ -400,13 +542,15 @@ impl<P: Platform> Firmware<P> {
                     tips: TipTracker::new(),
                     last_input: now,
                     turning: None,
+                    detent: 0,
                 });
                 self.ui.menu_opened(now);
             }
             Command::MenuClose { save } => {
                 if let Some(m) = self.menu.take() {
                     if save && m.draft.restart_selected() {
-                        self.player.stop();
+                        self.smoke.clear();
+                        self.pending_special = None;
                         self.ui.restart(now);
                     } else {
                         if save {
@@ -423,7 +567,8 @@ impl<P: Platform> Firmware<P> {
 
     fn render(&mut self, now: u64) -> HalResult<()> {
         let mode = *self.sm.mode();
-        let up = self.up_face;
+        let up = self.display_up();
+        let quarters = Face::ALL.map(|f| self.display_quarter(f));
         let label = self.settings.setup().label();
         let battery = self.hw.power.battery()?.percent;
         let potato_view = if matches!(mode, Mode::Menu | Mode::Nest) {
@@ -465,7 +610,7 @@ impl<P: Platform> Firmware<P> {
             } else {
                 content
             };
-            let rot = orientation.quarter(face);
+            let rot = quarters[face.index()];
             let mut painter = Painter::new(fb, layer, Transform::quarter(rot));
             let mut c = Ctx {
                 painter: &mut painter,
@@ -504,7 +649,7 @@ impl<P: Platform> Firmware<P> {
                 FaceContent::Wake { alpha } => screens::draw_wake_label(&mut c, &label, alpha),
                 FaceContent::Result { alpha } => {
                     if let Some(r) = record {
-                        screens::draw_result(&mut c, r, display::FG, alpha);
+                        screens::draw_result(&mut c, r, ui.special(), alpha);
                     }
                 }
                 FaceContent::Success { t, setup } => {
@@ -512,7 +657,16 @@ impl<P: Platform> Firmware<P> {
                 }
                 FaceContent::Menu => {
                     if let Some(m) = menu {
-                        draw_menu_face(&mut c, m, ui, face, now, battery, hold.map(|(_, p)| p));
+                        draw_menu_face(
+                            &mut c,
+                            m,
+                            ui,
+                            orientation,
+                            face,
+                            now,
+                            battery,
+                            hold.map(|(_, p)| p),
+                        );
                     }
                 }
                 // Placeholder until the Nest screens are built.
@@ -528,11 +682,8 @@ impl<P: Platform> Firmware<P> {
             }
         }
 
-        // Placeholder smoke on top, until the particle system lands.
-        if !self.ui.booting() {
-            self.player
-                .render(&mut self.hw.assets, &mut self.frames, &mut self.panel, now)?;
-        }
+        // Smoke over everything, wrapping round the edges (SIM_SPEC D1).
+        self.smoke.draw(&mut self.frames);
         for face in Face::ALL {
             self.frames[face.index()].quantize(&mut self.panel);
             self.hw.display.write_frame(face, &self.panel)?;
@@ -552,32 +703,46 @@ enum PotatoView {
 
 /// One face while the menu is open (C3). The menu shows on the front face;
 /// during a tip the old page slides off against the turn and fades while
-/// the new one slides in from the leading edge of the face coming round.
+/// the new one slides in from the leading edge of the face coming round. On
+/// a turn past several faces the slide runs between the two faces the die
+/// is between, each showing the page it stands for.
+/// Each page is drawn upright for the frame it belongs to, the way it will
+/// read once its face is in front: a face coming round from the top or
+/// bottom would otherwise keep the orientation it had there until it
+/// counted as a side face, and flip mid-turn.
+#[allow(clippy::too_many_arguments)]
 fn draw_menu_face<A: smokebomb_hal::AssetStore>(
     c: &mut Ctx<A>,
     m: &MenuSession,
     ui: &Ui,
+    orientation: &TextOrientation,
     face: Face,
     now: u64,
     battery: u8,
     hold: Option<f32>,
 ) {
     let battery = battery as f32 / 100.0;
-    let front = m.frame.front_face();
-    if let Some((dir, u)) = m.turning {
-        let (mx, my) = m.frame.motion_dir(face, dir);
+    let Some(page) = page_frame(m, face) else {
+        return;
+    };
+    c.painter.xf = Transform::quarter(page_quarter(&page, face, orientation));
+    if let Some((dir, progress)) = m.turning {
+        // `k` whole faces passed, and `u` of the way to the next.
+        let k = libm::floorf(progress);
+        let u = progress - k;
+        let (frame, draft) = (m.frame.stepped(dir, k as i32), m.draft.stepped(dir, k as i32));
+        let (mx, my) = frame.motion_dir(face, dir);
         let d = screens::TIP_SLIDE;
-        if face == front {
-            screens::draw_menu(c, &m.draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
-        }
-        if face == m.frame.next_front(dir) {
-            let next = m.draft.tipped(dir);
+        if face == frame.front_face() {
+            screens::draw_menu(c, &draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
+        } else {
+            let next = draft.tipped(dir);
             let (ox, oy) = (mx * (1.0 - u) * d, my * (1.0 - u) * d);
             screens::draw_menu(c, &next, battery, ox, oy, u, 1.0);
         }
         return;
     }
-    if face == front {
+    {
         let intro = ui.menu_intro(now);
         screens::draw_hold_ring(c, 1.0, intro.ring_alpha, intro.ring_grow);
         screens::draw_menu(c, &m.draft, battery, 0.0, 0.0, intro.alpha, intro.scale);
@@ -587,14 +752,45 @@ fn draw_menu_face<A: smokebomb_hal::AssetStore>(
     }
 }
 
+/// The menu frame whose page `face` shows: the front face's, or during a
+/// turn, the page being left or the one coming round.
+fn page_frame(m: &MenuSession, face: Face) -> Option<Frame> {
+    match m.turning {
+        Some((dir, progress)) => {
+            let frame = m.frame.stepped(dir, libm::floorf(progress) as i32);
+            if face == frame.front_face() {
+                Some(frame)
+            } else if face == frame.next_front(dir) {
+                Some(frame.after(dir))
+            } else {
+                None
+            }
+        }
+        None => (face == m.frame.front_face()).then_some(m.frame),
+    }
+}
+
+/// Upright for `frame`'s sky; the live orientation if that's undefined
+/// (the held face pointing up, SIM_SPEC H7).
+fn page_quarter(frame: &Frame, face: Face, live: &TextOrientation) -> orientation::Quarter {
+    orientation::upright(face, frame.up).unwrap_or_else(|| live.quarter(face))
+}
+
 fn fb_of<'a>(painter: &'a mut Painter<'_>) -> &'a mut Framebuffer {
     painter.framebuffer()
 }
 
-/// Every die shows its top value (N > 2); Pass the Pot has no max (SIM_SPEC C6).
-fn is_max(roll: &SignedRoll, die: DieKind) -> bool {
-    die.is_numeric()
-        && die.sides() > 2
-        && !roll.record.values.is_empty()
-        && roll.record.values.iter().all(|&v| v == die.sides())
+/// A max (every die shows its top value, N > 2) or a dud (every die shows
+/// 1). Pass the Pot has neither (SIM_SPEC C6).
+fn special(roll: &SignedRoll, die: DieKind) -> Option<Special> {
+    let values = &roll.record.values;
+    if !die.is_numeric() || values.is_empty() {
+        None
+    } else if die.sides() > 2 && values.iter().all(|&v| v == die.sides()) {
+        Some(Special::Max)
+    } else if values.iter().all(|&v| v == 1) {
+        Some(Special::Dud)
+    } else {
+        None
+    }
 }

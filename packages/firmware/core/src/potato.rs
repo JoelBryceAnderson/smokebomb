@@ -14,14 +14,26 @@
 //!
 //! Like [`crate::state::StateMachine`] the machine is pure: the firmware
 //! draws the fuse from the RNG, passes the time in, and executes the
-//! [`Command`]s it returns. The roll state machine stays out of a game that
+//! [`PotatoCommand`]s it returns. The roll state machine stays out of a game that
 //! doesn't roll (see `StateMachine::set_rolls`); it still owns the menu and
 //! the Nest.
 
-use smokebomb_hal::HapticEffect;
-use smokebomb_shared::assets::ClipId;
+use heapless::Vec;
 
-use crate::state::{Command, Commands};
+/// What the firmware does for the game.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PotatoCommand {
+    /// The fuse is lit: a tick, and smoke starts building.
+    Ignite,
+    /// A tick of the fuse.
+    Tick,
+    /// It went off: a buzz and a cloud.
+    Boom,
+    /// Back to idle: the smoke goes.
+    Clear,
+}
+
+pub type PotatoCommands = Vec<PotatoCommand, 2>;
 
 /// How long the spent die shows BOOM before it resets by itself.
 pub const BOOM_MS: u64 = 6_000;
@@ -81,11 +93,10 @@ impl Potato {
     }
 
     /// A shake lit the fuse. Only an idle die lights.
-    pub fn light(&mut self, now_ms: u64, fuse_ms: u32, span_ms: u32) -> Commands {
-        let mut out = Commands::new();
+    pub fn light(&mut self, now_ms: u64, fuse_ms: u32, span_ms: u32) -> PotatoCommands {
+        let mut out = PotatoCommands::new();
         if self.is_idle() {
-            let _ = out.push(Command::PlayClip(ClipId::SmokeShake));
-            let _ = out.push(Command::Haptic(HapticEffect::Tick));
+            let _ = out.push(PotatoCommand::Ignite);
             self.state = PotatoState::Lit {
                 since_ms: now_ms,
                 fuse_ms,
@@ -98,26 +109,26 @@ impl Potato {
     }
 
     /// A tap on a spent die resets it.
-    pub fn tap(&mut self, now_ms: u64) -> Commands {
+    pub fn tap(&mut self, now_ms: u64) -> PotatoCommands {
         match self.state {
             PotatoState::Boom { since_ms } if now_ms - since_ms >= BOOM_TAP_GUARD_MS => self.reset(),
-            _ => Commands::new(),
+            _ => PotatoCommands::new(),
         }
     }
 
     /// Back to idle, from wherever it was.
-    pub fn reset(&mut self) -> Commands {
-        let mut out = Commands::new();
+    pub fn reset(&mut self) -> PotatoCommands {
+        let mut out = PotatoCommands::new();
         if !self.is_idle() {
-            let _ = out.push(Command::StopClip);
+            let _ = out.push(PotatoCommand::Clear);
             self.state = PotatoState::Idle;
         }
         out
     }
 
     /// Advance the fuse: tick, go off, or time out a spent die.
-    pub fn tick(&mut self, now_ms: u64) -> Commands {
-        let mut out = Commands::new();
+    pub fn tick(&mut self, now_ms: u64) -> PotatoCommands {
+        let mut out = PotatoCommands::new();
         match self.state {
             PotatoState::Lit {
                 since_ms,
@@ -126,11 +137,10 @@ impl Potato {
                 ..
             } => {
                 if now_ms - since_ms >= fuse_ms as u64 {
-                    let _ = out.push(Command::PlayClip(ClipId::SmokeThrow));
-                    let _ = out.push(Command::Haptic(HapticEffect::Buzz));
+                    let _ = out.push(PotatoCommand::Boom);
                     self.state = PotatoState::Boom { since_ms: now_ms };
                 } else if now_ms >= next_tick_ms {
-                    let _ = out.push(Command::Haptic(HapticEffect::Tick));
+                    let _ = out.push(PotatoCommand::Tick);
                     let gap = tick_gap_ms(self.heat(now_ms));
                     if let PotatoState::Lit {
                         last_tick_ms,
@@ -201,7 +211,7 @@ mod tests {
 
     use super::*;
 
-    fn has(cmds: &Commands, c: Command) -> bool {
+    fn has(cmds: &PotatoCommands, c: PotatoCommand) -> bool {
         cmds.contains(&c)
     }
 
@@ -209,8 +219,7 @@ mod tests {
     fn a_shake_lights_an_idle_die_and_only_an_idle_one() {
         let mut p = Potato::new();
         let cmds = p.light(1_000, 15_000, 20_000);
-        assert!(has(&cmds, Command::PlayClip(ClipId::SmokeShake)));
-        assert!(has(&cmds, Command::Haptic(HapticEffect::Tick)));
+        assert!(has(&cmds, PotatoCommand::Ignite));
         assert!(p.is_lit());
         assert!(p.light(2_000, 5_000, 20_000).is_empty(), "already lit");
         assert!(matches!(p.state(), PotatoState::Lit { fuse_ms: 15_000, .. }));
@@ -224,10 +233,10 @@ mod tests {
         let mut boomed_at = None;
         for t in 0..=10_500u64 {
             let cmds = p.tick(t);
-            if has(&cmds, Command::Haptic(HapticEffect::Tick)) {
+            if has(&cmds, PotatoCommand::Tick) {
                 ticks.push(t);
             }
-            if has(&cmds, Command::Haptic(HapticEffect::Buzz)) {
+            if has(&cmds, PotatoCommand::Boom) {
                 boomed_at = Some(t);
                 break;
             }
@@ -262,7 +271,7 @@ mod tests {
         assert_eq!(p.boomed_for(1_500), Some(500));
         assert!(p.tick(1_000 + BOOM_MS - 1).is_empty());
         let cmds = p.tick(1_000 + BOOM_MS);
-        assert!(has(&cmds, Command::StopClip));
+        assert!(has(&cmds, PotatoCommand::Clear));
         assert!(p.is_idle());
     }
 
@@ -273,7 +282,7 @@ mod tests {
         assert!(p.tap(500).is_empty(), "lit dice ignore taps");
         p.tick(1_000);
         assert!(p.tap(1_000 + BOOM_TAP_GUARD_MS - 1).is_empty(), "too soon");
-        assert!(has(&p.tap(1_000 + BOOM_TAP_GUARD_MS), Command::StopClip));
+        assert!(has(&p.tap(1_000 + BOOM_TAP_GUARD_MS), PotatoCommand::Clear));
         assert!(p.is_idle());
     }
 
@@ -282,7 +291,7 @@ mod tests {
         let mut p = Potato::new();
         assert!(p.reset().is_empty());
         p.light(0, 5_000, 5_000);
-        assert!(has(&p.reset(), Command::StopClip));
+        assert!(has(&p.reset(), PotatoCommand::Clear));
         assert!(p.is_idle());
         assert_eq!(p.heat(100), 0.0);
     }

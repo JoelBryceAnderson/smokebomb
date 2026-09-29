@@ -311,6 +311,13 @@ impl Draft {
         next
     }
 
+    /// The draft after `steps` tips in `dir` (negative steps go the other
+    /// way), as if tipped one face at a time.
+    pub fn stepped(self, dir: TipDir, steps: i32) -> Self {
+        let d = if steps < 0 { dir.opposite() } else { dir };
+        (0..steps.unsigned_abs()).fold(self, |m, _| m.tipped(d))
+    }
+
     /// Holding on this draft restarts the die instead of saving.
     pub fn restart_selected(&self) -> bool {
         self.page == Page::Settings && self.setting == RESTART
@@ -545,6 +552,15 @@ mod tests {
         }
         assert_eq!(SETTINGS[d.setting as usize].0, "Restart");
         assert!(d.restart_selected());
+    }
+
+    #[test]
+    fn several_steps_at_once() {
+        let d = draft();
+        assert_eq!(d.stepped(TipDir::Left, 2).page, Page::Settings);
+        assert_eq!(d.stepped(TipDir::Up, 3).count, 4);
+        assert_eq!(d.stepped(TipDir::Up, -2).count, 9);
+        assert_eq!(d.stepped(TipDir::Up, 0), d);
     }
 
     #[test]
