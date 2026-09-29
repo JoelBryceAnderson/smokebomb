@@ -109,8 +109,11 @@ async fn register_device_and_verify_simulated_rolls() {
     assert_eq!(res["chain"], "genesis");
     assert_eq!(res["digest"], hex::encode(roll.record.digest()));
 
-    // Tampering with a value must invalidate the signature.
-    body["values"] = json!([20, 20]);
+    // Tampering with a value must invalidate the signature. Change the first
+    // die to a different value, whatever was rolled.
+    let mut values = roll.record.values.to_vec();
+    values[0] = values[0] % 20 + 1;
+    body["values"] = json!(values);
     let (_, res) = call(&app, "POST", "/v1/rolls/verify", Some(body)).await;
     assert_eq!(res["valid"], false, "{res}");
 
