@@ -381,6 +381,20 @@ impl<P: Platform> Firmware<P> {
             TipUpdate::Cancelled => m.turning = None,
             TipUpdate::None => {}
         }
+        if matches!(update, TipUpdate::Done { .. } | TipUpdate::Cancelled) {
+            // At rest: square the frame to gravity. That catches what the
+            // gyro can't be trusted with over time (wobble, tilts, drift) and
+            // what isn't a tip (a twist): a tilt onto the next face counts as
+            // the tip it amounts to, a roll just turns the page upright.
+            let (frame, steps, rolled) = m.frame.resync(self.gravity.up());
+            if steps != 0 {
+                m.draft = m.draft.stepped(TipDir::Up, steps);
+            }
+            if frame != m.frame {
+                m.frame = frame;
+                m.tips.resynced(rolled);
+            }
+        }
         Ok(())
     }
 

@@ -77,6 +77,23 @@ struct Spin {
     target: f32,
 }
 
+/// How a real hand moves the die, beyond the mockup's clean motions. All off
+/// by default; tests turn them on to check the firmware copes.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Hand {
+    /// Tremor while held: angular rate amplitude (deg/s) on each world axis,
+    /// at 7–11 Hz.
+    pub tremor_dps: f32,
+    /// A constant gyro bias (deg/s, die axes): a sensor error, not motion.
+    pub gyro_bias_dps: [f32; 3],
+    /// A tip's axis is off by up to this (deg), about a random direction.
+    pub tip_axis_error_deg: f32,
+    /// A tip turns 90° ± up to this (deg).
+    pub tip_angle_error_deg: f32,
+    /// After a tip, the person squares the die up to look at it (0.3 s).
+    pub resquare: bool,
+}
+
 struct Turn {
     start: f64,
     duration: f64,
@@ -86,6 +103,8 @@ struct Turn {
     /// Held still this long after the motion before the die takes another
     /// (s).
     hold: f64,
+    /// Square the die up to the viewer when this turn ends (a sloppy tip).
+    resquare: bool,
 }
 
 pub struct World {
@@ -104,6 +123,9 @@ pub struct World {
     rng: u64,
     /// Tests: the face the next throw lands on, instead of a random one.
     next_landing: Option<Face>,
+    hand: Hand,
+    /// Tremor phases (rad), so the three axes don't move in step.
+    tremor_phase: [f32; 3],
 }
 
 impl Default for World {
@@ -138,6 +160,8 @@ impl World {
             reduced_motion: false,
             rng: seed | 1,
             next_landing: None,
+            hand: Hand::default(),
+            tremor_phase: [0.0, 2.1, 4.2],
         }
     }
 
@@ -167,6 +191,31 @@ impl World {
         self.docked = false;
         self.turn = None;
         self.shake_start.get_or_insert(self.time);
+    }
+
+    /// Move like a real hand (tests).
+    pub fn set_hand(&mut self, hand: Hand) {
+        self.hand = hand;
+    }
+
+    /// Twist the die about the viewer's line of sight (a roll, not a tip)
+    /// by `degrees`, clockwise as the viewer sees it. Returns false if busy.
+    pub fn twist(&mut self, degrees: f32) -> bool {
+        if self.busy() || self.docked {
+            return false;
+        }
+        let front = self.viewer_right.cross(Vec3::Y);
+        let to = Quat::from_axis_angle(front, -degrees.to_radians()) * self.pose.rotation;
+        self.turn = Some(Turn {
+            start: self.time,
+            duration: 0.3,
+            from: self.pose.rotation,
+            to: to.normalize(),
+            hop: false,
+            hold: 0.0,
+            resquare: false,
+        });
+        true
     }
 
     /// Make the next throw land with `up` on top (tests replaying a mockup
@@ -205,6 +254,16 @@ impl World {
         if matches!(dir, TipDir::Up | TipDir::Down) {
             self.viewer_right = axis;
         }
+        // A real hand: the axis tilts a little and the angle is rarely 90°.
+        let (axis, angle) = if self.hand.tip_axis_error_deg > 0.0 || self.hand.tip_angle_error_deg > 0.0 {
+            let tilt = self.rand_signed() * 2.0 * self.hand.tip_axis_error_deg.to_radians();
+            let spin = Quat::from_axis_angle(axis, self.rand_unit() * std::f32::consts::TAU);
+            let tilted = Quat::from_axis_angle(spin * axis.any_orthonormal_vector(), tilt) * axis;
+            let scale = 1.0 + self.rand_signed() * 2.0 * self.hand.tip_angle_error_deg / 90.0;
+            (tilted, angle * scale)
+        } else {
+            (axis, angle)
+        };
         let to = Quat::from_axis_angle(axis, angle) * self.pose.rotation;
         let duration = if self.reduced_motion { 0.15 } else { 0.42 };
         self.turn = Some(Turn {
@@ -214,6 +273,7 @@ impl World {
             to,
             hop: true,
             hold: 0.0,
+            resquare: self.hand.resquare,
         });
         true
     }
@@ -264,6 +324,7 @@ impl World {
             to,
             hop: false,
             hold: 0.0,
+            resquare: false,
         });
     }
 
@@ -274,6 +335,21 @@ impl World {
         if self.busy() || self.docked {
             return;
         }
+        self.turn = Some(Turn {
+            start: self.time,
+            duration: SNAP_S,
+            from: self.pose.rotation,
+            to: self.squared_toward_viewer(face),
+            hop: false,
+            // Having turned the die to face you, you pause before tipping
+            // it; the firmware waits for that stillness to take its frame.
+            hold: SNAP_HOLD_S,
+            resquare: false,
+        });
+    }
+
+    /// The die squared up to the view with `face` toward the viewer.
+    fn squared_toward_viewer(&self, face: Face) -> Quat {
         let r = self.viewer_right;
         let front = r.cross(Vec3::Y);
         let basis = Quat::from_mat3(&glam::Mat3::from_cols(r, Vec3::Y, front));
@@ -298,16 +374,7 @@ impl World {
         } else {
             Quat::from_rotation_y(std::f32::consts::PI)
         };
-        self.turn = Some(Turn {
-            start: self.time,
-            duration: SNAP_S,
-            from: self.pose.rotation,
-            to: (fix * aligned).normalize(),
-            hop: false,
-            // Having turned the die to face you, you pause before tipping
-            // it; the firmware waits for that stillness to take its frame.
-            hold: SNAP_HOLD_S,
-        });
+        (fix * aligned).normalize()
     }
 
     /// Turn the die in the hand by world-axis angles (the mockup's drag:
@@ -334,6 +401,7 @@ impl World {
             to,
             hop: false,
             hold: 0.0,
+            resquare: false,
         });
     }
 
@@ -412,6 +480,7 @@ impl World {
             }
         }
 
+        let mut resquare = false;
         if let Some(turn) = &self.turn {
             let u = ((self.time - turn.start) / turn.duration).min(1.0) as f32;
             self.pose.rotation = turn.from.slerp(turn.to, ease_out_cubic(u));
@@ -424,6 +493,7 @@ impl World {
                 self.pose.rotation = turn.to;
                 self.pose.position.y = 0.0;
                 if self.time - turn.start >= turn.duration + turn.hold {
+                    resquare = turn.resquare;
                     self.turn = None;
                 }
             }
@@ -434,6 +504,37 @@ impl World {
             // turn rather than jumps.
             s.angle += (s.target - s.angle) * (1.0 - (-25.0 * dt as f32).exp());
             self.pose.rotation = (Quat::from_axis_angle(s.axis, s.angle) * s.from).normalize();
+        }
+
+        if resquare {
+            // Look at the face nearest the viewer, squared up.
+            let front = self.viewer_right.cross(Vec3::Y);
+            let toward = |f: Face| (self.pose.rotation * face_normal(f)).dot(front);
+            let face = Face::ALL
+                .into_iter()
+                .max_by(|a, b| toward(*a).total_cmp(&toward(*b)))
+                .unwrap_or(Face::PosZ);
+            self.turn = Some(Turn {
+                start: self.time,
+                duration: 0.3,
+                from: self.pose.rotation,
+                to: self.squared_toward_viewer(face),
+                hop: false,
+                hold: 0.0,
+                resquare: false,
+            });
+        }
+
+        // A hand's tremor, while the die is held.
+        if self.hand.tremor_dps > 0.0 && self.tumble.is_none() && self.shake_start.is_none() && !self.docked {
+            let t = self.time as f32;
+            let f = [9.0, 11.0, 7.0];
+            let w: [f32; 3] = core::array::from_fn(|i| {
+                self.hand.tremor_dps.to_radians()
+                    * (std::f32::consts::TAU * f[i] * t + self.tremor_phase[i]).sin()
+            });
+            let v = Vec3::from_array(w) * dt as f32;
+            self.pose.rotation = (Quat::from_scaled_axis(v) * self.pose.rotation).normalize();
         }
 
         if self.docked {
@@ -480,7 +581,8 @@ impl World {
             angle
         };
         let omega_body = inv * (axis * (angle / dt.max(1e-6)));
-        let mdps = omega_body * (180.0 / std::f32::consts::PI * 1000.0);
+        let bias = Vec3::from_array(self.hand.gyro_bias_dps) * (std::f32::consts::PI / 180.0);
+        let mdps = (omega_body + bias) * (180.0 / std::f32::consts::PI * 1000.0);
         ImuSample {
             accel_mg: [clamp_i16(force.x), clamp_i16(force.y), clamp_i16(force.z)],
             gyro_mdps: [mdps.x as i32, mdps.y as i32, mdps.z as i32],
