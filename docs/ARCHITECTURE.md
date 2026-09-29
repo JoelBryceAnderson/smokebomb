@@ -168,7 +168,8 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
 
 - **Modes.** `Settings.play` (`PlayMode`) says what the die is being used
   for. Dice keeps the count and die pages; each game brings its own options
-  page (Pass the Pot: how many pots). The Mode page is one tip right of the
+  page (Pass the Pot: the bills in your hand, which is how many dice you
+  roll, up to three; everyone starts with three). The Mode page is one tip right of the
   first page, so the dice flow is as short as it was. The dice setup and
   each game's options are saved apart, and `Settings::active()` gives the
   die and count a throw rolls. `Settings.modes = false` removes the Mode
@@ -442,8 +443,9 @@ diff. The menu scenarios run on the simulator's `World`, so the firmware sees
 the same tips and snap the simulator produces.
 
 The frames are deterministic, so the tolerance (0.05 levels of mean
-difference per face) only absorbs floating-point differences between
-platforms. When a change to the screens is intended, regenerate the sheets
+difference per face, and at most four pixels off by two levels or more) only
+absorbs floating-point differences between platforms. The pixel count matters:
+one changed digit in small text barely moves the mean. When a change to the screens is intended, regenerate the sheets
 with `UPDATE_SNAPSHOTS=1` and review the images in the diff. A failing run
 writes expected, actual and difference to `target/snapshot-diffs/`, which CI
 uploads. The snapshots began as frames captured from the interactive mockup;

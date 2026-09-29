@@ -128,7 +128,8 @@ pub enum Page {
     Mode,
     Count,
     Die,
-    /// Pass the Pot's option: how many pots to pass.
+    /// Pass the Pot's option: how many bills you hold, which is how many
+    /// dice you roll (up to three).
     Pot,
     /// Hot Potato's option: how long the fuse may run.
     Fuse,
@@ -141,7 +142,7 @@ impl Page {
             Page::Mode => "Mode",
             Page::Count => "How many dice",
             Page::Die => "Which die",
-            Page::Pot => "How many pots",
+            Page::Pot => "Bills in hand",
             Page::Fuse => "Fuse length",
             Page::Settings => "Settings",
         }
@@ -232,6 +233,8 @@ pub struct Settings {
     pub play: PlayMode,
     pub die: DieKind,
     pub count: u8,
+    /// Pass the Pot: the bills in your hand, which is how many dice you
+    /// roll. Everyone starts with three.
     pub pot_count: u8,
     pub fuse: Fuse,
     /// The chosen option of each [`SETTINGS`] item.
@@ -246,7 +249,7 @@ impl Default for Settings {
             play: PlayMode::Dice,
             die: DieKind::D20,
             count: 1,
-            pot_count: 1,
+            pot_count: 3,
             fuse: Fuse::Medium,
             choices: default_choices(),
         }
@@ -560,13 +563,27 @@ mod tests {
     }
 
     #[test]
-    fn pass_the_pot_counts_one_to_three() {
+    fn pass_the_pot_starts_with_three_bills_and_counts_one_to_three() {
         let d = pot();
         assert_eq!(d.page, Page::Pot, "opens on the game's own page");
-        assert_eq!(d.pot_count, 1);
-        assert_eq!(d.tipped(TipDir::Up).pot_count, 2);
-        assert_eq!(d.tipped(TipDir::Down).pot_count, 3);
-        assert_eq!(d.tipped(TipDir::Down).tipped(TipDir::Up).pot_count, 1);
+        assert_eq!(d.page.title(), "Bills in hand");
+        assert_eq!(d.pot_count, 3, "everyone starts with three bills");
+        assert_eq!(d.value().as_str(), "3");
+        assert_eq!(d.tipped(TipDir::Down).pot_count, 2);
+        assert_eq!(d.tipped(TipDir::Down).tipped(TipDir::Down).pot_count, 1);
+        assert_eq!(d.tipped(TipDir::Up).pot_count, 1, "wraps");
+        assert_eq!(d.tipped(TipDir::Down).tipped(TipDir::Up).pot_count, 3);
+    }
+
+    #[test]
+    fn the_bills_in_hand_are_the_dice_rolled() {
+        let s = Settings {
+            play: PlayMode::PassThePot,
+            pot_count: 2,
+            ..Settings::default()
+        };
+        assert_eq!(s.active(), (DieKind::PassThePot, 2));
+        assert_eq!(Settings::default().pot_count, 3);
     }
 
     #[test]
@@ -604,9 +621,9 @@ mod tests {
             count: 3,
             ..Settings::default()
         };
-        // Into Pass the Pot with two pots, then saved.
+        // Into Pass the Pot, down from three bills to two, then saved.
         let mut d = Draft::new(&s).tipped(TipDir::Right).tipped(TipDir::Up);
-        d = d.tipped(TipDir::Left).tipped(TipDir::Up);
+        d = d.tipped(TipDir::Left).tipped(TipDir::Down);
         d.commit(&mut s);
         assert_eq!(s.active(), (DieKind::PassThePot, 2));
         assert_eq!((s.die, s.count), (DieKind::D6, 3));
@@ -638,7 +655,7 @@ mod tests {
     fn nothing_changes_until_committed() {
         let s = Settings::default();
         let d = Draft::new(&s).tipped(TipDir::Right).tipped(TipDir::Up);
-        assert_eq!(d.active(), (DieKind::PassThePot, 1));
+        assert_eq!(d.active(), (DieKind::PassThePot, 3), "three bills to start");
         assert_eq!(s.active(), (DieKind::D20, 1));
     }
 
