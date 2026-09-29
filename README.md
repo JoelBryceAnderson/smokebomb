@@ -27,19 +27,29 @@ cargo run --features=simulator     # → http://localhost:3000, click "Throw"
 - [API](docs/API.md): REST endpoints
 - [Simulator spec](docs/SIM_SPEC.md): how the die must look and behave, 1:1 with the interactive mockup
 
-## Contributing
+## How it has evolved
 
-Branch from `main` and open a pull request; the template asks which packages
-you touched and how you tested. CI runs per package (firmware and simulator,
-server, mobile) and only when its paths change. Before pushing, the usual
-checks are:
+The repo started as a scaffold: all five packages existed, but only as
+skeletons. Since then the work has gone into making the firmware core real and
+provable in the simulator, in this order:
 
-```sh
-cargo fmt --all --check
-cargo test -p smokebomb-core       # plus any other crate you changed
-npx nx affected -t lint test       # everything that changed since main
-```
+1. **Scaffold**: the monorepo layout, firmware core + HAL, simulator, server
+   schema and mobile shells.
+2. **Simulator you can drive**: reachable from an iPad over the local network,
+   with a spec ([SIM_SPEC](docs/SIM_SPEC.md)) corrected against the interactive
+   mockup and its decisions (H1 to H7) recorded, and a check that catches a
+   stale web UI build.
+3. **Rendering and rolls**: roll format v2, the renderer (fonts, primitives,
+   boot, wake label, result screens), the simulator's world model, and golden
+   frames captured from the mockup that the firmware is tested against.
+4. **The menu**: hold to open, tip to navigate, hold to save, then multi-turn
+   swipes that cross several screens at once.
+5. **Smoke**: the live particle system.
+6. **Polish and fixes**: screens keep their orientation while a result is up
+   (H9), the menu always lands on a face that is in front, and a clock-change
+   panic is fixed.
 
-See [Getting started](docs/GETTING_STARTED.md) for per-package commands.
-
-This is a scaffold. Anything not built yet is listed at the end of the architecture doc.
+Still to come: real nRF54L15 drivers and DFU, BLE message framing, persisting
+settings to flash, server auth and roll storage, and real BLE/NFC in the phone
+app. The full list is at the end of the
+[architecture doc](docs/ARCHITECTURE.md#not-yet-built).
