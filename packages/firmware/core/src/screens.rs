@@ -360,66 +360,6 @@ pub fn draw_boom<A: AssetStore>(c: &mut Ctx<A>, t: f32) {
 /// How far menu content slides during a tip, canvas units.
 pub const TIP_SLIDE: f32 = 120.0;
 
-/// Where the highlighted dot is on each axis, in dot indices. Each axis is
-/// the two ends of a worm: at rest they meet on one dot, and during a tip
-/// the leading end runs ahead to the next dot and the trailing end catches
-/// up, so the highlight stretches across the gap and then settles.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Glide {
-    pub page: (f32, f32),
-    pub row: (f32, f32),
-}
-
-impl Glide {
-    pub fn rest(m: &Draft) -> Self {
-        Self::between(m, m, 1.0)
-    }
-
-    /// The highlight `u` (0–1) of the way from `from`'s dots to `to`'s.
-    pub fn between(from: &Draft, to: &Draft, u: f32) -> Self {
-        let row = |m: &Draft| m.row().map_or(0, |(i, _)| i);
-        Self {
-            page: worm(from.page_index(), to.page_index(), u),
-            row: worm(row(from), row(to), u),
-        }
-    }
-}
-
-fn worm(a: usize, b: usize, u: f32) -> (f32, f32) {
-    let ease = |x: f32| {
-        let x = x.clamp(0.0, 1.0);
-        x * x * (3.0 - 2.0 * x)
-    };
-    let (a, b) = (a as f32, b as f32);
-    (a + (b - a) * ease(u / 0.7), a + (b - a) * ease((u - 0.3) / 0.7))
-}
-
-/// A round-ended bar of `radius` from `a` to `b`: the highlight, thinning a
-/// little as it stretches.
-fn draw_worm<A: AssetStore>(c: &mut Ctx<A>, a: (f32, f32), b: (f32, f32), radius: f32, style: Style) {
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let len = sqrtf(dx * dx + dy * dy);
-    let r = radius * (1.0 - 0.2 * (len / (2.0 * radius + 4.0)).min(1.0));
-    if len < 0.01 {
-        c.painter.fill_circle(a.0, a.1, radius, style);
-        return;
-    }
-    c.painter.shape(
-        (
-            a.0.min(b.0) - r,
-            a.1.min(b.1) - r,
-            a.0.max(b.0) + r,
-            a.1.max(b.1) + r,
-        ),
-        style,
-        |x, y| {
-            let t = (((x - a.0) * dx + (y - a.1) * dy) / (len * len)).clamp(0.0, 1.0);
-            let (px, py) = (a.0 + dx * t - x, a.1 + dy * t - y);
-            sqrtf(px * px + py * py) - r
-        },
-    );
-}
-
 /// One menu page: status bar (setup and battery), title, ▲/▼, the value,
 /// and page dots. `battery` is 0–1.
 #[allow(clippy::too_many_arguments)]
@@ -431,14 +371,10 @@ pub fn draw_menu<A: AssetStore>(
     oy: f32,
     alpha: f32,
     scale: f32,
-    glide: Glide,
 ) {
     if alpha <= 0.0 {
         return;
     }
-    let rows = m.row().map(|(_, n)| n);
-    // Leave room for the vertical dots.
-    let wide = if rows.is_some() { 136.0 } else { 150.0 };
     c.shifted(ox, oy, scale, |c| {
         let status = Style::new(FG, 0.85 * alpha, 0.0);
         c.text_left(&m.setup().short_label(), -66.0, -66.0, 14, status);
@@ -461,14 +397,14 @@ pub fn draw_menu<A: AssetStore>(
                 name,
                 0.0,
                 2.0,
-                fit_px(name, 26, wide),
+                fit_px(name, 26, 150.0),
                 Style::new(FG, alpha, 10.0),
             );
             c.text(
                 value,
                 0.0,
                 27.0,
-                fit_px(value, 18, wide),
+                fit_px(value, 18, 150.0),
                 Style::new(FG, 0.72 * alpha, 0.0),
             );
         } else {
@@ -477,32 +413,17 @@ pub fn draw_menu<A: AssetStore>(
                 &value,
                 0.0,
                 12.0,
-                fit_px(&value, 52, wide),
+                fit_px(&value, 52, 150.0),
                 Style::new(FG, alpha, 14.0),
             );
         }
 
-        // Page dots along the bottom, one per page in the ring.
         let n = m.ring().len();
-        let dot = Style::new(FG, 0.35 * alpha, 0.0);
-        let lit = Style::new(FG, alpha, 0.0);
-        let at = |i: f32| ((i.min(n as f32 - 1.0) - (n as f32 - 1.0) / 2.0) * 14.0, 66.0);
         for i in 0..n {
-            let (x, y) = at(i as f32);
-            c.painter.fill_circle(x, y, 3.5, dot);
-        }
-        draw_worm(c, at(glide.page.0), at(glide.page.1), 3.5, lit);
-
-        // Value dots down the right edge. The next value is up, as tipping
-        // up goes.
-        if let Some(n) = rows {
-            let sp = (80.0 / (n as f32 - 1.0)).min(10.0);
-            let at = |i: f32| (71.0, 6.0 + ((n as f32 - 1.0) / 2.0 - i.min(n as f32 - 1.0)) * sp);
-            for i in 0..n {
-                let (x, y) = at(i as f32);
-                c.painter.fill_circle(x, y, 2.5, dot);
-            }
-            draw_worm(c, at(glide.row.0), at(glide.row.1), 2.5, lit);
+            let x = (i as f32 - (n as f32 - 1.0) / 2.0) * 14.0;
+            let a = if i == m.page_index() { 1.0 } else { 0.35 };
+            c.painter
+                .fill_circle(x, 66.0, 3.5, Style::new(FG, a * alpha, 0.0));
         }
     });
 }
@@ -630,30 +551,5 @@ mod tests {
     fn boot_timing_matches_the_spec() {
         assert!((LOOP_END - 1.95).abs() < 1e-6);
         assert!((BOOT_DURATION - 6.2).abs() < 1e-6);
-    }
-}
-
-#[cfg(test)]
-mod glide_tests {
-    use super::*;
-    use crate::menu::Settings;
-
-    #[test]
-    fn the_worm_stretches_then_settles() {
-        assert_eq!(worm(1, 3, 0.0), (1.0, 1.0));
-        assert_eq!(worm(1, 3, 1.0), (3.0, 3.0));
-        let (lead, trail) = worm(1, 3, 0.5);
-        assert!(lead > trail && trail > 1.0 && lead < 3.0);
-        let (lead, trail) = worm(3, 1, 0.5);
-        assert!(lead < trail);
-    }
-
-    #[test]
-    fn rows_skip_the_counts() {
-        let mut d = Draft::new(&Settings::default());
-        assert_eq!(d.page, crate::menu::Page::Count);
-        assert_eq!(d.row(), None);
-        d = d.tipped(crate::tips::TipDir::Left);
-        assert_eq!(d.row(), Some((5, 7))); // d20 of 7
     }
 }

@@ -247,7 +247,6 @@ The boot is interrupted by a throw or by opening the menu.
 | Value | y +12 | y 54.9 | 700, `fitPx(val, 52)` → ≤30 px, full alpha |
 | ▼ | y +46 | y 74.6 | 700, 13 → 7.5 px, 55% |
 | Page dots (3) | y +66, spacing 14, radius 3.5 | y 86.2, spacing 8.1, r 2.0 | current 100%, others 35% |
-| Value dots (X3) | x +71, centred on y +6, spacing min(10, 80 ÷ (n − 1)), radius 2.5 | x 41.1, r 1.4 | current 100%, others 35%; index 0 at the bottom |
 | Settings page: item name | y +2 | y 49.2 | 700, `fitPx(name, 26)` → ≤15 px |
 | Settings page: item value | y +27 | y 63.6 | 600, `fitPx(value, 18)` → ≤10.4 px, 72% |
 
@@ -276,8 +275,6 @@ The mockup has three pages: How many dice, Which die, Settings. The firmware add
 - **Setups are kept apart.** The dice setup (die, count) and each game's options are saved separately, so leaving Dice for Pass the Pot and coming back leaves `3d6` as it was.
 - **Pass the Pot is a mode, not a die.** It no longer appears under Which die, and the count no longer clamps. It is still rolled and signed as `pass_the_pot` (H6).
 - **Page dots** show the ring: four in Dice mode, three in a game mode.
-- **X3, Value dots.** Pages with a short list of values (Mode, Which die, Fuse length, Settings) also show a vertical column of dots down the right edge, one per value, in the same style as the page dots. The count pages don't, since the number is its own position. The first value is at the bottom and the next is above it, matching tip up = next. Values are drawn 14 canvas narrower on these pages to clear the column.
-- **X3, Dot animation.** The highlighted dot doesn't jump. On a tip it stretches into a rounded bar: the leading end reaches the next dot over the first 70% of the turn while the trailing end waits until 30%, then catches up. It thins by up to 20% while stretched. This runs on both axes (page dots for left/right, value dots for up/down), on the outgoing and incoming faces alike, and a wrap crosses the whole row.
 - **Hot Potato is not a roll.** See X2. The dice setup, Pass the Pot's count and the fuse length are all kept when switching.
 - **`Settings.modes` off** removes the Mode page and the die is always in Dice mode: the mockup's three-page menu. Most snapshot scenarios run this way; `menu-modes` runs the default menu.
 

@@ -337,28 +337,6 @@ impl Draft {
         self.ring().iter().position(|p| *p == self.page).unwrap_or(0)
     }
 
-    /// Where the selected value sits among its page's values, and how many
-    /// there are, for the vertical dots. Counts are their own position, so
-    /// those pages have none.
-    pub fn row(&self) -> Option<(usize, usize)> {
-        match self.page {
-            Page::Mode => PlayMode::ALL
-                .iter()
-                .position(|m| *m == self.play)
-                .map(|i| (i, PlayMode::ALL.len())),
-            Page::Die => DieKind::NUMERIC
-                .iter()
-                .position(|d| *d == self.die)
-                .map(|i| (i, DieKind::NUMERIC.len())),
-            Page::Fuse => Fuse::ALL
-                .iter()
-                .position(|f| *f == self.fuse)
-                .map(|i| (i, Fuse::ALL.len())),
-            Page::Settings => Some((self.setting as usize, SETTINGS.len())),
-            Page::Count | Page::Pot => None,
-        }
-    }
-
     /// The draft after a tip: left is the next page, right the previous; up
     /// is the next value, down the previous. Values wrap around.
     pub fn tipped(self, dir: TipDir) -> Self {
