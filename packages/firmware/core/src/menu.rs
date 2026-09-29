@@ -73,7 +73,7 @@ const REGULATORY: u8 = 8;
 
 /// What the Regulatory row shows, on two lines. FCC ID and IC are
 /// placeholders until the die is certified.
-const REGULATORY_LINES: [&str; 2] = ["FCC TBD · IC TBD", "CE · Model SB-1"];
+const REGULATORY_LINES: [&str; 2] = ["FCC ID: TBD", "IC: TBD · CE · SB-1"];
 
 /// The chosen option of every Settings item.
 pub type Choices = [u8; SETTINGS.len()];
@@ -839,8 +839,8 @@ mod tests {
     fn regulatory_follows_about_with_placeholder_numbers() {
         let d = settings_page().tipped(TipDir::Down);
         assert_eq!(d.setting().0, "Regulatory");
-        assert_eq!(d.setting_value().as_str(), "FCC TBD · IC TBD");
-        assert_eq!(d.setting_detail(), Some("CE · Model SB-1"));
+        assert_eq!(d.setting_value().as_str(), "FCC ID: TBD");
+        assert_eq!(d.setting_detail(), Some("IC: TBD · CE · SB-1"));
         assert_eq!(d.tipped(TipDir::Up).setting_detail(), None);
     }
 

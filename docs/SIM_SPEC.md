@@ -269,7 +269,7 @@ The mockup has three pages: How many dice, Which die, Settings. The firmware add
 | Die | Which die | d4, d6, d8, d10, d12, d20, d100 |
 | Pot | Bills in hand | 1–3 (starts at 3) |
 | Fuse | Fuse length | Short (10–20 s), Medium (20–40 s), Long (40–90 s) |
-| Settings | Settings | Brightness 70%; Haptics On; Smoke Full; Sleep after 2 min; Bluetooth On; Owner "Joel"; Power off "Tap to power off"; About (the firmware version and the die's id, `v0.1.0 · SB-A1B2`); Regulatory (`FCC TBD · IC TBD` over `CE · Model SB-1`, placeholders until certified, H14). **Decided (H11, H13):** a tap steps the selected item to its next value; Owner, Power off, About and Regulatory aren't editable. |
+| Settings | Settings | Brightness 70%; Haptics On; Smoke Full; Sleep after 2 min; Bluetooth On; Owner "Joel"; Power off "Tap to power off"; About (the firmware version and the die's id, `v0.1.0 · SB-A1B2`); Regulatory (`FCC ID: TBD` over `IC: TBD · CE · SB-1`, placeholders until certified, H14). **Decided (H11, H13):** a tap steps the selected item to its next value; Owner, Power off, About and Regulatory aren't editable. |
 
 - **X1, Mode page.** Mode sits one tip *right* of How many dice, so the dice flow is unchanged: hold, tip up or down for the count, one tip left for the die, hold to save.
 - **Setups are kept apart.** The dice setup (die, count) and each game's options are saved separately, so leaving Dice for Pass the Pot and coming back leaves `3d6` as it was.
