@@ -108,19 +108,30 @@ fn die_solid<A: AssetStore>(c: &mut Ctx<A>, die: DieKind, cx: f32, cy: f32, r: f
                 style,
             );
         }
-        // A ten-sider with a percent sign: the tens die of a percentile roll.
-        _ => {
-            kite(c, cx - 0.42 * r, cy, r * 0.8, style);
-            let (px, py, s) = (cx + 0.72 * r, cy, r * 0.42);
-            let ring = |dx: f32, dy: f32| (px + dx * s, py + dy * s);
-            let (a, b) = (ring(-0.42, -0.62), ring(0.42, 0.62));
-            let ro = s * 0.24;
-            c.painter.stroke_arc(a.0, a.1, ro, 0.0, TAU, LINE * 0.8, style);
-            c.painter.stroke_arc(b.0, b.1, ro, 0.0, TAU, LINE * 0.8, style);
-            c.painter
-                .stroke_polyline(&[ring(0.7, -1.0), ring(-0.7, 1.0)], LINE * 0.8, style);
-        }
+        // A ball: the hundred-sided die is a sphere of tiny facets.
+        _ => ball(c, cx, cy, r, style),
     }
+}
+
+/// A sphere drawn as a globe: its outline, an equator and two latitudes,
+/// and two tilted meridians.
+fn ball<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Style) {
+    const N: usize = 24;
+    let ellipse = |ox: f32, oy: f32, rx: f32, ry: f32| -> [P; N + 1] {
+        core::array::from_fn(|k| {
+            let a = TAU * k as f32 / N as f32;
+            (cx + (ox + cosf(a) * rx) * r, cy + (oy + sinf(a) * ry) * r)
+        })
+    };
+    let faint = Style::new(FG, style.alpha * 0.7, 0.0);
+    c.painter.stroke_arc(cx, cy, r * 0.98, 0.0, TAU, LINE, style);
+    let equator = ellipse(0.0, 0.0, 0.98, 0.3);
+    let north = ellipse(0.0, -0.55, 0.83, 0.2);
+    let south = ellipse(0.0, 0.55, 0.83, 0.2);
+    c.painter
+        .stroke_paths(&[&equator, &north, &south], LINE * 0.7, faint);
+    let mid = ellipse(0.0, 0.0, 0.42, 0.98);
+    c.painter.stroke_paths(&[&mid], LINE * 0.7, faint);
 }
 
 /// The pentagonal trapezohedron of a d10, seen from the side.
