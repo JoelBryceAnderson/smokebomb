@@ -15,6 +15,7 @@ extern crate std;
 pub mod display;
 pub mod font;
 pub mod gfx;
+pub mod icons;
 pub mod menu;
 pub mod motion;
 pub mod nest;
@@ -787,7 +788,8 @@ impl<P: Platform> Firmware<P> {
         let mode = *self.sm.mode();
         let up = self.display_up();
         let quarters = Face::ALL.map(|f| self.display_quarter(f));
-        let label = self.settings.setup().label();
+        let setup = self.settings.setup();
+        let label = setup.label();
         let battery = self.hw.power.battery()?.percent;
         let potato_view = if matches!(mode, Mode::Menu | Mode::Nest) {
             None
@@ -870,7 +872,7 @@ impl<P: Platform> Firmware<P> {
             match content {
                 FaceContent::Blank => {}
                 FaceContent::Boot { t, top } => screens::draw_boot(&mut c, face.index(), top, t),
-                FaceContent::Wake { alpha } => screens::draw_wake_label(&mut c, &label, alpha),
+                FaceContent::Wake { alpha } => screens::draw_wake_label(&mut c, setup, &label, alpha),
                 FaceContent::Result { alpha } => {
                     if let Some(r) = record {
                         screens::draw_result(&mut c, r, ui.special(), alpha);

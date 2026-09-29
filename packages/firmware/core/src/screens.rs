@@ -12,7 +12,7 @@ use smokebomb_shared::{DieKind, PotFace, RollRecord};
 use crate::display::{DUD, FG};
 use crate::font::{fit_px, Align, Fonts};
 use crate::gfx::{Painter, Style};
-use crate::menu::{Draft, Page};
+use crate::menu::{Draft, Page, Setup};
 use crate::nest::{ChargeView, ClockView, Label, NestFace, Screen};
 use crate::smoke::Special;
 
@@ -191,13 +191,15 @@ pub fn setup_label(die: DieKind, count: u8) -> String<24> {
     s
 }
 
-/// The wake/setup label, centred, at `alpha` (already including the 85%).
-pub fn draw_wake_label<A: AssetStore>(c: &mut Ctx<A>, label: &str, alpha: f32) {
+/// The wake/setup label: the setup's icon (a die's solid, a bomb, a banknote)
+/// above its name, at `alpha` (already including the 85%).
+pub fn draw_wake_label<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, label: &str, alpha: f32) {
+    crate::icons::draw_setup_icon(c, setup, 0.0, -21.0, 36.0, alpha);
     c.text(
         label,
         0.0,
-        0.0,
-        fit_px(label, 50, 150.0),
+        44.0,
+        fit_px(label, 28, 150.0),
         Style::new(FG, alpha, 8.0),
     );
 }
