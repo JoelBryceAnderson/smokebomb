@@ -157,6 +157,8 @@ pub struct Throw {
     pub outcome: Outcome,
     /// Who threw (0-based).
     pub player: u8,
+    /// The turn's points before this throw (what a bust throws away).
+    pub turn_before: u16,
 }
 
 /// What banking did.
@@ -235,6 +237,7 @@ impl Pigs {
             poses,
             outcome,
             player: self.current,
+            turn_before: self.turn,
         };
         if self.winner.is_none() {
             match outcome {

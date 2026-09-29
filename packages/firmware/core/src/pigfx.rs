@@ -262,7 +262,15 @@ pub enum Scene {
     Tumbling(f32),
     /// Landed: at the moment of landing they were `land` seconds into the
     /// tumble, and `u` (0–1) of the way to resting in these poses.
-    Settling { land: f32, u: f32, poses: [Pose; 2] },
+    ///
+    /// `shrink` (0–1) then moves them up and makes them smaller, to leave
+    /// room for the score.
+    Settling {
+        land: f32,
+        u: f32,
+        shrink: f32,
+        poses: [Pose; 2],
+    },
 }
 
 struct Disc {
@@ -278,11 +286,17 @@ struct Disc {
 pub fn draw(p: &mut Painter, scene: Scene, phase: f32, alpha: f32) {
     let states = match scene {
         Scene::Tumbling(t) => [tumble(0, t + phase), tumble(1, t + phase)],
-        Scene::Settling { land, u, poses } => [
+        Scene::Settling { land, u, poses, .. } => [
             settle(0, tumble(0, land + phase), poses[0], u),
             settle(1, tumble(1, land + phase), poses[1], u),
         ],
     };
+    let shrink = match scene {
+        Scene::Settling { shrink, .. } => shrink,
+        Scene::Tumbling(_) => 0.0,
+    };
+    let scale = SCALE * (1.0 - 0.45 * shrink);
+    let lift = 66.0 * shrink;
     let (ce, se) = (cosf(ELEVATION), sinf(ELEVATION));
     let mut discs: [Disc; 32] = core::array::from_fn(|_| Disc {
         depth: 0.0,
@@ -298,9 +312,9 @@ pub fn draw(p: &mut Painter, scene: Scene, phase: f32, alpha: f32) {
             let (wx, wy, wz) = (w[0] + st.pos[0], w[1] + st.pos[1], w[2] + st.pos[2]);
             discs[n] = Disc {
                 depth: wy * se + wz * ce,
-                x: CENTRE.0 + wx * SCALE,
-                y: CENTRE.1 + 10.0 - (wy * ce - wz * se) * SCALE,
-                r: r * SCALE,
+                x: CENTRE.0 + wx * scale,
+                y: CENTRE.1 + 10.0 - lift - (wy * ce - wz * se) * scale,
+                r: r * scale,
                 part,
             };
             n += 1;

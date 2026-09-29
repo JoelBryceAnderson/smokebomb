@@ -127,7 +127,7 @@ fn an_ordinary_roll_has_no_effect() {
 }
 
 /// Pig Toss: a throw draws two poses (always two), a tap banks the
-/// turn and passes the die, and the signed roll chain isn't touched.
+/// turn and passes the die (on the top screen only), and the signed roll chain isn't touched.
 #[test]
 fn pig_toss_throws_two_pigs_and_a_tap_banks() {
     use smokebomb_core::menu::{PlayMode, Settings};
@@ -171,7 +171,15 @@ fn pig_toss_throws_two_pigs_and_a_tap_banks() {
     assert_eq!(fw.pigs().turn(), 40);
     assert!(fw.last_roll().is_none(), "a pig throw isn't a signed roll");
 
-    // A tap banks it and passes to player 2.
+    // A tap on a side screen does nothing: only the top one banks.
+    sim.lock().touch_mask = 1 << Face::PosX.index();
+    run(&mut fw, 2);
+    sim.lock().touch_mask = 0;
+    run(&mut fw, 2);
+    assert_eq!(fw.pigs().turn(), 40, "not banked by a tap on the side");
+    assert_eq!(fw.pigs().current(), 0);
+
+    // A tap on the top screen banks it and passes to player 2.
     sim.lock().touch_mask = 1 << Face::PosY.index();
     run(&mut fw, 2);
     sim.lock().touch_mask = 0;

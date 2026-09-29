@@ -357,8 +357,11 @@ impl<P: Platform> Firmware<P> {
                     _ => {}
                 }
             }
+            // Only a tap on the top screen banks, so a hand resting on the
+            // die can't pass the turn by accident.
             if event == Event::Tap
                 && self.settings.play() == PlayMode::PigToss
+                && self.touch_face == self.up_face
                 && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. })
             {
                 self.bank_pigs()?;
@@ -898,6 +901,8 @@ impl<P: Platform> Firmware<P> {
         };
         // Pig Toss: the pigs tumble while the die is in the air, and settle
         // into their poses once it lands, for as long as the result is up.
+        let since_landing = now.saturating_sub(self.pig_landed_ms) as f32 / 1000.0;
+        let players = self.pigs.players();
         let pig_scene = if !pigs_on || matches!(mode, Mode::Menu | Mode::Nest | Mode::Off) {
             None
         } else if matches!(mode, Mode::Shaking | Mode::Airborne | Mode::Settling) {
@@ -908,7 +913,10 @@ impl<P: Platform> Firmware<P> {
                 .filter(|_| self.ui.showing_result(now))
                 .map(|t| pigfx::Scene::Settling {
                     land: self.pig_land,
-                    u: now.saturating_sub(self.pig_landed_ms) as f32 / 1000.0 / pigfx::SETTLE_S,
+                    u: since_landing / pigfx::SETTLE_S,
+                    shrink: ease_inout(
+                        (since_landing - screens::pig_score::SHRINK_AT) / screens::pig_score::SHRINK_S,
+                    ),
                     poses: t.poses,
                 })
         };
@@ -1000,7 +1008,8 @@ impl<P: Platform> Firmware<P> {
                 FaceContent::Result { alpha } => {
                     if let Some(t) = pigs_throw {
                         let banked = pigs.scores()[t.player as usize];
-                        screens::draw_pigs_text(&mut c, &t, pigs.turn(), banked, alpha);
+                        let next = (t.player + 1) % players;
+                        screens::draw_pig_score(&mut c, &t, since_landing, banked, next, alpha);
                     } else if let Some(r) = record {
                         screens::draw_result(&mut c, r, ui.special(), alpha);
                     }
@@ -1144,6 +1153,12 @@ fn page_frame(m: &MenuSession, face: Face) -> Option<Frame> {
 /// (the held face pointing up, SIM_SPEC H7).
 fn page_quarter(frame: &Frame, face: Face, live: &TextOrientation) -> orientation::Quarter {
     orientation::upright(face, frame.up).unwrap_or_else(|| live.quarter(face))
+}
+
+/// 0 to 1 with a soft start and end; clamped outside.
+fn ease_inout(u: f32) -> f32 {
+    let u = u.clamp(0.0, 1.0);
+    u * u * (3.0 - 2.0 * u)
 }
 
 fn fb_of<'a>(painter: &'a mut Painter<'_>) -> &'a mut Framebuffer {

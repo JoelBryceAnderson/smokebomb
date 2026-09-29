@@ -539,7 +539,7 @@ fn pigs_scenario(name: &str, throw: Input) {
     run_timeline(
         name,
         run,
-        &[10.6, 11.0, 11.4, 11.8, 12.2, 12.7, 15.0],
+        &[10.7, 11.5, 12.2, 12.7, 13.1, 13.6, 14.3, 15.6, 17.0],
         vec![(THROW_AT, throw)],
     );
 }

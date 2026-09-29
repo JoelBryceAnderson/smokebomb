@@ -312,28 +312,131 @@ fn draw_pot_tokens<A: AssetStore>(c: &mut Ctx<A>, values: &[u8], value: u8, alph
 
 // ---------- Pig Toss ----------
 
-/// What a throw says under the pigs: its name, what it scored, the turn so
-/// far and the player's banked score. The pigs themselves are
-/// [`crate::pigfx`]. A bust dims to the dud colour.
-pub fn draw_pigs_text<A: AssetStore>(c: &mut Ctx<A>, throw: &Throw, turn: u16, banked: u16, alpha: f32) {
-    let value = if throw.outcome == Outcome::Bust { DUD } else { FG };
-    let mut who: String<24> = String::new();
-    let _ = write!(who, "P{} · {banked}", throw.player + 1);
-    c.text(&who, 0.0, -66.0, 15, Style::new(value, alpha * 0.7, 8.0));
-    let label = throw_label(throw.poses);
-    c.text(
-        &label,
-        0.0,
-        36.0,
-        fit_px(&label, 22, 150.0),
-        Style::new(value, alpha, 8.0),
-    );
-    let mut line: String<24> = String::new();
-    let _ = match throw.outcome {
-        Outcome::Bust => write!(line, "turn lost"),
-        Outcome::Score(p) => write!(line, "+{p} · turn {turn}"),
-    };
-    c.text(&line, 0.0, 60.0, 16, Style::new(value, alpha * 0.7, 8.0));
+/// When each part of the score sequence starts, in seconds after the die
+/// lands. The pigs settle first ([`crate::pigfx::SETTLE_S`]).
+pub mod pig_score {
+    /// The pigs move up and shrink.
+    pub const SHRINK_AT: f32 = 0.9;
+    pub const SHRINK_S: f32 = 0.4;
+    /// The throw's points pop in.
+    pub const POP_AT: f32 = 1.0;
+    pub const LABEL_AT: f32 = 1.3;
+    /// The turn's total counts up.
+    pub const TURN_AT: f32 = 1.8;
+    pub const COUNT_S: f32 = 0.8;
+    /// The banked score, then the prompt in its place.
+    pub const BANKED_AT: f32 = 2.6;
+    pub const PROMPT_AT: f32 = 3.4;
+}
+
+/// 0 before `at`, rising to 1 over `over` seconds.
+fn ramp(t: f32, at: f32, over: f32) -> f32 {
+    ((t - at) / over).clamp(0.0, 1.0)
+}
+
+/// What a throw says once the pigs have settled, `t` seconds after the die
+/// landed: the throw's points pop in big, the turn's total counts up to
+/// them, and then the screen says what to do next. The pigs themselves are
+/// [`crate::pigfx`]. A bust dims to the dud colour and passes the die by
+/// itself, so it only asks for the next player to shake.
+pub fn draw_pig_score<A: AssetStore>(
+    c: &mut Ctx<A>,
+    throw: &Throw,
+    t: f32,
+    banked: u16,
+    next_player: u8,
+    alpha: f32,
+) {
+    use pig_score::*;
+    let bust = throw.outcome == Outcome::Bust;
+    let value = if bust { DUD } else { FG };
+    let style = |a: f32, glow: f32| Style::new(value, alpha * a, glow);
+
+    // The big number, popping in and settling.
+    let pop = ramp(t, POP_AT, 0.35);
+    if pop > 0.0 {
+        let mut big: String<8> = String::new();
+        let _ = match throw.outcome {
+            Outcome::Bust => write!(big, "BUST"),
+            Outcome::Score(p) => write!(big, "+{p}"),
+        };
+        let px = big_size(big.len()).min(52.0) * 0.8;
+        let over = 1.0 - pop;
+        c.text(
+            &big,
+            0.0,
+            -12.0,
+            roundf(px * (1.0 + 0.7 * over * over)) as u16,
+            style((pop * 3.0).min(1.0), 14.0),
+        );
+    }
+
+    let label_a = ramp(t, LABEL_AT, 0.25);
+    if label_a > 0.0 {
+        let mut label: String<32> = String::new();
+        let _ = match throw.outcome {
+            Outcome::Bust if throw.turn_before > 0 => write!(label, "Lost {}", throw.turn_before),
+            Outcome::Bust => write!(label, "Nothing to lose"),
+            Outcome::Score(_) => write!(label, "{}", throw_label(throw.poses)),
+        };
+        c.text(
+            &label,
+            0.0,
+            13.0,
+            fit_px(&label, 17, 150.0),
+            style(label_a * 0.85, 6.0),
+        );
+    }
+
+    let turn_a = ramp(t, TURN_AT, 0.25);
+    if turn_a > 0.0 {
+        let mut line: String<24> = String::new();
+        let _ = match throw.outcome {
+            Outcome::Bust => write!(line, "Pass to P{}", next_player + 1),
+            Outcome::Score(p) => {
+                // Counts up from what the turn was to what it is now.
+                let k = ramp(t, TURN_AT, COUNT_S);
+                let eased = 1.0 - (1.0 - k) * (1.0 - k);
+                let shown = throw.turn_before + roundf(p as f32 * eased) as u16;
+                write!(line, "Turn {shown}")
+            }
+        };
+        c.text(&line, 0.0, 36.0, fit_px(&line, 24, 150.0), style(turn_a, 10.0));
+    }
+
+    // The bottom row: who has what, then what to do next.
+    let prompt = ramp(t, PROMPT_AT, 0.3);
+    let banked_a = ramp(t, BANKED_AT, 0.25) * (1.0 - prompt);
+    if banked_a > 0.0 && !bust {
+        let mut who: String<24> = String::new();
+        let _ = write!(who, "P{} · {banked} banked", throw.player + 1);
+        c.text(&who, 0.0, 66.0, 14, style(banked_a * 0.7, 0.0));
+    }
+    if prompt > 0.0 {
+        if bust {
+            let mut line: String<24> = String::new();
+            let _ = write!(line, "P{}: shake to roll", next_player + 1);
+            c.text(
+                &line,
+                0.0,
+                66.0,
+                fit_px(&line, 15, 150.0),
+                style(prompt * 0.9, 6.0),
+            );
+        } else {
+            c.text("Shake to roll again", 0.0, 56.0, 14, style(prompt * 0.7, 0.0));
+            // The action that matters breathes a little.
+            let breathe = 0.85 + 0.15 * sinf((t - PROMPT_AT) * 4.0);
+            let line = "Tap top to bank & pass";
+            c.text(
+                line,
+                0.0,
+                72.0,
+                fit_px(line, 15, 150.0),
+                style(prompt * breathe, 6.0),
+            );
+        }
+    }
 }
 
 // ---------- Hot Potato ----------
