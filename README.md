@@ -43,7 +43,8 @@ provable in the simulator, in this order:
    boot, wake label, result screens), the simulator's world model, and golden
    frames captured from the mockup that the firmware is tested against.
 4. **The menu**: hold to open, tip to navigate, hold to save, then multi-turn
-   swipes that cross several screens at once.
+   swipes that cross several screens at once, then tips made robust to real
+   hands.
 5. **Smoke**: the live particle system.
 6. **Polish and fixes**: screens keep their orientation while a result is up
    (H9), the menu always lands on a face that is in front, and a clock-change
