@@ -27,4 +27,19 @@ cargo run --features=simulator     # → http://localhost:3000, click "Throw"
 - [API](docs/API.md): REST endpoints
 - [Simulator spec](docs/SIM_SPEC.md): how the die must look and behave, 1:1 with the interactive mockup
 
+## Contributing
+
+Branch from `main` and open a pull request; the template asks which packages
+you touched and how you tested. CI runs per package (firmware and simulator,
+server, mobile) and only when its paths change. Before pushing, the usual
+checks are:
+
+```sh
+cargo fmt --all --check
+cargo test -p smokebomb-core       # plus any other crate you changed
+npx nx affected -t lint test       # everything that changed since main
+```
+
+See [Getting started](docs/GETTING_STARTED.md) for per-package commands.
+
 This is a scaffold. Anything not built yet is listed at the end of the architecture doc.
