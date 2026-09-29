@@ -345,7 +345,8 @@ impl<P: Platform> Firmware<P> {
         }
         if self.potato.is_lit() {
             let heat = self.potato.heat(now);
-            self.smoke.smolder(SMOLDER_MIN + (SMOLDER_MAX - SMOLDER_MIN) * heat);
+            self.smoke
+                .smolder(SMOLDER_MIN + (SMOLDER_MAX - SMOLDER_MIN) * heat);
         }
         let after = *self.sm.mode();
         self.update_sleep(now, input, &after)?;

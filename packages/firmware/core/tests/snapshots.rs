@@ -746,7 +746,8 @@ fn a_scripted_throw_reveals_after_landing() {
 fn hot_potato_round() {
     // Shake to light the fuse (a 15 s fuse from the TRNG), watch it heat up,
     // and go off.
-    let run = Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::HotPotato);
+    let run =
+        Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::HotPotato);
     run.sim.lock().rng_script.push_back(1 << 31);
     run_timeline(
         "hot-potato",
