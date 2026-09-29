@@ -25,27 +25,6 @@ export interface FaceDef {
 export function addScrews(die: THREE.Group, faces: FaceDef[], half: number, material: THREE.Material) {
   const ringGeo = new THREE.RingGeometry(HEX_R, HEX_R + HEX_GAP, 6, 1);
   const slotGeo = new THREE.PlaneGeometry(1.8 * MM, 0.2 * MM);
-  // Depth cues so the inlays read as cut into the metal: the head sits a touch
-  // darker, a soft shadow falls just outside the groove and slot, and a thin
-  // lit lip catches the light on the groove's outer edge.
-  const rimOut = HEX_R + HEX_GAP;
-  const tint = (color: number, opacity: number) =>
-    new THREE.MeshBasicMaterial({
-      color,
-      opacity,
-      transparent: true,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
-    });
-  const sunkMat = tint(0x000000, 0.14);
-  const shadowMat = tint(0x000000, 0.3);
-  const lipMat = tint(0xffffff, 0.2);
-  const headGeo = new THREE.CircleGeometry(HEX_R, 6);
-  const shadowGeo = new THREE.RingGeometry(rimOut, rimOut + 0.14 * MM, 6, 1);
-  const lipGeo = new THREE.RingGeometry(rimOut + 0.14 * MM, rimOut + 0.2 * MM, 6, 1);
-  const slotShadowGeo = new THREE.PlaneGeometry(1.8 * MM + 0.1 * MM, 0.2 * MM + 0.2 * MM);
   for (const d of faces) {
     for (const [sx, sy] of [
       [1, 1],
@@ -55,16 +34,7 @@ export function addScrews(die: THREE.Group, faces: FaceDef[], half: number, mate
     ]) {
       const g = new THREE.Group();
       const ring = new THREE.Mesh(ringGeo, material);
-      const flat = Math.atan2(-sy, -sx) - Math.PI / 6;
-      ring.rotation.z = flat;
-      const head = new THREE.Mesh(headGeo, sunkMat);
-      const shadow = new THREE.Mesh(shadowGeo, shadowMat);
-      const lip = new THREE.Mesh(lipGeo, lipMat);
-      head.rotation.z = shadow.rotation.z = lip.rotation.z = flat;
-      const slotShadow = new THREE.Mesh(slotShadowGeo, shadowMat);
-      slotShadow.rotation.z = Math.atan2(-sy, -sx);
-      head.position.z = -0.00005;
-      g.add(head, shadow, lip, slotShadow);
+      ring.rotation.z = Math.atan2(-sy, -sx) - Math.PI / 6;
       const slot = new THREE.Mesh(slotGeo, material);
       slot.rotation.z = Math.atan2(-sy, -sx);
       slot.position.z = 0.0002;
