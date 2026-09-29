@@ -326,17 +326,21 @@ mod tests {
 
     use smokebomb_firmware::board;
     use smokebomb_hal::Face;
-    use smokebomb_hal_simulator::world::{SpinAxis, TipDir, DEFAULT_VIEWER_RIGHT};
+    use smokebomb_hal_simulator::world::{Hand, SpinAxis, TipDir, DEFAULT_VIEWER_RIGHT};
 
     impl Rig {
         fn new() -> Self {
+            Self::with_world(World::new())
+        }
+
+        fn with_world(world: World) -> Self {
             let sim = board::SimHandle::new();
             sim.lock().manual_time_ms = Some(0);
             let fw = board::boot(&sim).unwrap();
             Self {
                 sim,
                 fw,
-                world: World::new(),
+                world,
                 t: 0.0,
                 menu_was_open: false,
             }
@@ -458,6 +462,136 @@ mod tests {
             .map(|&f| rig.fw.orientation().quarter(f))
             .collect();
         assert_eq!(shown, live);
+    }
+
+    /// The page is on the face in front of the viewer.
+    fn assert_page_in_front(rig: &Rig, what: &str) {
+        let toward_viewer = DEFAULT_VIEWER_RIGHT.cross(glam::Vec3::Y);
+        let front = rig.fw.menu_front().expect("menu open");
+        let n = rig.world.pose().rotation * smokebomb_hal_simulator::world::face_normal(front);
+        assert!(
+            n.dot(toward_viewer) > 0.9,
+            "{what}: the page is on {front:?}, which isn't in front"
+        );
+    }
+
+    fn firmware_dir(dir: TipDir) -> smokebomb_firmware::smokebomb_core::tips::TipDir {
+        use smokebomb_firmware::smokebomb_core::tips::TipDir as F;
+        match dir {
+            TipDir::Up => F::Up,
+            TipDir::Down => F::Down,
+            TipDir::Left => F::Left,
+            TipDir::Right => F::Right,
+        }
+    }
+
+    impl Rig {
+        /// Hold +Z until the menu opens, then let go.
+        fn open_menu(&mut self) {
+            self.sim.lock().touch_mask = 1 << Face::PosZ.index();
+            while self.fw.menu_front().is_none() {
+                self.run(DT);
+            }
+            self.sim.lock().touch_mask = 0;
+        }
+
+        /// Wait until the die can move again, then `extra` seconds.
+        fn wait_then(&mut self, extra: f64) {
+            while !self.world.twist(0.0) {
+                self.run(DT);
+            }
+            self.run(0.35 + extra); // the zero twist, then the pause
+        }
+    }
+
+    /// A real hand: tremor, a gyro bias, tips that are off-axis and too long
+    /// or short, squared up afterwards to look at the page. Every tip still
+    /// counts once and the page stays on the face in front.
+    #[test]
+    fn sloppy_hands_keep_the_page_in_front() {
+        for seed in 0..SLOPPY_SEEDS {
+            sloppy_hands(seed);
+        }
+    }
+
+    const SLOPPY_SEEDS: u64 = 8;
+
+    fn sloppy_hands(seed: u64) {
+        let mut rig = Rig::with_world(World::with_seed(seed));
+        rig.run(7.0);
+        rig.world.set_hand(Hand {
+            tremor_dps: 10.0,
+            gyro_bias_dps: [1.5, -1.0, 0.8],
+            tip_axis_error_deg: 15.0,
+            tip_angle_error_deg: 15.0,
+            resquare: true,
+        });
+        rig.open_menu();
+        rig.wait_then(0.2);
+        let mut expected = *rig.fw.menu_draft().unwrap();
+        let dirs = [
+            TipDir::Left,
+            TipDir::Up,
+            TipDir::Up,
+            TipDir::Right,
+            TipDir::Down,
+            TipDir::Left,
+            TipDir::Left,
+            TipDir::Up,
+            TipDir::Right,
+            TipDir::Down,
+            TipDir::Down,
+            TipDir::Left,
+            TipDir::Up,
+            TipDir::Right,
+            TipDir::Up,
+            TipDir::Left,
+        ];
+        for (i, dir) in dirs.into_iter().enumerate() {
+            assert!(rig.world.tip(dir, DEFAULT_VIEWER_RIGHT));
+            expected = expected.tipped(firmware_dir(dir));
+            rig.wait_then([0.1, 0.4, 0.2, 0.6][i % 4]);
+            let what = format!("seed {seed}, tip {i} ({dir:?})");
+            assert_page_in_front(&rig, &what);
+            assert_eq!(*rig.fw.menu_draft().unwrap(), expected, "{what}");
+        }
+    }
+
+    /// Twisting the die about the line of sight isn't a tip: the setup
+    /// doesn't change, the page stays in front the right way up, and tips
+    /// afterwards still land where they should.
+    #[test]
+    fn a_twist_is_not_a_tip() {
+        use smokebomb_firmware::smokebomb_core::orientation;
+
+        let mut rig = Rig::new();
+        rig.run(7.0);
+        rig.open_menu();
+        rig.wait_then(0.2);
+        let mut expected = *rig.fw.menu_draft().unwrap();
+        for degrees in [30.0, -30.0, 90.0] {
+            assert!(rig.world.twist(degrees));
+            rig.wait_then(0.5);
+            assert_page_in_front(&rig, &format!("twist {degrees}°"));
+            assert_eq!(*rig.fw.menu_draft().unwrap(), expected, "twist {degrees}°");
+        }
+        // Rolled a quarter turn: the page is drawn upright for where the sky
+        // now is.
+        let front = rig.fw.menu_front().unwrap();
+        let sky = rig.fw.orientation().quarter(front);
+        assert_eq!(
+            rig.fw.menu_page_quarter(front),
+            Some(sky),
+            "upright after the roll"
+        );
+        let _ = orientation::Quarter::R0;
+        for dir in [TipDir::Left, TipDir::Up, TipDir::Right, TipDir::Down] {
+            assert!(rig.world.tip(dir, DEFAULT_VIEWER_RIGHT));
+            expected = expected.tipped(firmware_dir(dir));
+            rig.wait_then(0.3);
+            assert_page_in_front(&rig, &format!("{dir:?} after the roll"));
+            assert_eq!(*rig.fw.menu_draft().unwrap(), expected, "{dir:?} after the roll");
+        }
     }
 
     /// Tips in quick succession, each starting the moment the last one
