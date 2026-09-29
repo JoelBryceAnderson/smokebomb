@@ -3,8 +3,14 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { PANEL_SIZE, Pose, SpinAxis, TipDirection } from "./protocol";
-import { FINISHES, FinishKey, GLOW_INTENSITY, LIGHTING, SCREW_DARK } from "./finishes";
-import { addScrews, addSeam, makeEtching, ENGRAVE_GLSL, ENGRAVE_NORMAL } from "./shell";
+import {
+  FINISHES,
+  FinishKey,
+  GLOW_INTENSITY,
+  LIGHTING,
+  SCREW_DARK,
+} from "./finishes";
+import { addContacts, addSeam, CHARGING_FACE, makeEtching } from "./shell";
 
 // Mockup scale (SIM_SPEC A1): 1 scene unit = 13.25 mm, 34 mm die, 2.5 mm edges.
 const MM = 1 / 13.25;
@@ -18,7 +24,10 @@ const WINDOW_RADIUS = 0.19;
 
 // Each face's mesh rotation, as in the mockup, so canvas axes match the
 // firmware's `orientation::BASES`.
-const FACE_DEFS: { n: [number, number, number]; rot: [number, number, number] }[] = [
+const FACE_DEFS: {
+  n: [number, number, number];
+  rot: [number, number, number];
+}[] = [
   { n: [1, 0, 0], rot: [0, Math.PI / 2, 0] },
   { n: [-1, 0, 0], rot: [0, -Math.PI / 2, 0] },
   { n: [0, 1, 0], rot: [-Math.PI / 2, 0, 0] },
@@ -73,7 +82,14 @@ const SWIPE_PX = 36;
 /** Multi-turn spin rate: a quarter turn per ~120 px of drag. */
 const SPIN_RAD_PER_PX = 0.013;
 
-function roundRectPath(c: CanvasRenderingContext2D | THREE.Path, x: number, y: number, w: number, h: number, r: number) {
+function roundRectPath(
+  c: CanvasRenderingContext2D | THREE.Path,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
   c.moveTo(x + r, y);
   c.lineTo(x + w - r, y);
   c.quadraticCurveTo(x + w, y, x + w, y + r);
@@ -86,13 +102,40 @@ function roundRectPath(c: CanvasRenderingContext2D | THREE.Path, x: number, y: n
 }
 
 export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
-  { onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey },
+  {
+    onTouch,
+    onRotate,
+    swipeToTip,
+    onTip,
+    multiTurn,
+    onSpin,
+    onSpinEnd,
+    onMultiKey,
+  },
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const api = useRef<DieViewHandle | null>(null);
-  const cbs = useRef({ onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey });
-  cbs.current = { onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey };
+  const cbs = useRef({
+    onTouch,
+    onRotate,
+    swipeToTip,
+    onTip,
+    multiTurn,
+    onSpin,
+    onSpinEnd,
+    onMultiKey,
+  });
+  cbs.current = {
+    onTouch,
+    onRotate,
+    swipeToTip,
+    onTip,
+    multiTurn,
+    onSpin,
+    onSpinEnd,
+    onMultiKey,
+  };
 
   useImperativeHandle(ref, () => ({
     drawFrames: (f) => api.current?.drawFrames(f),
@@ -133,7 +176,10 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       sh.uniforms.heatOn = heat.on;
       sh.uniforms.heatShift = heat.shift;
       sh.vertexShader = sh.vertexShader
-        .replace("#include <common>", "#include <common>\nvarying vec3 vHeatPos;\nvarying vec3 vObjPos;\nvarying vec3 vObjNrm;")
+        .replace(
+          "#include <common>",
+          "#include <common>\nvarying vec3 vHeatPos;\nvarying vec3 vObjPos;\nvarying vec3 vObjNrm;",
+        )
         .replace(
           "#include <begin_vertex>",
           "#include <begin_vertex>\nvHeatPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvObjPos = transformed;\nvObjNrm = normal;",
@@ -146,13 +192,11 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
           varying vec3 vObjPos;
           varying vec3 vObjNrm;
           uniform float heatOn;
-          uniform float heatShift;
-          ${ENGRAVE_GLSL}`,
+          uniform float heatShift;`,
         )
         .replace(
           "#include <normal_fragment_maps>",
           `#include <normal_fragment_maps>
-          ${ENGRAVE_NORMAL}
           if (heatOn > 0.5) {
             float ndv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
             float t = fract(ndv * 0.9 + heatShift + dot(vHeatPos, vec3(0.05, 0.035, 0.045))) * 5.0;
@@ -167,7 +211,10 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
           }`,
         );
     };
-    const shell = new THREE.Mesh(new RoundedBoxGeometry(HALF * 2, HALF * 2, HALF * 2, 6, EDGE_RADIUS), shellMat);
+    const shell = new THREE.Mesh(
+      new RoundedBoxGeometry(HALF * 2, HALF * 2, HALF * 2, 6, EDGE_RADIUS),
+      shellMat,
+    );
     die.add(shell);
 
     const key = new THREE.DirectionalLight(0xffffff, LIGHTING.day.key);
@@ -175,16 +222,21 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     const ambient = new THREE.AmbientLight(0xffffff, LIGHTING.day.ambient);
     scene.add(key, ambient);
 
-    // Screws: 4 per face, and the charging face's etching.
+    // The charging face's four contacts, its etching and the lid seam.
     const darkMat = new THREE.MeshStandardMaterial({
       ...SCREW_DARK,
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2,
     });
-    addScrews(die, FACE_DEFS, HALF, darkMat);
+    const contactMat = new THREE.MeshStandardMaterial({ envMap });
+    addContacts(die, FACE_DEFS[CHARGING_FACE], HALF, darkMat, contactMat);
     addSeam(die, HALF, EDGE_RADIUS, darkMat);
-    const etching = makeEtching(HALF, renderer.capabilities.getMaxAnisotropy(), FACE_DEFS);
+    const etching = makeEtching(
+      HALF,
+      renderer.capabilities.getMaxAnisotropy(),
+      FACE_DEFS,
+    );
     etching.mesh.material.polygonOffset = true;
     etching.mesh.material.polygonOffsetFactor = -1;
     etching.mesh.material.polygonOffsetUnits = -1;
@@ -192,7 +244,9 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     let serial = "000042";
     etching.update(serial);
     // The etching font loads late; redraw once it is there.
-    document.fonts?.load('600 20px "Space Grotesk"').then(() => etching.redraw());
+    document.fonts
+      ?.load('600 20px "Space Grotesk"')
+      .then(() => etching.redraw());
     let glassOn = false;
     let isNight = false;
     const applyGlass = () => {
@@ -205,12 +259,20 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     const dieZ = new THREE.Vector3();
 
     const windowShape = new THREE.Shape();
-    roundRectPath(windowShape, -WINDOW_HALF, -WINDOW_HALF, WINDOW_HALF * 2, WINDOW_HALF * 2, WINDOW_RADIUS);
+    roundRectPath(
+      windowShape,
+      -WINDOW_HALF,
+      -WINDOW_HALF,
+      WINDOW_HALF * 2,
+      WINDOW_HALF * 2,
+      WINDOW_RADIUS,
+    );
     const windowGeo = new THREE.ShapeGeometry(windowShape, 12);
     // UVs span the full ±1 u face square, like the mockup's face canvas.
     const pos = windowGeo.attributes.position;
     const uv = windowGeo.attributes.uv;
-    for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + 1) / 2, (pos.getY(i) + 1) / 2);
+    for (let i = 0; i < pos.count; i++)
+      uv.setXY(i, (pos.getX(i) + 1) / 2, (pos.getY(i) + 1) / 2);
 
     const faces = FACE_DEFS.map((d) => {
       const out = document.createElement("canvas");
@@ -225,7 +287,10 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       const texture = new THREE.CanvasTexture(out);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      const flat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
+      const flat = new THREE.MeshBasicMaterial({
+        map: texture,
+        toneMapped: false,
+      });
       // Screen glass (sapphire window), design brief §4: near-black, glossy, with the screen as emissive light.
       const glass = new THREE.MeshPhysicalMaterial({
         color: 0x1c1c22,
@@ -237,7 +302,10 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
         emissiveMap: texture,
         envMap,
       });
-      const mesh = new THREE.Mesh<THREE.BufferGeometry, THREE.Material>(windowGeo, flat);
+      const mesh = new THREE.Mesh<THREE.BufferGeometry, THREE.Material>(
+        windowGeo,
+        flat,
+      );
       mesh.rotation.set(...d.rot);
       mesh.position.set(...d.n).multiplyScalar(HALF + 0.002);
       die.add(mesh);
@@ -254,7 +322,11 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     sg.fillRect(0, 0, 128, 128);
     const shadow = new THREE.Mesh(
       new THREE.PlaneGeometry(3.6 * K, 3.6 * K),
-      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shadowCanvas), transparent: true, depthWrite: false }),
+      new THREE.MeshBasicMaterial({
+        map: new THREE.CanvasTexture(shadowCanvas),
+        transparent: true,
+        depthWrite: false,
+      }),
     );
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = -HALF - 0.003;
@@ -280,11 +352,24 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
           o.fillStyle = "#000";
           o.fillRect(0, 0, OUT_T, OUT_T);
           o.imageSmoothingEnabled = false;
-          o.drawImage(f.panel, OUT_OFF, OUT_OFF, PANEL_SIZE * OUT_PX, PANEL_SIZE * OUT_PX);
+          o.drawImage(
+            f.panel,
+            OUT_OFF,
+            OUT_OFF,
+            PANEL_SIZE * OUT_PX,
+            PANEL_SIZE * OUT_PX,
+          );
           o.globalCompositeOperation = "destination-in";
           o.fillStyle = "#fff";
           o.beginPath();
-          roundRectPath(o, OUT_OFF, OUT_OFF, PANEL_SIZE * OUT_PX, PANEL_SIZE * OUT_PX, MASK_RADIUS);
+          roundRectPath(
+            o,
+            OUT_OFF,
+            OUT_OFF,
+            PANEL_SIZE * OUT_PX,
+            PANEL_SIZE * OUT_PX,
+            MASK_RADIUS,
+          );
           o.fill();
           o.globalCompositeOperation = "source-over";
           f.texture.needsUpdate = true;
@@ -297,7 +382,15 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
         shellMat.roughness = f.roughness;
         shellMat.envMapIntensity = f.envMapIntensity;
         shellMat.emissive.setHex(f.emissive ?? 0x000000);
-        shellMat.emissiveIntensity = f.emissive ? (night ? GLOW_INTENSITY.night : GLOW_INTENSITY.day) : 0;
+        shellMat.emissiveIntensity = f.emissive
+          ? night
+            ? GLOW_INTENSITY.night
+            : GLOW_INTENSITY.day
+          : 0;
+        contactMat.color.setHex(f.contact.color);
+        contactMat.metalness = f.contact.metalness;
+        contactMat.roughness = f.contact.roughness;
+        contactMat.envMapIntensity = f.envMapIntensity;
         heat.on.value = f.heatTint ? 1 : 0;
         isNight = night;
         applyGlass();
@@ -325,14 +418,17 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
         heat.shift.value = 0.12 * dieX.z + 0.1 * dieZ.y;
         die.position.set(...position);
         shadow.scale.setScalar(1 - Math.min(0.35, position[1] * 0.25));
-        (shadow.material as THREE.MeshBasicMaterial).opacity = 1 - Math.min(0.6, position[1] * 0.4);
+        (shadow.material as THREE.MeshBasicMaterial).opacity =
+          1 - Math.min(0.6, position[1] * 0.4);
         shadow.position.x = position[0];
       },
       viewerRight() {
         const forward = new THREE.Vector3().subVectors(look, camera.position);
         forward.y = 0;
         forward.normalize();
-        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+        const right = new THREE.Vector3()
+          .crossVectors(forward, new THREE.Vector3(0, 1, 0))
+          .normalize();
         return [right.x, right.y, right.z];
       },
     };
@@ -362,11 +458,19 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     };
     // Match the physical key, so it works whatever the keyboard layout or
     // modifiers; ignore it only while typing into a text field.
-    const isF = (e: KeyboardEvent) => e.code === "KeyF" || e.key === "f" || e.key === "F";
+    const isF = (e: KeyboardEvent) =>
+      e.code === "KeyF" || e.key === "f" || e.key === "F";
     const typing = (e: KeyboardEvent) => {
       const t = e.target;
-      if (t instanceof HTMLTextAreaElement || (t instanceof HTMLElement && t.isContentEditable)) return true;
-      return t instanceof HTMLInputElement && !["checkbox", "radio", "button", "range"].includes(t.type);
+      if (
+        t instanceof HTMLTextAreaElement ||
+        (t instanceof HTMLElement && t.isContentEditable)
+      )
+        return true;
+      return (
+        t instanceof HTMLInputElement &&
+        !["checkbox", "radio", "button", "range"].includes(t.type)
+      );
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (isF(e) && !typing(e)) setF(true);
@@ -408,7 +512,10 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     };
     const onMove = (e: PointerEvent) => {
       if (!press) return;
-      if (!press.dragging && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 8) {
+      if (
+        !press.dragging &&
+        Math.hypot(e.clientX - press.x, e.clientY - press.y) > 8
+      ) {
         press.dragging = true;
         if (press.face !== null) cbs.current.onTouch(press.face, false);
         press.face = null;
@@ -416,20 +523,40 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       const dx = e.clientX - press.x;
       const dy = e.clientY - press.y;
       const multi = cbs.current.multiTurn || fHeld;
-      if (cbs.current.swipeToTip && press.dragging && !press.swiped && !press.spin && multi) {
+      if (
+        cbs.current.swipeToTip &&
+        press.dragging &&
+        !press.swiped &&
+        !press.spin &&
+        multi
+      ) {
         // Multi-turn: the drag's dominant direction picks the axis.
         press.spin = Math.abs(dx) > Math.abs(dy) ? "yaw" : "pitch";
       }
       if (press.spin) {
-        cbs.current.onSpin(press.spin, (press.spin === "yaw" ? dx : dy) * SPIN_RAD_PER_PX);
+        cbs.current.onSpin(
+          press.spin,
+          (press.spin === "yaw" ? dx : dy) * SPIN_RAD_PER_PX,
+        );
       } else if (cbs.current.swipeToTip) {
         // One tip per swipe, by dominant direction.
         if (!press.swiped && Math.hypot(dx, dy) > SWIPE_PX) {
           press.swiped = true;
-          cbs.current.onTip(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy < 0 ? "up" : "down");
+          cbs.current.onTip(
+            Math.abs(dx) > Math.abs(dy)
+              ? dx > 0
+                ? "right"
+                : "left"
+              : dy < 0
+                ? "up"
+                : "down",
+          );
         }
       } else if (press.dragging) {
-        cbs.current.onRotate((e.clientX - press.lastX) * 0.008, (e.clientY - press.lastY) * 0.008);
+        cbs.current.onRotate(
+          (e.clientX - press.lastX) * 0.008,
+          (e.clientY - press.lastY) * 0.008,
+        );
       }
       press.lastX = e.clientX;
       press.lastY = e.clientY;

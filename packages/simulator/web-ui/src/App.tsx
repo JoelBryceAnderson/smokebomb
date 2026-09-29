@@ -63,7 +63,7 @@ export function App() {
   const [glass, setGlass] = useState(false);
   const shaking = useRef(false);
 
-  // The finish recolours the shell, screws and (later) the Nest band, never the screens.
+  // The finish recolours the shell, contacts and (later) the Nest band, never the screens.
   // Glow ceramic only reads in the dark, so choosing it switches to night.
   const chooseFinish = (key: FinishKey) => {
     setFinish(key);
