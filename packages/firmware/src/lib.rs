@@ -42,10 +42,27 @@ pub mod board {
     use core::ptr::addr_of_mut;
     use core::sync::atomic::{AtomicBool, Ordering};
 
-    /// Where the firmware lives. It is ~165 KB and the main thread's stack
+    /// Where the firmware lives. It is ~115 KB and the main thread's stack
     /// is 8 KB (`CONFIG_MAIN_STACK_SIZE`), so it can't be a local: it sits
     /// in `.bss` and [`Firmware::init`] builds it in place.
     static mut FIRMWARE: MaybeUninit<Firmware> = MaybeUninit::uninit();
+
+    /// The most RAM the firmware's state may take. The app core has 188 KB
+    /// (the rest of the chip's 256 KB is the FLPR core's), and Zephyr,
+    /// Bluetooth and NFC took 50,644 B of it in a build of the Zephyr app
+    /// for the nRF54L15 DK, leaving about 141,900 B. This leaves ~20 KB of
+    /// that for the Rust code's own statics, the stacks and some margin.
+    ///
+    /// If a change trips this, don't just raise it: a game's per-frame
+    /// visuals belong in `smokebomb_core::effects::Effects`, which holds one
+    /// mode's at a time, rather than in a field of their own. Raise it only
+    /// with a measured build that shows the room is there.
+    pub const RAM_BUDGET: usize = 120 * 1024;
+
+    const _: () = assert!(
+        core::mem::size_of::<Firmware>() <= RAM_BUDGET,
+        "Firmware is over its RAM budget: see RAM_BUDGET in packages/firmware/src/lib.rs"
+    );
     static BOOTED: AtomicBool = AtomicBool::new(false);
 
     /// Boots the firmware into its static slot. Only the first call gets it;
