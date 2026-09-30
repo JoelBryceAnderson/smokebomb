@@ -89,7 +89,7 @@ export const CHARGING_FACE = 3;
 const ETCH_TEXT = {
   /** The wordmark, set in the brand's retro script. */
   top: "Sugarcube",
-  bottom: "DESIGNED IN BROOKLYN  ·  BUILT TO BE THROWN",
+  bottom: "DESIGNED IN BROOKLYN  ·  SHAKE WELL BEFORE SERVING",
   left: "REGULATORY INFO IN SETTINGS",
 };
 
