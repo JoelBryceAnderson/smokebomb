@@ -6,14 +6,18 @@
 //! * server -> browser: binary frame packets (all six faces) and JSON events
 //! * browser -> server: JSON input (touch, orientation, gestures, docking)
 //!
+//! and speaks the phone app's BLE messages on `/phone` (see [`phone`]).
+//!
 //! `cargo run --features=simulator` (or `cargo sim`) then open
 //! <http://localhost:3000>.
 
+mod phone;
 mod protocol;
 mod ws;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,7 +28,7 @@ use axum::{Json, Router};
 use smokebomb_firmware::board::{self, SimHandle};
 use smokebomb_hal::SecureElement;
 use smokebomb_hal_simulator::SimSecureElement;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeader;
 
@@ -38,6 +42,12 @@ pub struct AppState {
     pub world: Arc<std::sync::Mutex<world::World>>,
     pub out: broadcast::Sender<Outbound>,
     pub status: Arc<Mutex<StatusSnapshot>>,
+    /// Messages from connected phones, for the firmware loop.
+    pub phone_in: mpsc::UnboundedSender<phone::PhoneRequest>,
+    /// `DieToPhone` JSON for every connected phone.
+    pub phone_out: broadcast::Sender<Arc<String>>,
+    /// How many phones are connected.
+    pub phones: Arc<AtomicUsize>,
 }
 
 #[tokio::main]
@@ -52,6 +62,8 @@ async fn main() -> anyhow::Result<()> {
     let sim = SimHandle::new();
     let firmware = board::boot(&sim).map_err(|e| anyhow::anyhow!("firmware boot failed: {e:?}"))?;
     let (out, _) = broadcast::channel(64);
+    let (phone_in, phone_rx) = mpsc::unbounded_channel();
+    let (phone_out, _) = broadcast::channel(64);
     let state = AppState {
         sim: sim.clone(),
         world: Arc::new(std::sync::Mutex::new(world::World::new())),
@@ -64,9 +76,12 @@ async fn main() -> anyhow::Result<()> {
             die_count: firmware.settings().active().1,
             last_roll: None,
         })),
+        phone_in,
+        phone_out,
+        phones: Arc::new(AtomicUsize::new(0)),
     };
 
-    tokio::spawn(run_firmware(firmware, state.clone()));
+    tokio::spawn(run_firmware(firmware, state.clone(), phone_rx));
 
     let web_dir = std::env::var_os("SMOKEBOMB_WEB_UI_DIR")
         .map(PathBuf::from)
@@ -95,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/ws", get(ws::handler))
+        .route("/phone", get(phone::handler))
         .route("/api/state", get(get_state))
         .route("/api/device", get(get_device))
         .fallback_service(static_files)
@@ -134,7 +150,11 @@ async fn main() -> anyhow::Result<()> {
 pub const TICK_S: f64 = 1.0 / smokebomb_firmware::smokebomb_core::TICK_HZ as f64;
 
 /// Firmware main loop: tick, then publish anything that changed.
-async fn run_firmware(mut fw: board::Firmware, state: AppState) {
+async fn run_firmware(
+    mut fw: board::Firmware,
+    state: AppState,
+    mut phone_rx: mpsc::UnboundedReceiver<phone::PhoneRequest>,
+) {
     let mut interval = tokio::time::interval(Duration::from_secs_f64(TICK_S));
     let mut last_seq = 0;
     let mut last_mode = String::new();
@@ -142,6 +162,7 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
     let mut last_pose = None;
     let mut menu_was_open = false;
     let mut last_nest = String::new();
+    let mut last_inventory = fw.inventory();
     let dt = TICK_S;
 
     loop {
@@ -161,6 +182,13 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
         if last_pose != Some(pose) {
             last_pose = Some(pose);
             let _ = state.out.send(Outbound::Binary(protocol::encode_pose(&pose)));
+        }
+
+        // BLE writes from the phone, before the tick as the die drains them.
+        while let Ok(req) = phone_rx.try_recv() {
+            phone::handle(&mut fw, &state, req);
+            // `handle` answered with the inventory already.
+            last_inventory = fw.inventory();
         }
 
         if let Err(e) = fw.tick() {
@@ -232,6 +260,20 @@ async fn run_firmware(mut fw: board::Firmware, state: AppState) {
             let _ = state
                 .out
                 .send(Outbound::event(protocol::Event::Roll(roll.into())));
+            phone::send(
+                &state,
+                &smokebomb_shared::protocol::DieToPhone::Roll(roll.clone()),
+            );
+        }
+
+        // A mode picked on the die, or turned on or off from the phone.
+        let inventory = fw.inventory();
+        if inventory != last_inventory {
+            last_inventory = inventory;
+            phone::send(
+                &state,
+                &smokebomb_shared::protocol::DieToPhone::Inventory(inventory),
+            );
         }
 
         let mut status = state.status.lock().await;

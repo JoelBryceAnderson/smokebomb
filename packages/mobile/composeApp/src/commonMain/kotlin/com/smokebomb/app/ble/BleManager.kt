@@ -1,5 +1,6 @@
 package com.smokebomb.app.ble
 
+import com.smokebomb.shared.DieKind
 import com.smokebomb.shared.Inventory
 import com.smokebomb.shared.ModeId
 import com.smokebomb.shared.SignedRoll
@@ -35,6 +36,9 @@ interface BleManager {
      * (`PhoneToDie::SetEnabledModes`). The die answers with a new [inventory].
      */
     suspend fun setEnabledModes(modes: Set<ModeId>)
+
+    /** Set up the dice a throw rolls (`PhoneToDie::SetDie`); Pass the Pot switches to that game. */
+    suspend fun setDie(kind: DieKind, count: Int)
 }
 
 data class DiscoveredDie(val id: String, val name: String, val rssi: Int)

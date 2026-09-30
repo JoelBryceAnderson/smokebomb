@@ -11,7 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import com.smokebomb.app.ble.BleManager
+import com.smokebomb.app.ble.DieLinks
 import com.smokebomb.app.network.ApiClient
 import com.smokebomb.app.screens.DieScreen
 import com.smokebomb.app.screens.RollHistoryScreen
@@ -31,7 +31,7 @@ enum class Destination(val label: String, val glyph: String) {
  * theme detail, DFU progress) will move this to navigation-compose.
  */
 @Composable
-fun AppShell(ble: BleManager, api: ApiClient) {
+fun AppShell(links: DieLinks, api: ApiClient) {
     var current by rememberSaveable { mutableStateOf(Destination.Die) }
 
     Scaffold(
@@ -50,7 +50,7 @@ fun AppShell(ble: BleManager, api: ApiClient) {
     ) { padding ->
         val modifier = Modifier.padding(padding)
         when (current) {
-            Destination.Die -> DieScreen(ble, modifier)
+            Destination.Die -> DieScreen(links, modifier)
             Destination.History -> RollHistoryScreen(api, modifier)
             Destination.Store -> ThemeStoreScreen(api, modifier)
             Destination.Settings -> SettingsScreen(modifier)

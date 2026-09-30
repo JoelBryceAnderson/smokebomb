@@ -1,6 +1,7 @@
 package com.smokebomb.app.ble
 
 import android.content.Context
+import com.smokebomb.shared.DieKind
 import com.smokebomb.shared.Inventory
 import com.smokebomb.shared.ModeId
 import com.smokebomb.shared.SignedRoll
@@ -44,4 +45,6 @@ class AndroidBleManager(@Suppress("unused") private val context: Context) : BleM
     override suspend fun syncHistory(sinceCounter: Long): List<SignedRoll> = emptyList()
 
     override suspend fun setEnabledModes(modes: Set<ModeId>) = Unit
+
+    override suspend fun setDie(kind: DieKind, count: Int) = Unit
 }

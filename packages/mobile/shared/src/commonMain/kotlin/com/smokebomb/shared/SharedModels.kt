@@ -22,8 +22,12 @@ enum class DieKind(val wire: String, val sides: Int) {
     val maxCount: Int get() = if (isNumeric) MAX_DICE else MAX_POT_DICE
     val label: String get() = if (isNumeric) wire else "Pass the Pot"
 
+    /** The Rust enum variant, as serde names it in JSON: `D20`, `PassThePot`. */
+    val variant: String get() = if (this == PASS_THE_POT) "PassThePot" else name
+
     companion object {
         fun fromWire(wire: String): DieKind? = entries.firstOrNull { it.wire == wire }
+        fun fromVariant(variant: String): DieKind? = entries.firstOrNull { it.variant == variant }
     }
 }
 
@@ -67,16 +71,18 @@ data class SignedRoll(
 }
 
 /**
- * A game mode. [bit] is the mode's bit in a mode set and matches `ModeId`
- * in `packages/shared/src/modes.rs`; [wire] matches `ModeId::wire_name`.
+ * A game mode, mirroring `ModeId` in `packages/shared/src/modes.rs`: [bit] is
+ * the mode's bit in a mode set, [wire] matches `ModeId::wire_name`, and
+ * [variant] is the Rust enum variant as serde names it in JSON.
  */
-enum class ModeId(val bit: Int, val wire: String, val label: String) {
-    DICE(0, "dice", "Dice"),
-    PASS_THE_POT(1, "pass_the_pot", "Pass the Pot"),
-    HOT_POTATO(2, "hot_potato", "Hot Potato"),
-    PIG_TOSS(3, "pig_toss", "Pig Toss");
+enum class ModeId(val bit: Int, val wire: String, val variant: String, val label: String) {
+    DICE(0, "dice", "Dice", "Dice"),
+    PASS_THE_POT(1, "pass_the_pot", "PassThePot", "Pass the Pot"),
+    HOT_POTATO(2, "hot_potato", "HotPotato", "Hot Potato"),
+    PIG_TOSS(3, "pig_toss", "PigToss", "Pig Toss");
 
     companion object {
+        fun fromVariant(variant: String): ModeId? = entries.firstOrNull { it.variant == variant }
         fun fromWire(wire: String): ModeId? = entries.firstOrNull { it.wire == wire }
         fun fromBit(bit: Int): ModeId? = entries.firstOrNull { it.bit == bit }
 

@@ -188,6 +188,33 @@ xcodegen generate            # creates iosApp.xcodeproj (git-ignored)
 open iosApp.xcodeproj        # run on an iOS simulator
 ```
 
+### The app with the simulator as its die
+
+The app can use the desktop simulator instead of a real die: it speaks the
+die's BLE messages to the simulator over a WebSocket (`/phone`, see
+[STORE.md](STORE.md#simulator-link)). On the **Die** tab, under *No die? Use
+the simulator*, enter the simulator's address and tap **Connect to
+simulator**. Then you can set the dice, turn modes on and off, and see each
+throw's signed roll arrive. Keep the simulator's browser page open to throw
+the die and to watch the menu change.
+
+| App runs on | Start the simulator with | Address in the app |
+|---|---|---|
+| iOS simulator, same Mac | `cargo run --features=simulator` | `localhost:3000` |
+| iPhone on the same Wi-Fi | `HOST=0.0.0.0 cargo run --features=simulator` | `<your-mac>.local:3000` or the Mac's IP |
+| Android emulator | `cargo run --features=simulator` | `10.0.2.2:3000` |
+
+To put the app on your own iPhone: connect the phone by cable (or pair it for
+wireless debugging in Xcode's *Devices and Simulators*), turn on Developer
+Mode on the phone (*Settings → Privacy & Security*), then in Xcode select the
+`iosApp` target, *Signing & Capabilities*, tick *Automatically manage
+signing* and pick your team (a free Apple ID works; its builds expire after
+seven days). If the bundle id `com.smokebomb.app` is taken, change it to
+something of your own there. Pick the phone as the run destination and
+press Run. The first time, trust the developer profile on the phone
+(*Settings → General → VPN & Device Management*). The app asks for local
+network access when it first connects to the simulator; allow it.
+
 The Xcode build runs `./gradlew :composeApp:embedAndSignAppleFrameworkForXcode`
 before compiling Swift, so there is no separate Kotlin step. The Nx targets
 `mobile:build-android`, `mobile:build-ios` and `mobile:test` wrap the same

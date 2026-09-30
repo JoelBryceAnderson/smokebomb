@@ -21,6 +21,10 @@ targets:
         NSBluetoothAlwaysUsageDescription: Sugarcube connects to your die over Bluetooth to sync and verify rolls.
         NFCReaderUsageDescription: Tap your die to pair it or join a verified session.
         UIBackgroundModes: [bluetooth-central]
+        # The desktop simulator link: plain ws:// to a Mac on the local network.
+        NSLocalNetworkUsageDescription: Sugarcube connects to the Sugarcube simulator on your computer.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smokebomb.app

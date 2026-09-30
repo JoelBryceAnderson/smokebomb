@@ -103,12 +103,18 @@ dropped connection never leaves a half-written theme in use.
 
 ## Simulator link
 
-To try all this without hardware, the simulator server will accept the same
-`PhoneToDie` / `DieToPhone` messages over a WebSocket (JSON, one message per
-frame) and feed them to the firmware as if they came over BLE. The app gets a
-second `BleManager` implementation that connects to it by host and port, so
-the iOS simulator on the Mac, or an iPhone on the same Wi-Fi, can drive the
-simulated die.
+To try all this without hardware, the simulator server accepts the same
+`PhoneToDie` / `DieToPhone` messages on its `/phone` WebSocket (JSON, one
+message per frame, serde's default shape) and feeds them to the firmware
+between ticks, as the die drains BLE writes (`simulator/server/src/phone.rs`).
+It greets a new phone with `Hello` and `Inventory`, answers every setup
+change with `Inventory`, and pushes `Roll` and `Inventory` as they happen. It
+trusts `InstallLicense` without checking the signature.
+
+In the app, `SimulatorLink` is a `BleManager` that connects there by
+`host:port`, and `DieLinks` switches the app between it and Bluetooth, so the
+iOS simulator on the Mac, or an iPhone on the same Wi-Fi, can drive the
+simulated die. See [Getting started](GETTING_STARTED.md#the-app-with-the-simulator-as-its-die).
 
 ## Status
 
@@ -117,7 +123,7 @@ simulated die.
 | `ModeId`, `ModeSet`, `License`, inventory messages (shared) | ✅ Defined |
 | Firmware: licensed and enabled sets, Mode page follows them, `inventory` / `set_enabled_modes` / `unlock_mode` | ✅ Working, tested |
 | Firmware: license signature check, store key, licenses in flash | 🗓 Planned |
-| App: Modes section on the Die tab | ✅ Against the BLE interface (stubbed transports) |
-| Simulator link over WebSocket | 🗓 Next |
+| App: Modes and Dice sections on the Die tab | ✅ Working against the simulator; Bluetooth still stubbed |
+| Simulator link over WebSocket (`/phone`, `SimulatorLink`) | ✅ Working: modes, dice setup, live rolls |
 | Theme upload over BLE, theme selection | 🗓 Planned |
 | Server: store items, purchase, license issuing | 🗓 Planned |

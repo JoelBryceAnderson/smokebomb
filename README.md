@@ -46,7 +46,7 @@ Where each area stands. Update this table when something changes.
 | Server: accounts and auth, roll storage, sessions, theme purchase | 🧪 Stubbed | Endpoints exist; see [API](docs/API.md) |
 | nRF54L15 hardware drivers, Zephyr shell, MCUboot and DFU | 🗓 Planned | The board HAL is a stub |
 | BLE message framing, settings and roll chain persisted to flash | 🗓 Planned | Types are defined, not yet serialised |
-| Phone app: navigation and screens | 🧪 Stubbed | Real BLE, NFC and the API client are not wired up |
+| Phone app: navigation and screens | 🧪 Stubbed | Drives the simulator over the network; real BLE, NFC and the API client are not wired up |
 | Store: modes and themes | 🧪 Started | Die offers licensed + enabled modes; app has mode switches. See [Store](docs/STORE.md) |
 
 The full list of gaps is at the end of the

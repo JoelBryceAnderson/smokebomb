@@ -439,6 +439,9 @@ result (placeholder digits until the renderer lands).
 - **Outputs:** frames are pushed only when `frame_seq` changes. Rolls are sent
   with their digest and signature. `GET /api/device` returns the simulated
   die's serial and public key, so it can be registered with a local backend.
+- **Phone link:** `/phone` speaks the phone app's BLE messages
+  (`PhoneToDie` / `DieToPhone`) as JSON, handled between firmware ticks, so the
+  app can use the simulator as its die (`phone.rs`, [STORE.md](STORE.md#simulator-link)).
 - The simulated secure element uses a fixed, publicly known key. The server
   must never accept that key outside development.
 
@@ -518,6 +521,9 @@ and iOS arm64 plus the arm64 simulator.
   `PlatformContext` is a typealias for `Context`; on iOS it is a singleton.
   Both platform managers are stubs, with notes on the CoreBluetooth and
   android.bluetooth.le APIs they will use.
+  `SimulatorLink` is a third implementation that reaches the desktop
+  simulator's `/phone` WebSocket with Ktor, and `DieLinks` switches the app
+  between it and Bluetooth (see [STORE.md](STORE.md#simulator-link)).
 - `iosApp/`: a SwiftUI host that embeds `MainViewController()`. The Xcode
   project is generated from `project.yml` with XcodeGen, so no `.pbxproj` is
   kept in git.
