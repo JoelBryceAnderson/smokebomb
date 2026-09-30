@@ -14,7 +14,7 @@
 
 use core::f32::consts::PI;
 
-use libm::{acosf, cosf, fabsf, powf, sinf, sqrtf};
+use libm::{acosf, cosf, fabsf, sinf, sqrtf};
 
 use crate::display::PIXELS;
 
@@ -156,7 +156,7 @@ const fn part(centre: [f32; 3], radii: [f32; 3], tone: u8, gloss: f32, solid: bo
     }
 }
 
-const PARTS: [Part; 20] = [
+const PARTS: [Part; 24] = [
     // Barrel body, and the rump that makes it pear-shaped.
     part([0.05, 0.0, 0.0], [0.58, 0.44, 0.42], 215, 0.3, true),
     part([-0.32, -0.02, 0.0], [0.44, 0.43, 0.42], 215, 0.3, true),
@@ -174,8 +174,8 @@ const PARTS: [Part; 20] = [
     part([-0.36, -0.44, -0.23], [0.11, 0.16, 0.11], 200, 0.2, true),
     part([0.36, -0.6, 0.23], [0.115, 0.06, 0.115], 60, 0.4, true),
     part([0.36, -0.6, -0.23], [0.115, 0.06, 0.115], 60, 0.4, true),
-    // Tail.
-    part([-0.76, 0.13, 0.0], [0.075, 0.075, 0.075], 205, 0.2, true),
+    // The start of the curly tail; the rest of the curl is at the end.
+    part([-0.78, 0.15, 0.0], [0.075, 0.075, 0.075], 205, 0.2, true),
     // Eyes.
     part([0.88, 0.13, 0.22], [0.05, 0.055, 0.04], 10, 0.9, false),
     part([0.88, 0.13, -0.22], [0.05, 0.055, 0.04], 10, 0.9, false),
@@ -184,6 +184,12 @@ const PARTS: [Part; 20] = [
     // Rear hooves.
     part([-0.36, -0.6, 0.23], [0.115, 0.06, 0.115], 60, 0.4, true),
     part([-0.36, -0.6, -0.23], [0.115, 0.06, 0.115], 60, 0.4, true),
+    // The rest of the tail: one loop of a spiral seen from the side,
+    // curling up and forward, thinning to the tip.
+    part([-0.921, 0.209, 0.0], [0.07, 0.07, 0.07], 205, 0.2, true),
+    part([-0.98, 0.35, 0.0], [0.065, 0.065, 0.065], 205, 0.2, true),
+    part([-0.921, 0.491, 0.0], [0.06, 0.06, 0.06], 205, 0.2, true),
+    part([-0.78, 0.5, 0.0], [0.055, 0.055, 0.055], 205, 0.2, true),
 ];
 
 /// Where a pig is and how it is turned. `y` is the height of the pig's
@@ -433,7 +439,7 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// Draw the two pigs. `phase` shifts the tumble in time, so each face can
 /// show a different moment of the same throw. `alpha` dims them. They are
 /// drawn straight into the face's pixels, over whatever is there.
-pub fn draw(p: &mut Painter, z: &mut DepthBuffer, scene: Scene, phase: f32, alpha: f32) {
+pub fn draw(p: &mut Painter, z: &mut DepthBuffer, scene: Scene, phase: f32, alpha: f32) -> Stats {
     let mut states = match scene {
         Scene::Tumbling(t) => [tumble(0, t + phase), tumble(1, t + phase)],
         Scene::Settling {
@@ -468,7 +474,17 @@ pub fn draw(p: &mut Painter, z: &mut DepthBuffer, scene: Scene, phase: f32, alph
         scale,
         origin: (CENTRE.0, CENTRE.1 + 10.0 - lift),
     };
-    render(p, &mut z.0, Region::FACE, &states, view, alpha);
+    render(p, &mut z.0, Region::FACE, &states, view, alpha)
+}
+
+/// How much work a draw took, counted rather than timed, so a budget on it
+/// means the same on every machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stats {
+    /// Rays cast: pixels tested against a part.
+    pub ray_tests: u32,
+    /// Of those, pixels that were lit and written.
+    pub shaded: u32,
 }
 
 /// The block of the face a depth buffer covers.
@@ -500,7 +516,15 @@ struct View {
 
 /// Ray-cast pigs into the face's pixels, with `zbuf` as the depth buffer for
 /// `region`, which must hold everything drawn.
-fn render(p: &mut Painter, zbuf: &mut [u16], region: Region, states: &[PigState], v: View, alpha: f32) {
+fn render(
+    p: &mut Painter,
+    zbuf: &mut [u16],
+    region: Region,
+    states: &[PigState],
+    v: View,
+    alpha: f32,
+) -> Stats {
+    let mut stats = Stats::default();
     let View {
         elevation,
         scale,
@@ -578,10 +602,15 @@ fn render(p: &mut Painter, zbuf: &mut [u16], region: Region, states: &[PigState]
             (libm::floorf(py - reach).max(0.0) as usize).max(region.y0),
             (libm::ceilf(py + reach) as usize).min(region.y0 + region.h),
         );
+        // Off the block being drawn: nothing to cast.
+        if x0 >= x1 || y0 >= y1 {
+            continue;
+        }
         // Pixels per unit of the ellipsoid's unit space, for edge softness.
         let rp = (cast.radii[0] + cast.radii[1] + cast.radii[2]) / 3.0 * to_px;
         for y in y0..y1 {
             for x in x0..x1 {
+                stats.ray_tests += 1;
                 let (ux, uy) = xf.inverse(x as f32 + 0.5, y as f32 + 0.5);
                 let dx = (ux - origin.0) / scale - cast.centre[0];
                 let dy = -((uy - origin.1) / scale) - cast.centre[1];
@@ -620,24 +649,30 @@ fn render(p: &mut Painter, zbuf: &mut [u16], region: Region, states: &[PigState]
                 let len = sqrtf(dot(nrm, nrm)).max(1e-6);
                 let nrm = [nrm[0] / len, nrm[1] / len, nrm[2] / len];
                 let diffuse = dot(nrm, LIGHT).max(0.0);
-                let spec = powf(dot(nrm, half).max(0.0), 22.0) * cast.gloss;
+                // The highlight is (n·h)^22, by squaring: 16 + 4 + 2.
+                let nh = dot(nrm, half).max(0.0);
+                let (n2, n4) = (nh * nh, nh * nh * nh * nh);
+                let n16 = n4 * n4 * n4 * n4;
+                let spec = n16 * n4 * n2 * cast.gloss;
                 let level = cast.tone * (AMBIENT + (1.0 - AMBIENT) * diffuse) + 255.0 * spec * 0.7;
                 // Never as bright as text, so the score still stands out.
                 let lit = level.clamp(0.0, 235.0) * alpha;
                 let under = fb.pixel(x, y) as f32;
                 fb.set_pixel(x, y, (under + (lit - under) * cover).clamp(0.0, 255.0) as u8);
+                stats.shaded += 1;
                 if cover > 0.5 {
                     zbuf[slot] = zq;
                 }
             }
         }
     }
+    stats
 }
 
 /// A single pig for a label: standing, turned three-quarters toward the
 /// viewer, centred on `(cx, cy)` and about `r` canvas units across each way.
 /// Drawn with its own small depth buffer, so it can go on any screen.
-pub fn draw_icon(p: &mut Painter, cx: f32, cy: f32, r: f32, alpha: f32) {
+pub fn draw_icon(p: &mut Painter, cx: f32, cy: f32, r: f32, alpha: f32) -> Stats {
     const SIDE: usize = 48;
     let (px, py) = p.xf.forward(cx, cy);
     let region = Region {
@@ -656,7 +691,7 @@ pub fn draw_icon(p: &mut Painter, cx: f32, cy: f32, r: f32, alpha: f32) {
         scale: r / 1.05,
         origin: (cx + 0.06 * r, cy + 0.06 * r),
     };
-    render(p, &mut zbuf, region, &[pig], view, alpha);
+    render(p, &mut zbuf, region, &[pig], view, alpha)
 }
 
 /// How near the viewer a part's centre is, for drawing far to near.
@@ -786,6 +821,103 @@ mod tests {
                 assert!(gap < 0.0 && gap > -0.1, "{a:?} and {b:?}: {gap}");
             }
         }
+    }
+
+    /// The most work any face's pigs take, over tumbles, every settled pose
+    /// pair (small and large) and the icon.
+    fn worst_case_work() -> (Stats, Stats) {
+        use crate::display::Framebuffer;
+        use crate::gfx::{Layer, Painter, Transform};
+        let mut fb = Framebuffer::new();
+        let mut layer = Layer::new();
+        let mut z = DepthBuffer::new();
+        let mut face = Stats::default();
+        let note = |s: Stats, into: &mut Stats| {
+            into.ray_tests = into.ray_tests.max(s.ray_tests);
+            into.shaded = into.shaded.max(s.shaded);
+        };
+        let mut scenes = std::vec::Vec::new();
+        for k in 0..120 {
+            scenes.push(Scene::Tumbling(k as f32 * 0.05));
+        }
+        for a in Pose::ALL {
+            for b in Pose::ALL {
+                for touching in [false, true] {
+                    for shrink in [0.0, 1.0] {
+                        scenes.push(Scene::Settling {
+                            land: 1.0,
+                            u: 1.0,
+                            shrink,
+                            poses: [a, b],
+                            touching,
+                        });
+                    }
+                }
+            }
+        }
+        for scene in scenes {
+            for phase in [0.0, 0.9, 1.8, 2.7, 3.6] {
+                fb.clear();
+                let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
+                note(draw(&mut p, &mut z, scene, phase, 1.0), &mut face);
+            }
+        }
+        fb.clear();
+        let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
+        let icon = draw_icon(&mut p, 0.0, -21.0, 36.0, 0.85);
+        (face, icon)
+    }
+
+    /// The work a face's pigs may take, in rays cast. Counted, not timed, so
+    /// it means the same on every machine. Measured worst case is about
+    /// 5,800 rays (2,000 lit pixels) for a face and 3,000 for the icon, over
+    /// every tumble, pose pair, size and spacing; the budget is a quarter
+    /// above that. If a change to the model or renderer trips this, the
+    /// change made the pigs more expensive on the die: check that on
+    /// hardware before raising it.
+    const FACE_RAY_BUDGET: u32 = 7_250;
+    const FACE_SHADED_BUDGET: u32 = 2_450;
+    const ICON_RAY_BUDGET: u32 = 3_750;
+
+    #[test]
+    fn the_pigs_stay_within_their_work_budget() {
+        let (face, icon) = worst_case_work();
+        assert!(
+            face.ray_tests <= FACE_RAY_BUDGET,
+            "a face casts {} rays, over the budget of {FACE_RAY_BUDGET}",
+            face.ray_tests
+        );
+        assert!(
+            face.shaded <= FACE_SHADED_BUDGET,
+            "a face lights {} pixels, over the budget of {FACE_SHADED_BUDGET}",
+            face.shaded
+        );
+        assert!(
+            icon.ray_tests <= ICON_RAY_BUDGET,
+            "the icon casts {} rays, over the budget of {ICON_RAY_BUDGET}",
+            icon.ray_tests
+        );
+    }
+
+    /// Wall-clock cost of a face's pigs, for a person to run in release:
+    /// `cargo test --release -p smokebomb-core --lib time_a_face -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn time_a_face() {
+        use crate::display::Framebuffer;
+        use crate::gfx::{Layer, Painter, Transform};
+        let mut fb = Framebuffer::new();
+        let mut layer = Layer::new();
+        let mut z = DepthBuffer::new();
+        let n = 2000;
+        let start = std::time::Instant::now();
+        let mut rays = 0;
+        for i in 0..n {
+            let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
+            rays += draw(&mut p, &mut z, Scene::Tumbling(i as f32 * 0.016), 0.0, 1.0).ray_tests;
+        }
+        let each = start.elapsed() / n;
+        std::println!("{each:?} per face, {} rays on average", rays / n);
     }
 
     #[test]
