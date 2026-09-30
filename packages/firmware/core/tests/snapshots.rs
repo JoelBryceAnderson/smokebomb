@@ -558,6 +558,13 @@ fn throw_smoke() {
 const SMOKE_ITEM: usize = 2;
 
 #[test]
+fn throw_money() {
+    let run =
+        Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::PassThePot);
+    throw_smoke_scenario("throw-money", run);
+}
+
+#[test]
 fn throw_smoke_light() {
     let run = Run::with_world().with_settings(|s| s.choices[SMOKE_ITEM] = 1);
     throw_smoke_scenario("throw-smoke-light", run);

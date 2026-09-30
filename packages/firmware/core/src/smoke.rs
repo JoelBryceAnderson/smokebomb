@@ -38,14 +38,16 @@ const GOLD_REDUCED: usize = 40;
 const FIZZLE: usize = 36;
 const FIZZLE_REDUCED: usize = 12;
 /// Bills rained per hundred puffs of smoke.
-const BILLS_PER_PUFF_PCT: usize = 40;
+const BILLS_PER_PUFF_PCT: usize = 30;
 /// A bill's half-length as a fraction of its particle's size, and its
 /// half-width as a fraction of its length.
-const BILL_LEN: f32 = 0.42;
+const BILL_LEN: f32 = 0.62;
 const BILL_ASPECT: f32 = 0.5;
 /// Peak brightness of a bill's edge and body (0–255).
 const BILL_EDGE: f32 = 230.0;
-const BILL_BODY: f32 = 110.0;
+const BILL_BODY: f32 = 45.0;
+/// The inner frame and the seal, between the body and the edge.
+const BILL_INK: f32 = 150.0;
 /// Held smoke added per frame while shaking, at most.
 const SHAKE_SPAWN_PER_FRAME: usize = 14;
 /// Timing slack at a boundary frame (s): well under a frame, well over f32
@@ -495,7 +497,9 @@ impl Smoke {
                 // Banked over the centre of each screen, where the number
                 // will appear.
                 let t = tangential(q.p, n);
-                q.v = add(q.v, scale(t, -2.4 * dt));
+                // Bills bank more loosely than smoke, or they pile up in a heap.
+                let pull = if self.money { 0.8 } else { 2.4 };
+                q.v = add(q.v, scale(t, -pull * dt));
             }
             if q.hold && agitate > 0.0 {
                 for c in 0..3 {
@@ -721,8 +725,16 @@ impl Smoke {
         let fade_in = (q.life / 0.12).min(1.0);
         let alpha = fade_in * powf((1.0 - life_t).max(0.0), 0.5) * 0.9;
         let len = q.size * BILL_LEN;
-        let angle = q.seed + q.life * (1.5 + q.seed % 2.0);
-        stamp_bill(&mut frames[q.face.index()], q.face, q.p, len, angle, alpha);
+        let angle = q.seed + q.life * (0.8 + q.seed % 1.0);
+        // Flutter: the bill turns over as it falls, so its width breathes.
+        let flip = 0.3 + 0.7 * libm::fabsf(cosf(q.seed * 3.0 + q.life * (2.5 + q.seed % 1.5)));
+        let bill = Bill {
+            len,
+            angle,
+            flip,
+            alpha,
+        };
+        stamp_bill(&mut frames[q.face.index()], q.face, q.p, &bill);
         let (own_axis, own_sign) = axis_sign(q.face);
         let ru = len / 128.0;
         for g in Face::ALL {
@@ -735,7 +747,7 @@ impl Smoke {
                 let mut t = q.p;
                 t[own_axis] = own_sign * (1.0 + d);
                 t[ga] = gs;
-                stamp_bill(&mut frames[g.index()], g, t, len, angle, alpha);
+                stamp_bill(&mut frames[g.index()], g, t, &bill);
             }
         }
     }
@@ -812,35 +824,52 @@ fn stamp(fb: &mut Framebuffer, sprite: &Sprite, face: Face, p: [f32; 3], radius:
     }
 }
 
+/// A banknote to stamp: `len` canvas units from the centre to an end, turned
+/// by `angle`, its width scaled by `flip` (0–1), drawn at `alpha`.
+struct Bill {
+    len: f32,
+    angle: f32,
+    flip: f32,
+    alpha: f32,
+}
+
 /// Stamp a banknote centred on `p` (cube coordinates) on `face`, additively:
-/// a bright edge round a dimmer body, `half_len` canvas units from the centre
-/// to an end, turned by `angle`.
-fn stamp_bill(fb: &mut Framebuffer, face: Face, p: [f32; 3], half_len: f32, angle: f32, alpha: f32) {
-    if alpha * BILL_EDGE < 0.5 || half_len <= 0.0 {
+/// a bright edge, an inner frame and a seal on a dim body, like the icon.
+fn stamp_bill(fb: &mut Framebuffer, face: Face, p: [f32; 3], bill: &Bill) {
+    if bill.alpha * BILL_EDGE < 0.5 || bill.len <= 0.0 {
         return;
     }
     let b = &BASES[face.index()];
     let (cx, cy) = (dot(p, b.x) * 128.0, -dot(p, b.y) * 128.0);
     let (px, py) = (CENTER + cx * K, CENTER + cy * K);
-    let (l, w) = (half_len * K, half_len * K * BILL_ASPECT);
-    let (ca, sa) = (cosf(angle), sinf(angle));
-    // Pixels within the bill's bounding circle.
+    let (l, w) = (bill.len * K, bill.len * K * BILL_ASPECT * bill.flip);
+    let (ca, sa) = (cosf(bill.angle), sinf(bill.angle));
     let y0 = libm::floorf(py - l).max(0.0) as usize;
     let y1 = (libm::ceilf(py + l).max(0.0) as usize).min(PANEL_HEIGHT);
     let x0 = libm::floorf(px - l).max(0.0) as usize;
     let x1 = (libm::ceilf(px + l).max(0.0) as usize).min(PANEL_WIDTH);
-    let edge = (1.2 / l).max(0.12);
+    // Line widths in pixels, as fractions of each half-size.
+    let edge_u = (1.0 / l).max(0.08);
+    let edge_v = (1.0 / w.max(1.0)).max(0.08);
     for y in y0..y1 {
         for x in x0..x1 {
             let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
-            // Into the bill's own axes, as fractions of its half-size.
             let (u, v) = ((dx * ca + dy * sa) / l, (-dx * sa + dy * ca) / w);
             let (au, av) = (libm::fabsf(u), libm::fabsf(v));
             if au > 1.0 || av > 1.0 {
                 continue;
             }
-            let on_edge = au > 1.0 - edge || av > 1.0 - edge * 2.0;
-            let value = if on_edge { BILL_EDGE } else { BILL_BODY } * alpha;
+            // The seal: a ring in the middle, a dot inside it.
+            let r = sqrtf(u * u * 0.35 + v * v);
+            let seal = (0.42..0.55).contains(&r) || r < 0.14;
+            let frame = (au > 0.78 && au < 0.78 + edge_u) || (av > 0.72 && av < 0.72 + edge_v);
+            let value = if au > 1.0 - edge_u || av > 1.0 - edge_v {
+                BILL_EDGE
+            } else if (frame && au < 0.78 + edge_u && av < 0.72 + edge_v) || (seal && av < 0.72) {
+                BILL_INK
+            } else {
+                BILL_BODY
+            } * bill.alpha;
             if value >= 0.5 {
                 fb.add_pixel(x, y, (value + 0.5) as u8);
             }
@@ -968,7 +997,7 @@ mod tests {
         }
         s.throw();
         assert_eq!(s.particles.len(), s.full());
-        assert_eq!(s.full(), 152);
+        assert_eq!(s.full(), 114);
         let mut frames = [Framebuffer::new(); 6];
         s.draw(&mut frames);
         assert!(
