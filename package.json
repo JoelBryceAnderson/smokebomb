@@ -1,7 +1,7 @@
 {
   "name": "smokebomb",
   "private": true,
-  "description": "Smokebomb monorepo: firmware, simulator, server, mobile",
+  "description": "Sugarcube monorepo: firmware, simulator, server, mobile",
   "workspaces": [
     "packages/simulator/web-ui"
   ],

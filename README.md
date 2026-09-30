@@ -1,6 +1,6 @@
-# Smokebomb
+# Sugarcube
 
-Smokebomb is a smart die with six 96×96 OLED faces. Throw it and a live smoke
+Sugarcube is a smart die with six 96×96 OLED faces. Throw it and a live smoke
 effect plays across the screens, then the result shows on every face. Each roll
 is signed by a secure element inside the die, so a phone app and backend can
 prove that a roll really came from that die and wasn't edited or replayed. That

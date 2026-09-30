@@ -15,7 +15,7 @@
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
 
     <application
-        android:label="Smokebomb"
+        android:label="Sugarcube"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
             android:name=".MainActivity"

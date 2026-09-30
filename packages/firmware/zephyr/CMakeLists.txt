@@ -1,4 +1,4 @@
-# Zephyr application shell for the Smokebomb nRF54L15 board.
+# Zephyr application shell for the Sugarcube nRF54L15 board.
 # TODO: link the Rust firmware as a static library (smokebomb-firmware,
 # crate-type = "staticlib", target thumbv8m.main-none-eabihf).
 cmake_minimum_required(VERSION 3.20.0)

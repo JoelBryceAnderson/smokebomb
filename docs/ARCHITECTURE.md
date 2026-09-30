@@ -1,6 +1,6 @@
-# Smokebomb architecture
+# Sugarcube architecture
 
-Smokebomb is a smart die with six 96×96 OLED faces, a secure element that signs
+Sugarcube is a smart die with six 96×96 OLED faces, a secure element that signs
 every roll, and a phone app and backend that keep and verify those rolls. This
 document describes how the repository is organised and how the pieces fit
 together. It is the reference; [GETTING_STARTED.md](GETTING_STARTED.md) covers
@@ -320,7 +320,7 @@ code.
   Gaussian, σ = blur ÷ 2) and composited underneath first.
 - **Output:** the 8-bit framebuffers are quantized to the panel's 16 levels as
   before.
-- **Screens** (`screens.rs`): boot (pips, finale, SMOKEBOMB), the wake/setup
+- **Screens** (`screens.rs`): boot (pips, the sugar cube finale, the script wordmark), the wake/setup
   label, and results (numeric layout and Pass the Pot glyphs).
 - **Timing** (`ui.rs`): decides what each face shows and when: boot, fades,
   dimming, and the precedence order from SIM_SPEC Part C.
@@ -347,8 +347,9 @@ statement for statement.
 - **The throw** drives it (SIM_SPEC C5): shaking builds a held cloud banked
   over the face centres; the throw tops it up to 380; the landing (the die
   stopping, under 1°/s) lets it drain with a top-up and embers; a max or dud
-  adds its gold ring or fizzle once the smoke has cleared. The boot bursts a
-  cloud off the top face. Opening the menu or restarting clears it.
+  adds its gold ring or fizzle once the smoke has cleared. The boot has no
+  smoke (its sugar crystals are drawn by the boot screen). Opening the menu
+  or restarting clears it.
 - **Gravity** comes from `orientation::Gravity`: the gyro turns the estimate
   with the die every sample and the accelerometer corrects it when it reads
   about 1 g. Shaking and free fall swamp the accelerometer, and the smoke
@@ -364,7 +365,7 @@ statement for statement.
   resolution (48×48) on hardware; even that is ~1M pixels a tick, so the
   hardware budget still needs measuring on the nRF54L15.
 
-**Checking the smoke:** the boot burst and the shake, quick-throw and throw
+**Checking the smoke:** the shake, quick-throw and throw
 clouds are snapshots like the other screens (see
 [Screen snapshots](#screen-snapshots)); the throws run on a seeded world
 model with a scripted roll.

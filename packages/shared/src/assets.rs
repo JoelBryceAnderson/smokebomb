@@ -1,7 +1,9 @@
 //! Layout of the asset pack stored in the 64 MB QSPI flash.
 //!
 //! The pack holds everything the firmware draws from flash: Space Grotesk
-//! bitmaps at every size the screens use, and the smoke sprites the particle
+//! bitmaps at every size the screens use, the Pacifico script the Sugarcube
+//! wordmark is set in (a few sizes, [`SCRIPT_WEIGHT`]), and the smoke
+//! sprites the particle
 //! system stamps (SIM_SPEC decision H1: a theme is a sprite set plus
 //! parameters). Theme-store downloads use the same format, so the server, the
 //! phone and the die all agree on it.
@@ -26,6 +28,10 @@ pub const PACK_MAGIC: [u8; 4] = *b"SMKB";
 /// v3: fonts + smoke sprites. v2 also carried placeholder smoke clips, and
 /// v1 was a bare clip table; the firmware ignores older packs.
 pub const PACK_VERSION: u16 = 3;
+
+/// [`FontHeader::weight`] of the wordmark's script face (Pacifico), so it
+/// never collides with a real CSS weight of Space Grotesk.
+pub const SCRIPT_WEIGHT: u16 = 1;
 
 /// Size of the external QSPI flash reserved for the asset pack.
 pub const QSPI_CAPACITY: u32 = 64 * 1024 * 1024;
@@ -192,7 +198,7 @@ impl SectionEntry {
 /// One font weight at one size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FontHeader {
-    /// CSS weight (400, 700, …).
+    /// CSS weight (400, 700, …), or [`SCRIPT_WEIGHT`] for the wordmark script.
     pub weight: u16,
     /// Size in mockup canvas pixels, as the spec gives it (panel px = × 96/166).
     pub canvas_px: u16,

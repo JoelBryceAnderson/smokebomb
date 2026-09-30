@@ -1,4 +1,4 @@
-//! Smokebomb backend.
+//! Sugarcube backend.
 //!
 //! Axum + SQLx on PostgreSQL. See `docs/API.md` for the REST surface and
 //! `migrations/` for the schema.

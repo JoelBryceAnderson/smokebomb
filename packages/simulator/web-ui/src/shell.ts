@@ -87,7 +87,8 @@ export function addSeam(die: THREE.Group, half: number, edgeRadius: number, mate
 export const CHARGING_FACE = 3;
 
 const ETCH_TEXT = {
-  top: "SMOKEBOMB",
+  /** The wordmark, set in the brand's retro script. */
+  top: "Sugarcube",
   bottom: "DESIGNED IN BROOKLYN  ·  BUILT TO BE THROWN",
   left: "REGULATORY INFO IN SETTINGS",
 };
@@ -102,16 +103,17 @@ function drawEtching(c: HTMLCanvasElement, serial: string) {
   x.textBaseline = "middle";
   const band = C / 2 - 13.25 * PXMM; // centre line of the 2.5 mm border
   const font = (mm: number) => `600 ${mm * PXMM}px "Space Grotesk", Arial, sans-serif`;
-  const side = (rot: number, text: string, mm: number) => {
+  const script = (mm: number) => `400 ${mm * PXMM}px "Pacifico", cursive`;
+  const side = (rot: number, text: string, mm: number, face = font) => {
     x.save();
     x.translate(C / 2, C / 2);
     x.rotate(rot);
-    x.font = font(mm);
+    x.font = face(mm);
     x.fillText(text, 0, -(C / 2 - band));
     x.restore();
   };
-  side(0, ETCH_TEXT.top, 0.9);
-  side(Math.PI / 2, `SB-1  ·  S/N ${serial}`, 0.7);
+  side(0, ETCH_TEXT.top, 1.3, script);
+  side(Math.PI / 2, `SC-1  ·  S/N ${serial}`, 0.7);
   side(Math.PI, ETCH_TEXT.bottom, 0.62); // room is left here for a "Made in …" line later
   // Left: CE, a crossed-out wheelie bin, and where the rest lives.
   x.save();

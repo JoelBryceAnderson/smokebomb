@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::roll::SignedRoll;
 use crate::types::{DieKind, SessionId};
 
-/// GATT service UUID for the Smokebomb service (placeholder, not yet allocated).
+/// GATT service UUID for the Sugarcube service (placeholder, not yet allocated).
 pub const SERVICE_UUID: &str = "5b0e0000-5b0e-4d1e-9a5e-736d6f6b6562";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

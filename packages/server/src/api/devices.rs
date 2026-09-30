@@ -48,7 +48,7 @@ impl From<Device> for DeviceView {
 /// Register a die, or refresh its firmware version if already known.
 ///
 /// TODO: this must only accept keys attested during factory provisioning
-/// (signed by the Smokebomb manufacturing CA); today anyone can register.
+/// (signed by the Sugarcube manufacturing CA); today anyone can register.
 pub async fn register(
     State(state): State<AppState>,
     Json(body): Json<RegisterDevice>,
