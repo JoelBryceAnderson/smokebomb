@@ -379,46 +379,54 @@ pub enum Scene {
     },
 }
 
+/// Rows cast at a time. The depth buffer and the running shade only need to
+/// cover a strip, not the face.
+const STRIP: usize = 8;
+/// Every part of both pigs.
+const MAX_CASTS: usize = 2 * PARTS.len();
+
 /// The pigs as every face shows them, cast once and shared. Held
 /// unrotated; [`Canvas::lay_onto`] turns them for each face.
 pub struct Canvas {
-    /// Depth of each pixel cast so far. Bigger is nearer the viewer; 0 is
-    /// nothing yet.
-    z: [u16; PIXELS],
-    /// Each pixel's shade, already multiplied by how much of it the pigs
-    /// cover, and that coverage (both 0–255).
-    shade: [u8; PIXELS],
-    cover: [u8; PIXELS],
-    /// The pixels anything was cast into, unrotated.
+    /// The finished picture, a byte a pixel (see [`encode`]).
+    picture: [u8; PIXELS],
+    /// The parts being cast, far to near, and how many there are.
+    casts: [Cast; MAX_CASTS],
+    n: usize,
+    /// For the strip being cast: the depth of each pixel so far (bigger is
+    /// nearer; 0 is nothing yet), its shade already multiplied by how much
+    /// the pigs cover it, and that coverage (both 0–255).
+    z: [u16; 96 * STRIP],
+    shade: [u8; 96 * STRIP],
+    cover: [u8; 96 * STRIP],
+    /// The pixels the picture holds anything in, unrotated.
     bounds: Region,
     /// The scene cast last, so an unchanged one isn't cast again.
     cast: Option<Scene>,
 }
 
 impl Canvas {
-    pub const fn new() -> Self {
-        Self {
-            z: [0; PIXELS],
-            shade: [0; PIXELS],
-            cover: [0; PIXELS],
-            bounds: Region::EMPTY,
-            cast: None,
-        }
-    }
-
-    /// An empty canvas, built in `slot`: it's more than a small stack
-    /// should hold and move.
+    /// An empty canvas, built in `slot`: at ~15 KB it's more than a small
+    /// stack should hold and move.
     pub fn init(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
-        // SAFETY: every field but `cast` is integers, for which zero is valid
-        // (and what an empty canvas holds); `cast` is written after, before
-        // anything reads it.
+        // SAFETY: every field but `cast` is integers and floats, for which
+        // zero is valid (and what an empty canvas holds); `cast` is written
+        // after, before anything reads it.
         unsafe {
             p.write_bytes(0, 1);
             addr_of_mut!((*p).bounds).write(Region::EMPTY);
             addr_of_mut!((*p).cast).write(None);
             slot.assume_init_mut()
         }
+    }
+
+    /// An empty canvas, by value, for tests and the simulator.
+    pub fn new() -> Self {
+        let mut slot = MaybeUninit::uninit();
+        Self::init(&mut slot);
+        // SAFETY: `init` wrote it.
+        unsafe { slot.assume_init() }
     }
 
     /// Cast the pigs for `scene`, unless that is what the canvas already
@@ -429,44 +437,57 @@ impl Canvas {
             return Stats::default();
         }
         self.cast = Some(scene);
-        let (x0, y0, x1, y1) = (
-            self.bounds.x0,
-            self.bounds.y0,
-            self.bounds.x0 + self.bounds.w,
-            self.bounds.y0 + self.bounds.h,
-        );
-        for y in y0..y1 {
-            self.shade[y * 96 + x0..y * 96 + x1].fill(0);
-            self.cover[y * 96 + x0..y * 96 + x1].fill(0);
-        }
         let (states, view) = layout(scene);
-        let Self {
-            z,
-            shade,
-            cover,
-            bounds,
-            ..
-        } = self;
+        self.n = prepare(&states, view, &mut self.casts);
+        let mut stats = Stats::default();
         let mut lo = (usize::MAX, usize::MAX);
         let mut hi = (0, 0);
-        let stats = render(
-            Transform::default(),
-            z,
-            Region::FACE,
-            &states,
-            view,
-            |x, y, lit, c| {
-                // Painted over what's under it: in premultiplied terms the
-                // shade and the coverage both go over what's there.
-                let i = y * 96 + x;
-                let (s, a) = (shade[i] as f32, cover[i] as f32);
-                shade[i] = (s + (lit - s) * c + 0.5) as u8;
-                cover[i] = (a + (255.0 - a) * c + 0.5) as u8;
-                lo = (lo.0.min(x), lo.1.min(y));
-                hi = (hi.0.max(x + 1), hi.1.max(y + 1));
-            },
-        );
-        *bounds = if hi.0 > lo.0 {
+        for y0 in (0..96).step_by(STRIP) {
+            let Self {
+                picture,
+                casts,
+                n,
+                z,
+                shade,
+                cover,
+                ..
+            } = self;
+            shade.fill(0);
+            cover.fill(0);
+            let region = Region {
+                x0: 0,
+                y0,
+                w: 96,
+                h: STRIP,
+            };
+            let s = cast_block(
+                Transform::default(),
+                &casts[..*n],
+                z,
+                region,
+                view,
+                |x, y, lit, c| {
+                    // Painted over what's under it: in premultiplied terms the
+                    // shade and the coverage both go over what's there.
+                    let i = (y - y0) * 96 + x;
+                    let (s, a) = (shade[i] as f32, cover[i] as f32);
+                    shade[i] = (s + (lit - s) * c + 0.5) as u8;
+                    cover[i] = (a + (255.0 - a) * c + 0.5) as u8;
+                },
+            );
+            stats.ray_tests += s.ray_tests;
+            stats.shaded += s.shaded;
+            for (i, (&s, &a)) in shade.iter().zip(cover.iter()).enumerate() {
+                let (x, y) = (i % 96, y0 + i / 96);
+                let b = encode(s, a);
+                picture[y * 96 + x] = b;
+                if b != 0 {
+                    lo = (lo.0.min(x), lo.1.min(y));
+                    hi = (hi.0.max(x + 1), hi.1.max(y + 1));
+                }
+            }
+        }
+        self.bounds = if hi.0 > lo.0 {
             Region {
                 x0: lo.0,
                 y0: lo.1,
@@ -485,14 +506,12 @@ impl Canvas {
         let b = self.bounds;
         for sy in b.y0..b.y0 + b.h {
             for sx in b.x0..b.x0 + b.w {
-                let i = sy * 96 + sx;
-                let a = self.cover[i];
-                if a == 0 {
+                let Some((shade, a)) = decode(self.picture[sy * 96 + sx]) else {
                     continue;
-                }
+                };
                 let (x, y) = turned(rot, sx, sy);
                 let under = fb.pixel(x, y) as f32;
-                let v = under * (1.0 - a as f32 / 255.0) + self.shade[i] as f32 * alpha;
+                let v = under * (1.0 - a) + shade * a * alpha;
                 fb.set_pixel(x, y, (v + 0.5).clamp(0.0, 255.0) as u8);
             }
         }
@@ -505,6 +524,38 @@ impl Default for Canvas {
     }
 }
 
+/// A pixel of the picture in a byte, from its premultiplied shade and its
+/// coverage (0–255). Nearly every pixel the pigs cover, they cover fully:
+/// those keep 7 bits of shade, within a level of what was cast. Edge pixels
+/// keep 3 bits of coverage and 4 of shade, plenty for an edge. 0 is empty.
+///
+/// `1sssssss`: fully covered, shade 2·s.
+/// `0cccssss`: covered c/8 (1–7), shade 17·s.
+fn encode(shade: u8, cover: u8) -> u8 {
+    if cover == 0 {
+        return 0;
+    }
+    let a = cover as f32 / 255.0;
+    // Undo the premultiply: the shade of what's there.
+    let s = (shade as f32 / a).min(255.0);
+    if cover >= 250 {
+        return 0x80 | (libm::roundf(s / 2.0) as u8).min(127);
+    }
+    match (libm::roundf(a * 8.0) as u8).min(7) {
+        0 => 0,
+        c => c << 4 | (libm::roundf(s / 17.0) as u8).min(15),
+    }
+}
+
+/// The shade (0–255) and coverage (0–1) of a picture byte, if any.
+fn decode(b: u8) -> Option<(f32, f32)> {
+    match b {
+        0 => None,
+        0x80.. => Some(((b & 0x7f) as f32 * 2.0, 1.0)),
+        _ => Some(((b & 15) as f32 * 17.0, (b >> 4) as f32 / 8.0)),
+    }
+}
+
 /// Where an unrotated pixel lands on a face turned by `rot`: what
 /// [`Transform::quarter`] does to the canvas, in whole pixels.
 fn turned(rot: Quarter, x: usize, y: usize) -> (usize, usize) {
@@ -513,6 +564,17 @@ fn turned(rot: Quarter, x: usize, y: usize) -> (usize, usize) {
         Quarter::R90 => (95 - y, x),
         Quarter::R180 => (95 - x, 95 - y),
         Quarter::R270 => (y, 95 - x),
+    }
+}
+
+/// The unrotated pixel that lands at `(x, y)` on a face turned by `rot`.
+#[cfg(test)]
+fn unturned(rot: Quarter, x: usize, y: usize) -> (usize, usize) {
+    match rot {
+        Quarter::R0 => (x, y),
+        Quarter::R90 => (y, 95 - x),
+        Quarter::R180 => (95 - x, 95 - y),
+        Quarter::R270 => (95 - y, x),
     }
 }
 
@@ -563,6 +625,7 @@ fn mul(a: &Mat, b: &Mat) -> Mat {
 
 /// One ellipsoid, ready to ray-cast: everything that doesn't change from
 /// pixel to pixel.
+#[derive(Clone, Copy)]
 struct Cast {
     /// View-space centre.
     centre: [f32; 3],
@@ -647,6 +710,7 @@ impl Region {
         w: 0,
         h: 0,
     };
+    #[cfg(test)]
     const FACE: Region = Region {
         x0: 0,
         y0: 0,
@@ -664,33 +728,12 @@ struct View {
     origin: (f32, f32),
 }
 
-/// Ray-cast pigs seen through `xf`, with `zbuf` as the depth buffer for
-/// `region`, which must hold everything drawn. Each pixel hit goes to
-/// `plot` as its position, its shade (0–255) and how much of it the part
-/// covers (0–1), nearer parts after farther ones.
-fn render(
-    xf: Transform,
-    zbuf: &mut [u16],
-    region: Region,
-    states: &[PigState],
-    v: View,
-    mut plot: impl FnMut(usize, usize, f32, f32),
-) -> Stats {
-    let mut stats = Stats::default();
-    let View {
-        elevation,
-        scale,
-        origin,
-    } = v;
-    let (ce, se) = (cosf(elevation), sinf(elevation));
+/// Every part of the pigs in `states`, ready to cast and sorted far to
+/// near, into `out`. Returns how many.
+fn prepare(states: &[PigState], v: View, out: &mut [Cast]) -> usize {
+    let (ce, se) = (cosf(v.elevation), sinf(v.elevation));
     // World to view: tip the table toward the viewer.
     let view: Mat = [[1.0, 0.0, 0.0], [0.0, ce, -se], [0.0, se, ce]];
-    let ppu = xf.px_per_unit();
-    let to_px = ppu * scale;
-    zbuf.fill(0);
-
-    // Every part of both pigs, far to near.
-    let mut casts: [Option<Cast>; 2 * PARTS.len()] = core::array::from_fn(|_| None);
     let mut n = 0;
     for st in states {
         let r = mul(&view, &matrix(st.q));
@@ -709,7 +752,7 @@ fn render(
             let s = part.radii;
             let row = |k: usize| [r[k][0] / s[0], r[k][1] / s[1], r[k][2] / s[2]];
             let (bx, by, bz) = (row(0), row(1), row(2));
-            casts[n] = Some(Cast {
+            out[n] = Cast {
                 centre,
                 r,
                 radii: s,
@@ -719,23 +762,42 @@ fn render(
                 a: dot(bz, bz),
                 tone: part.tone as f32,
                 gloss: part.gloss,
-            });
+            };
             n += 1;
         }
     }
-    let casts = &mut casts[..n];
+    let casts = &mut out[..n];
     for i in 1..casts.len() {
         let mut j = i;
-        while j > 0 && depth_of(&casts[j - 1]) > depth_of(&casts[j]) {
+        while j > 0 && casts[j - 1].centre[2] > casts[j].centre[2] {
             casts.swap(j - 1, j);
             j -= 1;
         }
     }
+    n
+}
+
+/// Ray-cast prepared parts seen through `xf` into `region`, with `zbuf` as
+/// its depth buffer. Each pixel hit goes to `plot` as its position, its
+/// shade (0–255) and how much of it the part covers (0–1), nearer parts
+/// after farther ones.
+fn cast_block(
+    xf: Transform,
+    casts: &[Cast],
+    zbuf: &mut [u16],
+    region: Region,
+    v: View,
+    mut plot: impl FnMut(usize, usize, f32, f32),
+) -> Stats {
+    let mut stats = Stats::default();
+    let View { scale, origin, .. } = v;
+    let to_px = xf.px_per_unit() * scale;
+    zbuf.fill(0);
 
     let half = [0.5 * LIGHT[0], 0.5 * LIGHT[1], 0.5 * (LIGHT[2] + 1.0)];
     let hl = sqrtf(dot(half, half));
     let half = [half[0] / hl, half[1] / hl, half[2] / hl];
-    for cast in casts.iter().flatten() {
+    for cast in casts {
         let rmax = cast.radii[0].max(cast.radii[1]).max(cast.radii[2]);
         // Canvas position of the centre, and its pixel bounds.
         let (cx, cy) = (
@@ -819,17 +881,13 @@ fn render(
 
 /// A single pig for a label: standing, turned three-quarters toward the
 /// viewer, centred on `(cx, cy)` and about `r` canvas units across each way.
-/// Drawn with its own small depth buffer, so it can go on any screen.
+/// Cast a strip at a time with its own small buffers, so it can go on any
+/// screen without much stack.
 pub fn draw_icon(p: &mut Painter, cx: f32, cy: f32, r: f32, alpha: f32) -> Stats {
     const SIDE: usize = 48;
     let (px, py) = p.xf.forward(cx, cy);
-    let region = Region {
-        x0: (libm::floorf(px) as i32 - SIDE as i32 / 2).clamp(0, 96 - SIDE as i32) as usize,
-        y0: (libm::floorf(py) as i32 - SIDE as i32 / 2).clamp(0, 96 - SIDE as i32) as usize,
-        w: SIDE,
-        h: SIDE,
-    };
-    let mut zbuf = [0u16; SIDE * SIDE];
+    let x0 = (libm::floorf(px) as i32 - SIDE as i32 / 2).clamp(0, 96 - SIDE as i32) as usize;
+    let top = (libm::floorf(py) as i32 - SIDE as i32 / 2).clamp(0, 96 - SIDE as i32) as usize;
     let pig = PigState {
         q: Quat::axis_angle([0.0, 1.0, 0.0], -0.95),
         pos: [0.0, 0.0, 0.0],
@@ -839,21 +897,45 @@ pub fn draw_icon(p: &mut Painter, cx: f32, cy: f32, r: f32, alpha: f32) -> Stats
         scale: r / 1.05,
         origin: (cx + 0.06 * r, cy + 0.06 * r),
     };
+    let mut casts = [Cast::NONE; PARTS.len()];
+    let n = prepare(&[pig], view, &mut casts);
+    let mut zbuf = [0u16; SIDE * STRIP];
     let xf = p.xf;
     let fb = p.framebuffer();
-    render(xf, &mut zbuf, region, &[pig], view, |x, y, lit, cover| {
-        let under = fb.pixel(x, y) as f32;
-        fb.set_pixel(
-            x,
-            y,
-            (under + (lit * alpha - under) * cover).clamp(0.0, 255.0) as u8,
-        );
-    })
+    let mut stats = Stats::default();
+    for y0 in (top..top + SIDE).step_by(STRIP) {
+        let region = Region {
+            x0,
+            y0,
+            w: SIDE,
+            h: STRIP,
+        };
+        let s = cast_block(xf, &casts[..n], &mut zbuf, region, view, |x, y, lit, cover| {
+            let under = fb.pixel(x, y) as f32;
+            fb.set_pixel(
+                x,
+                y,
+                (under + (lit * alpha - under) * cover).clamp(0.0, 255.0) as u8,
+            );
+        });
+        stats.ray_tests += s.ray_tests;
+        stats.shaded += s.shaded;
+    }
+    stats
 }
 
-/// How near the viewer a part's centre is, for drawing far to near.
-fn depth_of(c: &Option<Cast>) -> f32 {
-    c.as_ref().map_or(0.0, |c| c.centre[2])
+impl Cast {
+    const NONE: Cast = Cast {
+        centre: [0.0; 3],
+        r: [[0.0; 3]; 3],
+        radii: [0.0; 3],
+        bx: [0.0; 3],
+        by: [0.0; 3],
+        bz: [0.0; 3],
+        a: 0.0,
+        tone: 0.0,
+        gloss: 0.0,
+    };
 }
 
 #[cfg(test)]
@@ -1077,22 +1159,55 @@ mod tests {
         for rot in [Quarter::R0, Quarter::R90, Quarter::R180, Quarter::R270] {
             let mut shared = Framebuffer::new();
             canvas.lay_onto(&mut shared, rot, 1.0);
-            // Cast straight onto a face turned by `rot`, as the icon is.
+            // Cast straight onto a face turned by `rot`, a whole face at
+            // once, at full precision.
             let mut own = Framebuffer::new();
             let mut layer = Layer::new();
             let mut p = Painter::new(&mut own, &mut layer, Transform::quarter(rot));
             let xf = p.xf;
             let fb = p.framebuffer();
             let (states, view) = layout(scene);
+            let mut casts = [Cast::NONE; MAX_CASTS];
+            let n = prepare(&states, view, &mut casts);
             let mut z = [0u16; PIXELS];
-            render(xf, &mut z, Region::FACE, &states, view, |x, y, lit, c| {
+            cast_block(xf, &casts[..n], &mut z, Region::FACE, view, |x, y, lit, c| {
                 let under = fb.pixel(x, y) as f32;
                 fb.set_pixel(x, y, (under + (lit - under) * c) as u8);
             });
-            for (i, (a, b)) in shared.pixels().iter().zip(own.pixels()).enumerate() {
-                assert!(a.abs_diff(*b) <= 2, "{rot:?} pixel {i}: {a} vs {b}");
+            // Where the pigs cover a pixel fully, within a quarter of a grey
+            // step of the panel (the reference rounds each blend down, the
+            // canvas to nearest); the packed edges within a step (17 levels).
+            for (i, (&a, &b)) in shared.pixels().iter().zip(own.pixels()).enumerate() {
+                let (sx, sy) = unturned(rot, i % 96, i / 96);
+                let solid = canvas.picture[sy * 96 + sx] >= 0x80;
+                let limit = if solid { 4 } else { 20 };
+                assert!(a.abs_diff(b) <= limit, "{rot:?} pixel {i}: {a} vs {b}");
             }
         }
+    }
+
+    #[test]
+    fn a_picture_byte_keeps_the_shade_and_the_edge() {
+        assert_eq!(decode(encode(0, 0)), None);
+        // Fully covered: within a level.
+        for shade in [0u8, 1, 100, 201, 235] {
+            let (s, a) = decode(encode(shade, 255)).unwrap();
+            assert_eq!(a, 1.0);
+            assert!((s - shade as f32).abs() <= 1.0, "{shade} came back {s}");
+        }
+        // Half covered: the premultiplied shade comes back near enough.
+        let (s, a) = decode(encode(60, 128)).unwrap();
+        assert!((s * a - 60.0).abs() < 10.0, "{s} × {a}");
+        // Covered so little it rounds away.
+        assert_eq!(decode(encode(2, 10)), None);
+    }
+
+    #[test]
+    fn the_canvas_is_small() {
+        let size = core::mem::size_of::<Canvas>();
+        // The picture (9 KB), the parts being cast (4 KB) and one strip's
+        // buffers (3 KB).
+        assert!(size <= 17 * 1024, "the canvas is {size} bytes");
     }
 
     #[test]
