@@ -1110,7 +1110,7 @@ mod tests {
             rig.run(7.0);
             rig.world.start_shake();
             rig.run(1.5);
-            rig.fw.smoke_mut().len()
+            rig.fw.smoke_mut().map_or(0, |s| s.len())
         };
         let (full, light, off) = (cloud(None), cloud(Some(1)), cloud(Some(0)));
         assert!(full > 0, "a shake builds smoke");
@@ -1132,7 +1132,11 @@ mod tests {
         rig.hold(Face::PosZ);
         rig.world.start_shake();
         rig.run(1.5);
-        assert_eq!(rig.fw.smoke_mut().len(), 0, "no smoke once Off is saved");
+        assert_eq!(
+            rig.fw.smoke_mut().map_or(0, |s| s.len()),
+            0,
+            "no smoke once Off is saved"
+        );
     }
 
     #[test]

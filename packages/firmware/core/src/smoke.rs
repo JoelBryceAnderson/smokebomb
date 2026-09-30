@@ -304,16 +304,22 @@ pub struct Smoke {
 }
 
 impl Smoke {
-    /// Load the sprites from the pack into `slot`. Without them the die
-    /// simulates smoke but draws none.
+    /// Where the pack keeps the sprites, for [`Smoke::init`].
+    pub fn sprites_in(pack: &PackIndex) -> Option<u32> {
+        pack.sections(SectionKind::Sprites).next().map(|s| s.offset)
+    }
+
+    /// Build the smoke in `slot`, loading the sprites from `sprites` (see
+    /// [`Smoke::sprites_in`]). Without them the die simulates smoke but
+    /// draws none.
     ///
-    /// Writes in place: the particle store is ~30 KB, too big to build on a
+    /// Writes in place: the particle store is ~15 KB, too big to build on a
     /// small stack and move.
     pub fn init<'a, A: AssetStore>(
         slot: &'a mut MaybeUninit<Self>,
         assets: &mut A,
-        pack: &PackIndex,
-        seed: u32,
+        sprites: Option<u32>,
+        seed: SmokeRng,
     ) -> &'a mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: every field is written once through a raw pointer and none
@@ -322,7 +328,7 @@ impl Smoke {
         unsafe {
             addr_of_mut!((*p).particles).write(Vec::new());
             addr_of_mut!((*p).sprites).write([None; 4]);
-            addr_of_mut!((*p).rng).write(SmokeRng::new(seed));
+            addr_of_mut!((*p).rng).write(seed);
             addr_of_mut!((*p).phase).write(Phase::Calm);
             addr_of_mut!((*p).charge).write(0.0);
             addr_of_mut!((*p).charge_cap).write(1.0);
@@ -350,22 +356,21 @@ impl Smoke {
         }
         // SAFETY: all fields were written above.
         let smoke = unsafe { slot.assume_init_mut() };
-        smoke.load_sprites(assets, pack);
+        if let Some(at) = sprites {
+            smoke.load_sprites(assets, at);
+        }
         smoke
     }
 
-    fn load_sprites<A: AssetStore>(&mut self, assets: &mut A, pack: &PackIndex) {
-        let Some(section) = pack.sections(SectionKind::Sprites).next() else {
-            return;
-        };
+    fn load_sprites<A: AssetStore>(&mut self, assets: &mut A, at: u32) {
         let mut hdr = [0u8; SPRITES_HEADER_LEN];
-        if assets.read(section.offset, &mut hdr).is_err() {
+        if assets.read(at, &mut hdr).is_err() {
             return;
         }
         let count = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
         for i in 0..count {
             let mut e = [0u8; SPRITE_ENTRY_LEN];
-            let off = section.offset + (SPRITES_HEADER_LEN + i * SPRITE_ENTRY_LEN) as u32;
+            let off = at + (SPRITES_HEADER_LEN + i * SPRITE_ENTRY_LEN) as u32;
             if assets.read(off, &mut e).is_err() {
                 break;
             }
@@ -379,6 +384,11 @@ impl Smoke {
     /// Replace the random generator (tests seed it for repeatable smoke).
     pub fn set_rng(&mut self, rng: SmokeRng) {
         self.rng = rng;
+    }
+
+    /// Where the random generator is, to carry it on later.
+    pub fn rng(&self) -> SmokeRng {
+        self.rng
     }
 
     pub fn set_reduced_motion(&mut self, on: bool) {

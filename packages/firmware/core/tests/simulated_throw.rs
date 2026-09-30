@@ -95,7 +95,7 @@ fn throw_and_watch(value: u8) -> (usize, usize, bool) {
     for t in 0..(12 * 60u64) {
         sim.lock().manual_time_ms = Some(t * 1000 / 60);
         fw.tick().unwrap();
-        let smoke = fw.smoke_mut();
+        let smoke = fw.smoke_mut().expect("dice have smoke");
         let (g, f) = (smoke.count(SpriteKind::Gold), smoke.count(SpriteKind::Fizzle));
         if g + f > 0 && smoke.has_smoke() {
             early = true;
@@ -285,4 +285,34 @@ fn a_quick_tap_on_a_resting_die_banks_and_locks_it_in() {
         .lock()
         .haptics
         .contains(&smokebomb_hal::HapticEffect::LandingThud));
+}
+
+/// Pig Toss takes the smoke's memory for the pigs; going back to dice brings
+/// the smoke back, sprites and all, and a throw makes sugar again.
+#[test]
+fn smoke_comes_back_after_pig_toss() {
+    use smokebomb_core::menu::{PlayMode, Settings};
+
+    let sim = SimHandle::new();
+    sim.lock().manual_time_ms = Some(0);
+    let mut fw = Firmware::new(sim.peripherals()).unwrap();
+    fw.set_settings(Settings {
+        play: PlayMode::PigToss,
+        ..Settings::default()
+    });
+    assert!(fw.smoke_mut().is_none(), "the pigs have the memory");
+    fw.set_settings(Settings::default());
+    assert!(fw.smoke_mut().is_some());
+    {
+        let mut s = sim.lock();
+        s.imu_script.extend(imu_script::throw());
+        s.imu_resting = imu_script::resting(Face::PosY);
+    }
+    let mut most = 0;
+    for t in 0..(3 * 60u64) {
+        sim.lock().manual_time_ms = Some(t * 1000 / 60);
+        fw.tick().unwrap();
+        most = most.max(fw.smoke_mut().unwrap().len());
+    }
+    assert!(most > 100, "a throw makes a cloud: {most}");
 }
