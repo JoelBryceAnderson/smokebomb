@@ -120,8 +120,8 @@ pub struct Firmware<P: Platform> {
     pig_land: f32,
     /// When the die landed, so the pigs settle from there.
     pig_landed_ms: u64,
-    /// Scratch for drawing the pigs.
-    pig_z: pigfx::DepthBuffer,
+    /// The pigs, cast once a frame and laid onto every face.
+    pig_canvas: pigfx::Canvas,
     roller: RollEngine,
     smoke: Smoke,
     /// A max or dud waiting for the smoke to clear (SIM_SPEC C6).
@@ -190,7 +190,7 @@ impl<P: Platform> Firmware<P> {
             pig_clock: 0.0,
             pig_land: 0.0,
             pig_landed_ms: 0,
-            pig_z: pigfx::DepthBuffer::new(),
+            pig_canvas: pigfx::Canvas::new(),
             roller,
             smoke,
             pending_special: None,
@@ -1050,7 +1050,7 @@ impl<P: Platform> Firmware<P> {
             last_roll,
             menu,
             pigs,
-            pig_z,
+            pig_canvas,
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
@@ -1061,6 +1061,10 @@ impl<P: Platform> Firmware<P> {
             record.is_some()
         };
         let blackout = ui.blackout() || asleep;
+        // Every face shows the same pigs: cast them once for all of them.
+        if let Some(scene) = pig_scene.filter(|_| !blackout) {
+            pig_canvas.draw(scene);
+        }
 
         for face in Face::ALL {
             let fb = &mut frames[face.index()];
@@ -1167,8 +1171,7 @@ impl<P: Platform> Firmware<P> {
                 // the face-down screen stays dark (H2).
                 let in_air = matches!(scene, pigfx::Scene::Tumbling(_));
                 if in_air || face != up.opposite() {
-                    // Each face shows a different moment of the same throw.
-                    pigfx::draw(c.painter, pig_z, scene, face.index() as f32 * 0.9, pig_alpha);
+                    pig_canvas.lay_onto(fb_of(c.painter), rot, pig_alpha);
                 }
             }
             match potato_face {

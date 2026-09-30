@@ -11,14 +11,20 @@
 //! a depth buffer and lit with one soft light, so the body is smooth, parts
 //! hide each other exactly and the skin has a highlight. Eyes, hooves and the
 //! dot on a pig's side are just dark ellipsoids.
+//!
+//! Every face shows the same pigs, so they are ray-cast once per frame into
+//! a [`Canvas`] and then laid onto each face turned the way that face reads.
+//! A scene that hasn't changed since the last frame (the pigs at rest under
+//! the score) isn't cast again at all.
 
 use core::f32::consts::PI;
 
 use libm::{acosf, cosf, fabsf, sinf, sqrtf};
 
-use crate::display::PIXELS;
+use crate::display::{Framebuffer, PIXELS};
 
-use crate::gfx::Painter;
+use crate::gfx::{Painter, Transform};
+use crate::orientation::Quarter;
 use crate::pigs::Pose;
 
 /// How long the pigs take to settle after the die lands.
@@ -352,7 +358,7 @@ pub fn rest(i: usize, poses: [Pose; 2], touching: bool) -> PigState {
 }
 
 /// What the faces show of the pigs.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Scene {
     /// In the air `t` seconds since the throw began.
     Tumbling(f32),
@@ -371,19 +377,148 @@ pub enum Scene {
     },
 }
 
-/// Depth of each pixel drawn so far, for the face being drawn. Bigger is
-/// nearer the viewer; 0 is nothing yet.
-pub struct DepthBuffer([u16; PIXELS]);
+/// The pigs as every face shows them, cast once and shared. Held
+/// unrotated; [`Canvas::lay_onto`] turns them for each face.
+pub struct Canvas {
+    /// Depth of each pixel cast so far. Bigger is nearer the viewer; 0 is
+    /// nothing yet.
+    z: [u16; PIXELS],
+    /// Each pixel's shade, already multiplied by how much of it the pigs
+    /// cover, and that coverage (both 0–255).
+    shade: [u8; PIXELS],
+    cover: [u8; PIXELS],
+    /// The pixels anything was cast into, unrotated.
+    bounds: Region,
+    /// The scene cast last, so an unchanged one isn't cast again.
+    cast: Option<Scene>,
+}
 
-impl DepthBuffer {
+impl Canvas {
     pub const fn new() -> Self {
-        Self([0; PIXELS])
+        Self {
+            z: [0; PIXELS],
+            shade: [0; PIXELS],
+            cover: [0; PIXELS],
+            bounds: Region::EMPTY,
+            cast: None,
+        }
+    }
+
+    /// Cast the pigs for `scene`, unless that is what the canvas already
+    /// holds. Returns the work it took, which is none for a repeat.
+    pub fn draw(&mut self, scene: Scene) -> Stats {
+        let scene = scene.at_rest_clamped();
+        if self.cast == Some(scene) {
+            return Stats::default();
+        }
+        self.cast = Some(scene);
+        let (x0, y0, x1, y1) = (
+            self.bounds.x0,
+            self.bounds.y0,
+            self.bounds.x0 + self.bounds.w,
+            self.bounds.y0 + self.bounds.h,
+        );
+        for y in y0..y1 {
+            self.shade[y * 96 + x0..y * 96 + x1].fill(0);
+            self.cover[y * 96 + x0..y * 96 + x1].fill(0);
+        }
+        let (states, view) = layout(scene);
+        let Self {
+            z,
+            shade,
+            cover,
+            bounds,
+            ..
+        } = self;
+        let mut lo = (usize::MAX, usize::MAX);
+        let mut hi = (0, 0);
+        let stats = render(
+            Transform::default(),
+            z,
+            Region::FACE,
+            &states,
+            view,
+            |x, y, lit, c| {
+                // Painted over what's under it: in premultiplied terms the
+                // shade and the coverage both go over what's there.
+                let i = y * 96 + x;
+                let (s, a) = (shade[i] as f32, cover[i] as f32);
+                shade[i] = (s + (lit - s) * c + 0.5) as u8;
+                cover[i] = (a + (255.0 - a) * c + 0.5) as u8;
+                lo = (lo.0.min(x), lo.1.min(y));
+                hi = (hi.0.max(x + 1), hi.1.max(y + 1));
+            },
+        );
+        *bounds = if hi.0 > lo.0 {
+            Region {
+                x0: lo.0,
+                y0: lo.1,
+                w: hi.0 - lo.0,
+                h: hi.1 - lo.1,
+            }
+        } else {
+            Region::EMPTY
+        };
+        stats
+    }
+
+    /// Lay the pigs onto a face turned by `rot`, over whatever it shows,
+    /// dimmed by `alpha`.
+    pub fn lay_onto(&self, fb: &mut Framebuffer, rot: Quarter, alpha: f32) {
+        let b = self.bounds;
+        for sy in b.y0..b.y0 + b.h {
+            for sx in b.x0..b.x0 + b.w {
+                let i = sy * 96 + sx;
+                let a = self.cover[i];
+                if a == 0 {
+                    continue;
+                }
+                let (x, y) = turned(rot, sx, sy);
+                let under = fb.pixel(x, y) as f32;
+                let v = under * (1.0 - a as f32 / 255.0) + self.shade[i] as f32 * alpha;
+                fb.set_pixel(x, y, (v + 0.5).clamp(0.0, 255.0) as u8);
+            }
+        }
     }
 }
 
-impl Default for DepthBuffer {
+impl Default for Canvas {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Where an unrotated pixel lands on a face turned by `rot`: what
+/// [`Transform::quarter`] does to the canvas, in whole pixels.
+fn turned(rot: Quarter, x: usize, y: usize) -> (usize, usize) {
+    match rot {
+        Quarter::R0 => (x, y),
+        Quarter::R90 => (95 - y, x),
+        Quarter::R180 => (95 - x, 95 - y),
+        Quarter::R270 => (y, 95 - x),
+    }
+}
+
+impl Scene {
+    /// The same picture, with the settle and shrink past their ends pinned
+    /// at them, so that pigs at rest compare equal from frame to frame.
+    fn at_rest_clamped(self) -> Scene {
+        match self {
+            Scene::Settling {
+                land,
+                u,
+                shrink,
+                poses,
+                touching,
+            } => Scene::Settling {
+                land,
+                u: u.clamp(0.0, 1.0),
+                shrink: shrink.clamp(0.0, 1.0),
+                poses,
+                touching,
+            },
+            t => t,
+        }
     }
 }
 
@@ -430,12 +565,10 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// Draw the two pigs. `phase` shifts the tumble in time, so each face can
-/// show a different moment of the same throw. `alpha` dims them. They are
-/// drawn straight into the face's pixels, over whatever is there.
-pub fn draw(p: &mut Painter, z: &mut DepthBuffer, scene: Scene, phase: f32, alpha: f32) -> Stats {
+/// Where the two pigs are for `scene`, and how the table is seen.
+fn layout(scene: Scene) -> ([PigState; 2], View) {
     let mut states = match scene {
-        Scene::Tumbling(t) => [tumble(0, t + phase), tumble(1, t + phase)],
+        Scene::Tumbling(t) => [tumble(0, t), tumble(1, t)],
         Scene::Settling {
             land,
             u,
@@ -445,8 +578,8 @@ pub fn draw(p: &mut Painter, z: &mut DepthBuffer, scene: Scene, phase: f32, alph
         } => {
             let to = landings(poses, touching);
             [
-                settle(0, tumble(0, land + phase), to[0], u),
-                settle(1, tumble(1, land + phase), to[1], u),
+                settle(0, tumble(0, land), to[0], u),
+                settle(1, tumble(1, land), to[1], u),
             ]
         }
     };
@@ -468,7 +601,7 @@ pub fn draw(p: &mut Painter, z: &mut DepthBuffer, scene: Scene, phase: f32, alph
         scale,
         origin: (CENTRE.0, CENTRE.1 + 10.0 - lift),
     };
-    render(p, &mut z.0, Region::FACE, &states, view, alpha)
+    (states, view)
 }
 
 /// How much work a draw took, counted rather than timed, so a budget on it
@@ -491,6 +624,12 @@ struct Region {
 }
 
 impl Region {
+    const EMPTY: Region = Region {
+        x0: 0,
+        y0: 0,
+        w: 0,
+        h: 0,
+    };
     const FACE: Region = Region {
         x0: 0,
         y0: 0,
@@ -508,15 +647,17 @@ struct View {
     origin: (f32, f32),
 }
 
-/// Ray-cast pigs into the face's pixels, with `zbuf` as the depth buffer for
-/// `region`, which must hold everything drawn.
+/// Ray-cast pigs seen through `xf`, with `zbuf` as the depth buffer for
+/// `region`, which must hold everything drawn. Each pixel hit goes to
+/// `plot` as its position, its shade (0–255) and how much of it the part
+/// covers (0–1), nearer parts after farther ones.
 fn render(
-    p: &mut Painter,
+    xf: Transform,
     zbuf: &mut [u16],
     region: Region,
     states: &[PigState],
     v: View,
-    alpha: f32,
+    mut plot: impl FnMut(usize, usize, f32, f32),
 ) -> Stats {
     let mut stats = Stats::default();
     let View {
@@ -527,7 +668,6 @@ fn render(
     let (ce, se) = (cosf(elevation), sinf(elevation));
     // World to view: tip the table toward the viewer.
     let view: Mat = [[1.0, 0.0, 0.0], [0.0, ce, -se], [0.0, se, ce]];
-    let xf = p.xf;
     let ppu = xf.px_per_unit();
     let to_px = ppu * scale;
     zbuf.fill(0);
@@ -578,7 +718,6 @@ fn render(
     let half = [0.5 * LIGHT[0], 0.5 * LIGHT[1], 0.5 * (LIGHT[2] + 1.0)];
     let hl = sqrtf(dot(half, half));
     let half = [half[0] / hl, half[1] / hl, half[2] / hl];
-    let fb = p.framebuffer();
     for cast in casts.iter().flatten() {
         let rmax = cast.radii[0].max(cast.radii[1]).max(cast.radii[2]);
         // Canvas position of the centre, and its pixel bounds.
@@ -650,9 +789,7 @@ fn render(
                 let spec = n16 * n4 * n2 * cast.gloss;
                 let level = cast.tone * (AMBIENT + (1.0 - AMBIENT) * diffuse) + 255.0 * spec * 0.7;
                 // Never as bright as text, so the score still stands out.
-                let lit = level.clamp(0.0, 235.0) * alpha;
-                let under = fb.pixel(x, y) as f32;
-                fb.set_pixel(x, y, (under + (lit - under) * cover).clamp(0.0, 255.0) as u8);
+                plot(x, y, level.clamp(0.0, 235.0), cover);
                 stats.shaded += 1;
                 if cover > 0.5 {
                     zbuf[slot] = zq;
@@ -685,7 +822,16 @@ pub fn draw_icon(p: &mut Painter, cx: f32, cy: f32, r: f32, alpha: f32) -> Stats
         scale: r / 1.05,
         origin: (cx + 0.06 * r, cy + 0.06 * r),
     };
-    render(p, &mut zbuf, region, &[pig], view, alpha)
+    let xf = p.xf;
+    let fb = p.framebuffer();
+    render(xf, &mut zbuf, region, &[pig], view, |x, y, lit, cover| {
+        let under = fb.pixel(x, y) as f32;
+        fb.set_pixel(
+            x,
+            y,
+            (under + (lit * alpha - under) * cover).clamp(0.0, 255.0) as u8,
+        );
+    })
 }
 
 /// How near the viewer a part's centre is, for drawing far to near.
@@ -759,13 +905,10 @@ mod tests {
 
     #[test]
     fn drawing_puts_pigs_on_the_face_and_leaves_the_rest_alone() {
-        use crate::display::Framebuffer;
-        use crate::gfx::{Layer, Painter, Transform};
         let mut fb = Framebuffer::new();
-        let mut layer = Layer::new();
-        let mut z = DepthBuffer::new();
-        let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
-        draw(&mut p, &mut z, Scene::Tumbling(0.7), 0.0, 1.0);
+        let mut canvas = Canvas::new();
+        canvas.draw(Scene::Tumbling(0.7));
+        canvas.lay_onto(&mut fb, Quarter::R0, 1.0);
         let lit = fb.pixels().iter().filter(|&&v| v > 40).count();
         assert!(lit > 400, "two pigs are a decent number of pixels: {lit}");
         assert!(
@@ -779,8 +922,7 @@ mod tests {
 
     #[test]
     fn the_icon_is_a_pig_inside_its_box() {
-        use crate::display::Framebuffer;
-        use crate::gfx::{Layer, Painter, Transform};
+        use crate::gfx::Layer;
         let mut fb = Framebuffer::new();
         let mut layer = Layer::new();
         let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
@@ -817,22 +959,21 @@ mod tests {
         }
     }
 
-    /// The most work any face's pigs take, over tumbles, every settled pose
+    /// The most work a frame's pigs take, over tumbles, every settled pose
     /// pair (small and large) and the icon.
     fn worst_case_work() -> (Stats, Stats) {
-        use crate::display::Framebuffer;
-        use crate::gfx::{Layer, Painter, Transform};
+        use crate::gfx::Layer;
         let mut fb = Framebuffer::new();
         let mut layer = Layer::new();
-        let mut z = DepthBuffer::new();
+        let mut canvas = Canvas::new();
         let mut face = Stats::default();
         let note = |s: Stats, into: &mut Stats| {
             into.ray_tests = into.ray_tests.max(s.ray_tests);
             into.shaded = into.shaded.max(s.shaded);
         };
         let mut scenes = std::vec::Vec::new();
-        for k in 0..120 {
-            scenes.push(Scene::Tumbling(k as f32 * 0.05));
+        for k in 0..240 {
+            scenes.push(Scene::Tumbling(k as f32 * 0.025));
         }
         for a in Pose::ALL {
             for b in Pose::ALL {
@@ -850,19 +991,15 @@ mod tests {
             }
         }
         for scene in scenes {
-            for phase in [0.0, 0.9, 1.8, 2.7, 3.6] {
-                fb.clear();
-                let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
-                note(draw(&mut p, &mut z, scene, phase, 1.0), &mut face);
-            }
+            note(canvas.draw(scene), &mut face);
         }
-        fb.clear();
         let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
         let icon = draw_icon(&mut p, 0.0, -21.0, 36.0, 0.85);
         (face, icon)
     }
 
-    /// The work a face's pigs may take, in rays cast. Counted, not timed, so
+    /// The work a frame's pigs may take, in rays cast: they are cast once
+    /// and shared by every face. Counted, not timed, so
     /// it means the same on every machine. Measured worst case is about
     /// 5,800 rays (2,000 lit pixels) for a face and 3,000 for the icon, over
     /// every tumble, pose pair, size and spacing; the budget is a quarter
@@ -878,12 +1015,12 @@ mod tests {
         let (face, icon) = worst_case_work();
         assert!(
             face.ray_tests <= FACE_RAY_BUDGET,
-            "a face casts {} rays, over the budget of {FACE_RAY_BUDGET}",
+            "a frame casts {} rays, over the budget of {FACE_RAY_BUDGET}",
             face.ray_tests
         );
         assert!(
             face.shaded <= FACE_SHADED_BUDGET,
-            "a face lights {} pixels, over the budget of {FACE_SHADED_BUDGET}",
+            "a frame lights {} pixels, over the budget of {FACE_SHADED_BUDGET}",
             face.shaded
         );
         assert!(
@@ -893,25 +1030,73 @@ mod tests {
         );
     }
 
-    /// Wall-clock cost of a face's pigs, for a person to run in release:
-    /// `cargo test --release -p smokebomb-core --lib time_a_face -- --ignored --nocapture`
+    /// Wall-clock cost of a frame's pigs, cast once and laid onto all six
+    /// faces, for a person to run in release:
+    /// `cargo test --release -p smokebomb-core --lib time_a_frame -- --ignored --nocapture`
     #[test]
     #[ignore]
-    fn time_a_face() {
-        use crate::display::Framebuffer;
-        use crate::gfx::{Layer, Painter, Transform};
-        let mut fb = Framebuffer::new();
-        let mut layer = Layer::new();
-        let mut z = DepthBuffer::new();
+    fn time_a_frame() {
+        let mut faces = [Framebuffer::new(); 6];
+        let mut canvas = Canvas::new();
         let n = 2000;
         let start = std::time::Instant::now();
         let mut rays = 0;
         for i in 0..n {
-            let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
-            rays += draw(&mut p, &mut z, Scene::Tumbling(i as f32 * 0.016), 0.0, 1.0).ray_tests;
+            rays += canvas.draw(Scene::Tumbling(i as f32 * 0.016)).ray_tests;
+            for fb in &mut faces {
+                canvas.lay_onto(fb, Quarter::R90, 1.0);
+            }
         }
         let each = start.elapsed() / n;
-        std::println!("{each:?} per face, {} rays on average", rays / n);
+        std::println!("{each:?} per frame, {} rays on average", rays / n);
+    }
+
+    #[test]
+    fn every_face_shows_the_pigs_it_would_have_cast_itself() {
+        use crate::gfx::Layer;
+        let scene = Scene::Tumbling(0.7);
+        let mut canvas = Canvas::new();
+        canvas.draw(scene);
+        for rot in [Quarter::R0, Quarter::R90, Quarter::R180, Quarter::R270] {
+            let mut shared = Framebuffer::new();
+            canvas.lay_onto(&mut shared, rot, 1.0);
+            // Cast straight onto a face turned by `rot`, as the icon is.
+            let mut own = Framebuffer::new();
+            let mut layer = Layer::new();
+            let mut p = Painter::new(&mut own, &mut layer, Transform::quarter(rot));
+            let xf = p.xf;
+            let fb = p.framebuffer();
+            let (states, view) = layout(scene);
+            let mut z = [0u16; PIXELS];
+            render(xf, &mut z, Region::FACE, &states, view, |x, y, lit, c| {
+                let under = fb.pixel(x, y) as f32;
+                fb.set_pixel(x, y, (under + (lit - under) * c) as u8);
+            });
+            for (i, (a, b)) in shared.pixels().iter().zip(own.pixels()).enumerate() {
+                assert!(a.abs_diff(*b) <= 2, "{rot:?} pixel {i}: {a} vs {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn pigs_at_rest_are_cast_once() {
+        let at = |u: f32, shrink: f32| Scene::Settling {
+            land: 1.0,
+            u,
+            shrink,
+            poses: [Pose::Feet, Pose::Back],
+            touching: false,
+        };
+        let mut canvas = Canvas::new();
+        assert!(canvas.draw(at(0.5, 0.0)).ray_tests > 0);
+        assert!(canvas.draw(at(1.0, 1.0)).ray_tests > 0);
+        assert_eq!(
+            canvas.draw(at(1.4, 1.0)).ray_tests,
+            0,
+            "past the settle, nothing moves"
+        );
+        assert_eq!(canvas.draw(at(3.0, 1.0)).ray_tests, 0);
+        assert!(canvas.draw(Scene::Tumbling(0.2)).ray_tests > 0);
     }
 
     #[test]
