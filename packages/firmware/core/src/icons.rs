@@ -40,6 +40,12 @@ pub fn draw_setup_icon<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, cx: f32, cy:
     }
 }
 
+/// A banknote on its own, as the setup icon draws it (Pass the Pot's bills
+/// in hand).
+pub fn draw_banknote<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, alpha: f32) {
+    banknote(c, cx, cy, r, Style::new(FG, alpha, GLOW));
+}
+
 fn strokes<A: AssetStore>(c: &mut Ctx<A>, paths: &[&[P]], style: Style) {
     c.painter.stroke_paths(paths, LINE, style);
 }

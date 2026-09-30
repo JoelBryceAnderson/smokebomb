@@ -214,6 +214,7 @@ The boot is interrupted by a throw or by opening the menu.
   - Fades in over 0.35 s and out over 0.6 s, at 85% alpha.
   - Font 700, size `fitPx(label, 28)` at y = +44: at most 28 canvas, shrinking so the label fits 150 canvas (87 px) wide.
   - An **icon** sits above the name, centred at y = −21 with radius 36 canvas, in line art (2.6 canvas stroke, same glow and alpha as the text): a wireframe of the die's solid (tetrahedron d4, cube d6, octahedron d8, d10 kite, dodecahedron d12, icosahedron d20, a d10 kite with a % on its front for d100), a banknote for Pass the Pot, a bomb for Hot Potato. The count (`3d6`, `×2`) is only in the name. Drawn in `icons.rs`; the `setup-icons` snapshot shows all of them.
+- **Pass the Pot's bills screen.** In Pass the Pot the wake label is the bills in hand instead of the icon and name: three banknotes in a row (radius 18, 46 canvas apart, centred at y −18) with the ones rolled lit and the rest at 20% alpha, `3 bills` (26) at y +34, and `tap to change` (14, 60% alpha) at y +60. A deliberate tap (short, on a resting die, as Pig Toss banks) between rolls puts the last result away and shows this screen; a deliberate tap while it's up takes a bill away, wrapping from 1 back to 3, with a tick haptic. The count is the same `pot_count` the Bills in hand menu page sets. Picking the die up doesn't change it.
 - **Setup changes, the end of boot, and closing the menu** (saved *or* discarded): the wake label shows for **2.2 s**.
 - **Default setup** at power-on: a single d20 (`d20`).
 - **Label formats:**
@@ -391,7 +392,7 @@ Mockup input: a swipe of more than 36 px (by dominant direction), or the arrow k
     - Without parts: at y −12 (px 41.1).
   - **Parts line** (pools only, when "a+b+c" is ≤18 characters): 600, 17 (9.8 px), or 14 (8.1 px) if longer than 10 characters; 70% alpha; at y −60 (px 13.3).
   - **Label:** 600, `fitPx(label, 22)` ≤12.7 px, at y +56 with parts or +54 without (px 80.4 / 79.2). The text is the setup label, e.g. `2d20`.
-- **Pass the Pot layout:** glyphs in a row at y −12.
+- **Pass the Pot layout:** glyphs in a row at y −12. The label under them says what to do, not the setup: `1 left · 1 pot`, counting left, right and pot in that order and leaving out the keeps, or `keep` (one bill) / `keep all` when nothing moves.
   - Size per glyph: 64 for 1 die, 50 for 2, 40 for 3 (37 / 29 / 23 px); gap = 1.15 × size.
 
   | Glyph | Drawing |

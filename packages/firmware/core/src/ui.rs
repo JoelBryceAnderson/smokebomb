@@ -333,6 +333,18 @@ impl Ui {
         self.wake(now, WAKE_AFTER_TAP_MS);
     }
 
+    /// The setup label is up with nothing over it: Pass the Pot's bills
+    /// screen, where a tap changes the count.
+    pub fn label_up(&self, now: u64) -> bool {
+        self.boot.is_none() && !self.blackout() && self.result_alpha(now) == 0.0 && self.wake_alpha(now) > 0.0
+    }
+
+    /// Put the result away: in Pass the Pot the next player has the die.
+    pub fn dismiss_result(&mut self) {
+        self.result = None;
+        self.special = None;
+    }
+
     /// Any touch brings back a dimmed result for a while (C6).
     pub fn touch(&mut self, now: u64) {
         if let Some((reveal, dim)) = self.result {

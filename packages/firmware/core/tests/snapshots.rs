@@ -671,6 +671,27 @@ fn throw_smoke() {
 /// The Smoke setting is the third Settings item: Off, Light, Full.
 const SMOKE_ITEM: usize = 2;
 
+/// Pass the Pot between rolls: a tap shows the bills in hand, and each tap
+/// while they're up takes one away, wrapping from 1 back to 3.
+#[test]
+fn pot_bills() {
+    let run = Run::new().with_settings(|s| {
+        s.modes = true;
+        s.play = smokebomb_core::menu::PlayMode::PassThePot;
+    });
+    run_timeline(
+        "pot-bills",
+        run,
+        &[9.5, 10.3, 11.1, 11.9],
+        vec![
+            (9.0, Run::tap),
+            (9.8, Run::tap),
+            (10.6, Run::tap),
+            (11.4, Run::tap),
+        ],
+    );
+}
+
 #[test]
 fn throw_money() {
     let run =

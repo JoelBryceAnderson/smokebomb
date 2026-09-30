@@ -7,6 +7,7 @@ use core::fmt::Write as _;
 use heapless::{String, Vec};
 use libm::{cosf, floorf, powf, roundf, sinf, sqrtf};
 use smokebomb_hal::AssetStore;
+use smokebomb_shared::types::MAX_POT_DICE;
 use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
 use crate::display::{DUD, FG};
@@ -195,6 +196,10 @@ pub fn setup_label(die: DieKind, count: u8) -> String<24> {
 /// The wake/setup label: the setup's icon (a die's solid, a bomb, a banknote)
 /// above its name, at `alpha` (already including the 85%).
 pub fn draw_wake_label<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, label: &str, alpha: f32) {
+    if let Setup::Roll(DieKind::PassThePot, n) = setup {
+        draw_bills_in_hand(c, n, alpha);
+        return;
+    }
     crate::icons::draw_setup_icon(c, setup, 0.0, -21.0, 36.0, alpha);
     c.text(
         label,
@@ -203,6 +208,20 @@ pub fn draw_wake_label<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, label: &str,
         fit_px(label, 28, 150.0),
         Style::new(FG, alpha, 8.0),
     );
+}
+
+/// Pass the Pot between rolls: three bills with the ones you roll lit, how
+/// many that is, and that a tap changes it (C2).
+fn draw_bills_in_hand<A: AssetStore>(c: &mut Ctx<A>, n: u8, alpha: f32) {
+    for i in 0..MAX_POT_DICE {
+        let x = (i as f32 - (MAX_POT_DICE as f32 - 1.0) / 2.0) * 46.0;
+        let a = if i < n as usize { alpha } else { alpha * 0.2 };
+        crate::icons::draw_banknote(c, x, -18.0, 18.0, a);
+    }
+    let mut label: String<16> = String::new();
+    let _ = write!(label, "{n} bill{}", if n == 1 { "" } else { "s" });
+    c.text(&label, 0.0, 34.0, 26, Style::new(FG, alpha, 8.0));
+    c.text("tap to change", 0.0, 60.0, 14, Style::new(FG, alpha * 0.6, 0.0));
 }
 
 // ---------- results (C6) ----------
@@ -230,6 +249,7 @@ pub fn draw_result<A: AssetStore>(c: &mut Ctx<A>, record: &RollRecord, special: 
     };
     let value = if special == Some(Special::Dud) { DUD } else { FG };
     if !record.die.is_numeric() {
+        let label = pot_summary(&record.values);
         draw_pot_tokens(c, &record.values, value, alpha);
         c.text(
             &label,
@@ -272,6 +292,30 @@ pub fn draw_result<A: AssetStore>(c: &mut Ctx<A>, record: &RollRecord, special: 
         let px = if parts.len() > 10 { 14 } else { 17 };
         c.text(&parts, 0.0, -60.0, px, Style::new(value, alpha * 0.7, 8.0));
     }
+}
+
+/// What a Pass the Pot throw asks for, in words: `1 left · 1 pot`, or
+/// `keep` / `keep all` when every bill stays.
+pub fn pot_summary(values: &[u8]) -> String<32> {
+    let (mut left, mut right, mut pot) = (0, 0, 0);
+    for &v in values {
+        match PotFace::from_raw(v) {
+            PotFace::Left => left += 1,
+            PotFace::Right => right += 1,
+            PotFace::Pot => pot += 1,
+            PotFace::Keep => {}
+        }
+    }
+    let mut s = String::new();
+    for (n, word) in [(left, "left"), (right, "right"), (pot, "pot")] {
+        if n > 0 {
+            let _ = write!(s, "{}{n} {word}", if s.is_empty() { "" } else { " · " });
+        }
+    }
+    if s.is_empty() {
+        let _ = write!(s, "{}", if values.len() > 1 { "keep all" } else { "keep" });
+    }
+    s
 }
 
 /// Pass the Pot glyphs in a row: arrows pass left or right, the pot glyph
@@ -1081,6 +1125,16 @@ pub fn draw_bolt<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pot_results_say_what_to_do() {
+        // Raw d6 values: 1 ←, 2 P, 3 →, 4–6 •.
+        assert_eq!(pot_summary(&[1, 2, 5]).as_str(), "1 left · 1 pot");
+        assert_eq!(pot_summary(&[3, 3, 1]).as_str(), "1 left · 2 right");
+        assert_eq!(pot_summary(&[2]).as_str(), "1 pot");
+        assert_eq!(pot_summary(&[4, 6]).as_str(), "keep all");
+        assert_eq!(pot_summary(&[5]).as_str(), "keep");
+    }
 
     #[test]
     fn setup_labels_match_the_mockup() {
