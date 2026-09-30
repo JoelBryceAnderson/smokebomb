@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { PANEL_SIZE, Pose, SpinAxis, TipDirection } from "./protocol";
-import { FINISHES, FinishKey, GLOW_INTENSITY, LIGHTING, SCREW_DARK } from "./finishes";
+import { FINISHES, FinishKey, LIGHTING, SCREW_DARK } from "./finishes";
 import { addContacts, addSeam, CHARGING_FACE, makeEtching } from "./shell";
 
 // Mockup scale (SIM_SPEC A1): 1 scene unit = 13.25 mm, 34 mm die, 2.5 mm edges.
@@ -333,8 +333,6 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
         shellMat.metalness = f.metalness;
         shellMat.roughness = f.roughness;
         shellMat.envMapIntensity = f.envMapIntensity;
-        shellMat.emissive.setHex(f.emissive ?? 0x000000);
-        shellMat.emissiveIntensity = f.emissive ? (night ? GLOW_INTENSITY.night : GLOW_INTENSITY.day) : 0;
         contactMat.color.setHex(f.contact.color);
         contactMat.metalness = f.contact.metalness;
         contactMat.roughness = f.contact.roughness;

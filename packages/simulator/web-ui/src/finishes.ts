@@ -3,7 +3,7 @@
 // column (the mockup's r128 fed the linear values straight into the shader).
 // Screens are never tinted by a finish.
 
-export type FinishKey = "stealth" | "chrome" | "ceramic" | "glow" | "gold" | "rainbow";
+export type FinishKey = "stealth" | "white" | "gold" | "rainbow";
 
 export interface Finish {
   key: FinishKey;
@@ -13,8 +13,6 @@ export interface Finish {
   metalness: number;
   roughness: number;
   envMapIntensity: number;
-  /** Emissive sRGB hex (glow ceramic). */
-  emissive?: number;
   /** Plating of the four charging-face contacts (brief §4). sRGB hex. */
   contact: { color: number; metalness: number; roughness: number };
   /** Per-pixel heat-tint shader (titanium). */
@@ -32,33 +30,15 @@ export const FINISHES: Finish[] = [
     envMapIntensity: 1,
     contact: { color: 0x76777c, metalness: 1, roughness: 0.3 },
   },
+  // Fine bead-blasted titanium under a pale PVD: a frosty, silvery white.
   {
-    key: "chrome",
-    label: "Polished chrome",
-    color: 0xccd0d4,
-    metalness: 1,
-    roughness: 0.04,
+    key: "white",
+    label: "White titanium",
+    color: 0xf3f3f1,
+    metalness: 0.85,
+    roughness: 0.45,
     envMapIntensity: 1,
-    contact: { color: 0xcdd1d5, metalness: 1, roughness: 0.06 },
-  },
-  {
-    key: "ceramic",
-    label: "White ceramic",
-    color: 0xf9f8f6,
-    metalness: 0,
-    roughness: 0.22,
-    envMapIntensity: 1,
-    contact: { color: 0x76777c, metalness: 1, roughness: 0.3 },
-  },
-  {
-    key: "glow",
-    label: "Glow ceramic",
-    color: 0xf4f7f4,
-    metalness: 0,
-    roughness: 0.3,
-    envMapIntensity: 1,
-    contact: { color: 0x76777c, metalness: 1, roughness: 0.3 },
-    emissive: 0xbaffe3,
+    contact: { color: 0xe5e6e7, metalness: 1, roughness: 0.2 },
   },
   // 18k yellow gold: physical reflectance, with stronger reflections.
   {
@@ -83,9 +63,6 @@ export const FINISHES: Finish[] = [
 ];
 
 export const DEFAULT_FINISH: FinishKey = "stealth";
-
-/** Glow ceramic's emissive intensity by lighting. */
-export const GLOW_INTENSITY = { day: 0.05, night: 1.1 };
 
 /** Day and night lighting: tone-mapping exposure, key light and ambient. */
 export const LIGHTING = {

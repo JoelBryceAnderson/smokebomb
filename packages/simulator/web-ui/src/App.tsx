@@ -64,11 +64,6 @@ export function App() {
   const shaking = useRef(false);
 
   // The finish recolours the shell, contacts and (later) the Nest band, never the screens.
-  // Glow ceramic only reads in the dark, so choosing it switches to night.
-  const chooseFinish = (key: FinishKey) => {
-    setFinish(key);
-    if (key === "glow") setNight(true);
-  };
   useEffect(() => die.current?.setLook(finish, night), [finish, night]);
   useEffect(() => die.current?.setGlass(glass), [glass]);
   // Etched on the charging face: the last six hex digits of the die's serial, once a roll has shown it.
@@ -244,7 +239,7 @@ export function App() {
                 role="radio"
                 aria-checked={finish === f.key}
                 className={finish === f.key ? "chip on" : "chip"}
-                onClick={() => chooseFinish(f.key)}
+                onClick={() => setFinish(f.key)}
               >
                 {f.label}
               </button>
