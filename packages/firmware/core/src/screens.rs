@@ -14,6 +14,7 @@ use crate::font::{fit_px, Align, Fonts};
 use crate::gfx::{Painter, Style};
 use crate::menu::{Draft, Page, Setup};
 use crate::nest::{ChargeView, ClockView, Label, NestFace, Screen};
+use crate::pigs::{throw_label, Locked, Outcome, Throw, TARGET};
 use crate::smoke::Special;
 
 /// The lit area's half-size in canvas units.
@@ -305,6 +306,256 @@ fn draw_pot_tokens<A: AssetStore>(c: &mut Ctx<A>, values: &[u8], value: u8, alph
                 let head = [(x + d * (l - h), y - h), (x + d * l, y), (x + d * (l - h), y + h)];
                 c.painter.stroke_paths(&[&shaft, &head], sz * 0.1, style);
             }
+        }
+    }
+}
+
+// ---------- Pig Toss ----------
+
+/// When each part of the score sequence starts, in seconds after the die
+/// lands. The pigs settle first ([`crate::pigfx::SETTLE_S`]).
+pub mod pig_score {
+    /// The pigs move up and shrink.
+    pub const SHRINK_AT: f32 = 0.9;
+    pub const SHRINK_S: f32 = 0.4;
+    /// The throw's points pop in.
+    pub const POP_AT: f32 = 1.0;
+    pub const LABEL_AT: f32 = 1.3;
+    /// The turn's total counts up.
+    pub const TURN_AT: f32 = 1.8;
+    pub const COUNT_S: f32 = 0.8;
+    /// Whose turn it is, then the prompt in its place.
+    pub const WHO_AT: f32 = 2.6;
+    pub const PROMPT_AT: f32 = 3.4;
+}
+
+/// 0 before `at`, rising to 1 over `over` seconds.
+fn ramp(t: f32, at: f32, over: f32) -> f32 {
+    ((t - at) / over).clamp(0.0, 1.0)
+}
+
+/// What a throw says once the pigs have settled, `t` seconds after the die
+/// landed: the throw's points pop in big, the turn's points count up beside
+/// the player's total, and then the screen says what to do next. The pigs themselves are
+/// [`crate::pigfx`]. A bust dims to the dud colour and passes the die by
+/// itself, so it only asks for the next player to shake.
+pub fn draw_pig_score<A: AssetStore>(c: &mut Ctx<A>, throw: &Throw, t: f32, next_player: u8, alpha: f32) {
+    use pig_score::*;
+    let smooch = throw.outcome == Outcome::Smooch;
+    // A bust and a smooch both lose the turn and pass the die.
+    let lost = throw.outcome != Outcome::Score(0) && !matches!(throw.outcome, Outcome::Score(_));
+    let value = if lost { DUD } else { FG };
+    let style = |a: f32, glow: f32| Style::new(value, alpha * a, glow);
+    let banked = throw.banked_before;
+
+    // The big word or number, popping in and settling.
+    let pop = ramp(t, POP_AT, 0.35);
+    if pop > 0.0 {
+        let mut big: String<8> = String::new();
+        let _ = match throw.outcome {
+            Outcome::Smooch => write!(big, "SMOOCH!"),
+            Outcome::Bust => write!(big, "OOPS"),
+            Outcome::Score(p) => write!(big, "+{p}"),
+        };
+        let px = big_size(big.len()).min(52.0) * if smooch { 0.62 } else { 0.8 };
+        let over = 1.0 - pop;
+        c.text(
+            &big,
+            0.0,
+            -12.0,
+            roundf(px * (1.0 + 0.7 * over * over)) as u16,
+            style((pop * 3.0).min(1.0), 14.0),
+        );
+    }
+
+    let label_a = ramp(t, LABEL_AT, 0.25);
+    if label_a > 0.0 {
+        let mut label: String<32> = String::new();
+        let _ = match throw.outcome {
+            Outcome::Smooch => write!(label, "The pigs touched!"),
+            Outcome::Bust if throw.turn_before > 0 => write!(label, "Lost {}", throw.turn_before),
+            Outcome::Bust => write!(label, "Nothing to lose"),
+            Outcome::Score(_) => write!(label, "{}", throw_label(throw.poses, false)),
+        };
+        c.text(
+            &label,
+            0.0,
+            13.0,
+            fit_px(&label, 17, 150.0),
+            style(label_a * 0.85, 6.0),
+        );
+    }
+
+    let turn_a = ramp(t, TURN_AT, 0.25);
+    if turn_a > 0.0 {
+        let mut line: String<24> = String::new();
+        let _ = match throw.outcome {
+            // The whole banked score counts down to nothing.
+            Outcome::Smooch if banked > 0 => {
+                let k = ramp(t, TURN_AT, COUNT_S);
+                let shown = roundf(banked as f32 * (1.0 - k * k)) as u16;
+                write!(line, "Score {shown}")
+            }
+            Outcome::Smooch | Outcome::Bust => write!(line, "Pass to P{}", next_player + 1),
+            Outcome::Score(p) => {
+                // Counts up from what the turn was to what it is now.
+                let k = ramp(t, TURN_AT, COUNT_S);
+                let eased = 1.0 - (1.0 - k) * (1.0 - k);
+                let turn = throw.turn_before + roundf(p as f32 * eased) as u16;
+                // The turn's points, then what the player would have in all.
+                write!(line, "{turn} · {}", banked + turn)
+            }
+        };
+        c.text(&line, 0.0, 36.0, fit_px(&line, 24, 150.0), style(turn_a, 10.0));
+    }
+
+    // The bottom row: whose turn it is, then what to do next.
+    let prompt = ramp(t, PROMPT_AT, 0.3);
+    let who_a = ramp(t, WHO_AT, 0.25) * (1.0 - prompt);
+    if who_a > 0.0 && !lost {
+        let mut who: String<24> = String::new();
+        let _ = write!(who, "P{}", throw.player + 1);
+        c.text(&who, 0.0, 66.0, 14, style(who_a * 0.7, 0.0));
+    }
+    if prompt > 0.0 {
+        if lost {
+            let mut line: String<24> = String::new();
+            let _ = write!(line, "P{}: shake to roll", next_player + 1);
+            c.text(
+                &line,
+                0.0,
+                66.0,
+                fit_px(&line, 15, 150.0),
+                style(prompt * 0.9, 6.0),
+            );
+        } else {
+            c.text("Shake to roll again", 0.0, 56.0, 14, style(prompt * 0.7, 0.0));
+            // The action that matters breathes a little. Banking what is
+            // enough to reach the target wins, so it says so.
+            let breathe = 0.85 + 0.15 * sinf((t - PROMPT_AT) * 4.0);
+            let turn = throw.turn_before
+                + if let Outcome::Score(p) = throw.outcome {
+                    p
+                } else {
+                    0
+                };
+            let line = if banked + turn >= TARGET {
+                "Tap top to WIN!"
+            } else {
+                "Tap top to bank & pass"
+            };
+            c.text(
+                line,
+                0.0,
+                72.0,
+                fit_px(line, 15, 150.0),
+                style(prompt * breathe, 6.0),
+            );
+        }
+    }
+}
+
+/// When each part of the lock-in starts, in seconds after the tap.
+pub mod lock_in {
+    /// The padlock closes.
+    pub const SNAP_AT: f32 = 0.55;
+    /// The banked points turn into the new total, and it counts up.
+    pub const COUNT_AT: f32 = 0.8;
+    pub const COUNT_S: f32 = 0.9;
+    /// Who has the die next.
+    pub const NEXT_AT: f32 = 2.0;
+}
+
+/// A bank locking in, `t` seconds after the tap: a padlock swings shut with
+/// a flash and a burst of sparks, the banked points turn into the player's
+/// new total and count up, then the screen says who has the die. `fade`
+/// (0–1) takes it away when it has been up a while.
+pub fn draw_locked<A: AssetStore>(c: &mut Ctx<A>, l: &Locked, t: f32, fade: f32) {
+    use core::f32::consts::PI;
+    use lock_in::*;
+    let alpha = ramp(t, 0.0, 0.15) * fade;
+    let style = |a: f32, glow: f32| Style::new(FG, alpha * a, glow);
+
+    // The padlock: open at first, its shackle lifted, then it drops shut.
+    let closing = (t / SNAP_AT).clamp(0.0, 1.0);
+    let lift = 13.0 * (1.0 - closing * closing);
+    let top = -26.0;
+    let snapped = t >= SNAP_AT;
+    let flash = if snapped {
+        (1.0 - (t - SNAP_AT) / 0.5).max(0.0)
+    } else {
+        0.0
+    };
+    let lock = style(1.0, 6.0 + 14.0 * flash);
+    let dark = Style::new(0, alpha, 0.0);
+    c.painter
+        .stroke_arc(0.0, top - lift, 13.0, PI, 2.0 * PI, 4.5, lock);
+    c.painter.stroke_paths(
+        &[
+            &[(-13.0, top - lift), (-13.0, top - lift + 11.0)],
+            &[(13.0, top - lift), (13.0, top - lift + 11.0)],
+        ],
+        4.5,
+        lock,
+    );
+    c.painter.fill_rect(-21.0, top, 42.0, 31.0, lock);
+    c.painter.fill_circle(0.0, top + 12.0, 4.5, dark);
+    c.painter.fill_rect(-1.6, top + 12.0, 3.2, 9.0, dark);
+
+    // The flash and the sparks as it snaps shut.
+    if snapped {
+        let u = ((t - SNAP_AT) / 0.55).min(1.0);
+        if u < 1.0 {
+            let ring = Style::new(FG, alpha * (1.0 - u), 8.0);
+            c.painter
+                .stroke_arc(0.0, top + 5.0, 26.0 + 46.0 * u, 0.0, 2.0 * PI, 3.0, ring);
+            for k in 0..10 {
+                let a = k as f32 * PI / 5.0 + 0.3;
+                let r = 30.0 + 40.0 * u * (0.7 + 0.3 * ((k % 3) as f32 / 2.0));
+                let dot = Style::new(FG, alpha * (1.0 - u), 4.0);
+                c.painter
+                    .fill_circle(cosf(a) * r, top + 5.0 + sinf(a) * r, 2.6 * (1.0 - 0.6 * u), dot);
+            }
+        }
+    }
+
+    // The number under it: the points, then the new total counting up.
+    let count = ramp(t, COUNT_AT, COUNT_S);
+    let eased = 1.0 - (1.0 - count) * (1.0 - count);
+    let mut big: String<8> = String::new();
+    let _ = if t < COUNT_AT {
+        write!(big, "+{}", l.points)
+    } else {
+        write!(big, "{}", l.before + roundf(l.points as f32 * eased) as u16)
+    };
+    let done = COUNT_AT + COUNT_S;
+    // A pulse as the count lands.
+    let pulse = if t >= done {
+        1.0 + 0.18 * (1.0 - (t - done) / 0.3).max(0.0)
+    } else {
+        1.0
+    };
+    let px = roundf(big_size(big.len()).min(52.0) * 0.85 * pulse) as u16;
+    c.text(&big, 0.0, 34.0, px, style(1.0, 12.0));
+
+    let next = ramp(t, NEXT_AT, 0.3);
+    if next > 0.0 {
+        if l.won {
+            let breathe = 0.8 + 0.2 * sinf((t - NEXT_AT) * 5.0);
+            let mut line: String<24> = String::new();
+            let _ = write!(line, "P{} WINS!", l.player + 1);
+            c.text(&line, 0.0, 64.0, 20, style(next * breathe, 8.0));
+            c.text("Tap top: new game", 0.0, 79.0, 12, style(next * 0.7, 0.0));
+        } else {
+            let mut line: String<24> = String::new();
+            let _ = write!(line, "P{} · shake to roll", l.next + 1);
+            c.text(
+                &line,
+                0.0,
+                66.0,
+                fit_px(&line, 16, 150.0),
+                style(next * 0.85, 4.0),
+            );
         }
     }
 }

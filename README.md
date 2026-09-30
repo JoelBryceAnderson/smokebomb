@@ -17,7 +17,9 @@ the real firmware, the backend that verifies rolls, and the phone app.
 - **Live smoke.** A particle simulation in firmware reacts to gravity,
   shaking and the landing face. Themes ship sprites and parameters, not frames.
 - **Game modes.** Dice, Pass the Pot (the menu page is the bills in your
-  hand) and Hot Potato (set a fuse length and pass it round).
+  hand) and Hot Potato (set a fuse length and pass it round),
+  and Pig Toss (two 3D pigs tumble across the screens instead of smoke and land
+  in scored poses; set 2–6 players, tap to bank and pass the die).
 - **On-die menu.** Press and hold a screen to open it, tip the die to move
   between pages and values, tap to edit a setting, hold to save. Turning
   several faces in one swipe steps several pages or values. Settings include
