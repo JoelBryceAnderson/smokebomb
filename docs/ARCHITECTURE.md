@@ -382,9 +382,11 @@ model with a scripted roll.
 ### Memory
 
 The nRF54L15's app core has **188 KB** of RAM: the rest of the chip's 256 KB
-is the FLPR core's. A build of the Zephyr app for the nRF54L15 DK (Zephyr,
-Bluetooth, NFC, and a stub in place of the Rust firmware) takes about 50 KB
-of it, leaving about 142 KB for the firmware.
+is the FLPR core's. Zephyr, Bluetooth, NFC and the stacks take about 51 KB
+of it. The board image for the nRF54L15 DK (`packages/firmware/zephyr`,
+built by CI's Zephyr image workflow, which reports its memory) uses
+**167,524 B of RAM (87%)** and **256,500 B of the app's 682 KB flash slot
+(37%)**; MCUboot, for updates, splits the internal flash into two slots.
 
 - **The firmware lives in a static.** `Firmware` is built in place in `.bss`
   (`Firmware::init`), never on the 8 KB main stack.
