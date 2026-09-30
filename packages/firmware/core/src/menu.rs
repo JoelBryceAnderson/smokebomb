@@ -11,7 +11,7 @@ use core::fmt::Write as _;
 
 use heapless::String;
 use smokebomb_shared::types::{MAX_DICE, MAX_POT_DICE};
-use smokebomb_shared::DieKind;
+use smokebomb_shared::{DieKind, ModeId, ModeSet};
 
 use crate::smoke::Amount;
 use crate::tips::TipDir;
@@ -118,6 +118,25 @@ impl PlayMode {
     /// Whether a throw rolls and signs dice in this mode.
     pub const fn rolls(self) -> bool {
         !matches!(self, PlayMode::HotPotato)
+    }
+
+    /// The mode's id on the wire and in the store.
+    pub const fn id(self) -> ModeId {
+        match self {
+            PlayMode::Dice => ModeId::Dice,
+            PlayMode::PassThePot => ModeId::PassThePot,
+            PlayMode::HotPotato => ModeId::HotPotato,
+            PlayMode::PigToss => ModeId::PigToss,
+        }
+    }
+
+    pub const fn from_id(id: ModeId) -> Self {
+        match id {
+            ModeId::Dice => PlayMode::Dice,
+            ModeId::PassThePot => PlayMode::PassThePot,
+            ModeId::HotPotato => PlayMode::HotPotato,
+            ModeId::PigToss => PlayMode::PigToss,
+        }
     }
 
     /// The menu's pages in this mode. Tipping left goes to the next one, so
@@ -259,9 +278,12 @@ impl Setup {
 /// and back leaves `3d6` as it was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
-    /// Whether the menu has a Mode page. Off, the die is always in Dice
-    /// mode and the menu is Count, Die, Settings.
-    pub modes: bool,
+    /// Modes this die holds a license for. Licenses are the die's, not
+    /// preferences: replacing the settings keeps them.
+    pub licensed: ModeSet,
+    /// Modes the owner has turned on from the phone. With only Dice among
+    /// the licensed ones, the menu has no Mode page: Count, Die, Settings.
+    pub enabled: ModeSet,
     pub play: PlayMode,
     pub die: DieKind,
     pub count: u8,
@@ -297,7 +319,9 @@ impl Default for Settings {
     fn default() -> Self {
         // The mockup's default setup: a single d20.
         Self {
-            modes: true,
+            // Every mode so far ships free; store modes will start unlicensed.
+            licensed: ModeSet::ALL,
+            enabled: ModeSet::ALL,
             play: PlayMode::Dice,
             die: DieKind::D20,
             count: 1,
@@ -339,9 +363,20 @@ impl Settings {
         MS[self.choices[SLEEP] as usize % MS.len()]
     }
 
-    /// The mode in use: always Dice when the menu has no Mode page.
+    /// The modes the Mode page offers: licensed and turned on. Dice is
+    /// always among them.
+    pub fn modes(&self) -> ModeSet {
+        self.licensed.intersect(self.enabled).with(ModeId::Dice)
+    }
+
+    /// Whether the menu has a Mode page: only when there's a choice.
+    pub fn mode_page(&self) -> bool {
+        self.modes().len() > 1
+    }
+
+    /// The mode in use: Dice when the saved one is no longer offered.
     pub fn play(&self) -> PlayMode {
-        if self.modes {
+        if self.modes().contains(self.play.id()) {
             self.play
         } else {
             PlayMode::Dice
@@ -374,7 +409,8 @@ impl Settings {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Draft {
     pub page: Page,
-    pub modes: bool,
+    /// The modes the Mode page offers ([`Settings::modes`]).
+    pub modes: ModeSet,
     pub play: PlayMode,
     pub die: DieKind,
     pub count: u8,
@@ -391,8 +427,8 @@ impl Draft {
     /// The menu opens on the current mode's first page.
     pub fn new(s: &Settings) -> Self {
         Self {
-            page: s.play().home(s.modes),
-            modes: s.modes,
+            page: s.play().home(s.mode_page()),
+            modes: s.modes(),
             play: s.play(),
             die: s.die,
             count: s.count,
@@ -407,7 +443,7 @@ impl Draft {
 
     /// The pages the draft can tip through.
     pub fn ring(&self) -> &'static [Page] {
-        self.play.ring(self.modes)
+        self.play.ring(self.modes.len() > 1)
     }
 
     /// Where the page sits in this mode's ring, for the page dots.
@@ -427,8 +463,12 @@ impl Draft {
                 let by = if dir == TipDir::Up { 1 } else { -1 };
                 match self.page {
                     Page::Mode => {
-                        let i = PlayMode::ALL.iter().position(|m| *m == self.play).unwrap_or(0);
-                        next.play = PlayMode::ALL[step(i, by, PlayMode::ALL.len())];
+                        let mut offered = heapless::Vec::<PlayMode, 8>::new();
+                        for m in PlayMode::ALL.into_iter().filter(|m| self.modes.contains(m.id())) {
+                            let _ = offered.push(m);
+                        }
+                        let i = offered.iter().position(|m| *m == self.play).unwrap_or(0);
+                        next.play = offered[step(i, by, offered.len())];
                     }
                     Page::Count => {
                         next.count = step(self.count as usize - 1, by, MAX_DICE) as u8 + 1;
@@ -522,7 +562,8 @@ impl Draft {
     /// The setup the draft would save.
     pub fn setup(&self) -> Setup {
         let mut s = Settings {
-            modes: self.modes,
+            licensed: self.modes,
+            enabled: self.modes,
             ..Settings::default()
         };
         self.commit(&mut s);
@@ -532,7 +573,8 @@ impl Draft {
     /// The die and count the draft would roll.
     pub fn active(&self) -> (DieKind, u8) {
         let mut s = Settings {
-            modes: self.modes,
+            licensed: self.modes,
+            enabled: self.modes,
             ..Settings::default()
         };
         self.commit(&mut s);
@@ -725,7 +767,7 @@ mod tests {
     #[test]
     fn without_modes_the_menu_is_the_plain_dice_menu() {
         let s = Settings {
-            modes: false,
+            enabled: ModeSet::DICE,
             play: PlayMode::PassThePot,
             ..Settings::default()
         };
@@ -735,6 +777,46 @@ mod tests {
         assert_eq!(d.tipped(TipDir::Right).page, Page::Settings);
         assert_eq!(d.tipped(TipDir::Left).page, Page::Die);
         assert_eq!(d.ring().len(), 3);
+    }
+
+    #[test]
+    fn the_mode_page_offers_only_licensed_modes_that_are_turned_on() {
+        let s = Settings {
+            licensed: ModeSet::DICE.with(ModeId::HotPotato).with(ModeId::PigToss),
+            enabled: ModeSet::ALL.without(ModeId::PigToss),
+            ..Settings::default()
+        };
+        assert_eq!(s.modes(), ModeSet::DICE.with(ModeId::HotPotato));
+        let mode = Draft::new(&s).tipped(TipDir::Right);
+        assert_eq!(mode.page, Page::Mode);
+        assert_eq!(mode.tipped(TipDir::Up).play, PlayMode::HotPotato);
+        assert_eq!(mode.tipped(TipDir::Up).tipped(TipDir::Up).play, PlayMode::Dice);
+        assert_eq!(mode.tipped(TipDir::Down).play, PlayMode::HotPotato);
+    }
+
+    #[test]
+    fn dice_is_always_on_and_a_mode_turned_off_falls_back_to_it() {
+        let mut s = Settings {
+            enabled: ModeSet::EMPTY,
+            play: PlayMode::PigToss,
+            ..Settings::default()
+        };
+        assert_eq!(s.modes(), ModeSet::DICE);
+        assert!(!s.mode_page());
+        assert_eq!(s.play(), PlayMode::Dice);
+        s.enabled = ModeSet::DICE.with(ModeId::PigToss);
+        assert!(s.mode_page());
+        assert_eq!(s.play(), PlayMode::PigToss, "the saved mode comes back");
+        s.licensed = ModeSet::DICE;
+        assert_eq!(s.play(), PlayMode::Dice, "not without a license");
+    }
+
+    #[test]
+    fn play_modes_map_to_their_wire_ids() {
+        for m in PlayMode::ALL {
+            assert_eq!(PlayMode::from_id(m.id()), m);
+        }
+        assert_eq!(PlayMode::ALL.map(PlayMode::id), ModeId::ALL);
     }
 
     #[test]

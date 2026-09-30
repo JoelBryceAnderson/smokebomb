@@ -14,8 +14,10 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
 
+    <!-- Cleartext for the desktop simulator link (ws:// on the local network). -->
     <application
         android:label="Sugarcube"
+        android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
             android:name=".MainActivity"

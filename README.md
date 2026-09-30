@@ -46,7 +46,8 @@ Where each area stands. Update this table when something changes.
 | Server: accounts and auth, roll storage, sessions, theme purchase | 🧪 Stubbed | Endpoints exist; see [API](docs/API.md) |
 | nRF54L15 hardware drivers, Zephyr shell, MCUboot and DFU | 🗓 Planned | The board HAL is a stub |
 | BLE message framing, settings and roll chain persisted to flash | 🗓 Planned | Types are defined, not yet serialised |
-| Phone app: navigation and screens | 🧪 Stubbed | Real BLE, NFC and the API client are not wired up |
+| Phone app: navigation and screens | 🧪 Stubbed | Drives the simulator over the network; real BLE, NFC and the API client are not wired up |
+| Store: modes and themes | 🧪 Started | Die offers licensed + enabled modes; app has mode switches. See [Store](docs/STORE.md) |
 
 The full list of gaps is at the end of the
 [architecture doc](docs/ARCHITECTURE.md#not-yet-built).
@@ -89,3 +90,4 @@ database and the tests, see [Getting started](docs/GETTING_STARTED.md).
 - [Getting started](docs/GETTING_STARTED.md): building and running each piece
 - [API](docs/API.md): REST endpoints and their status
 - [Simulator spec](docs/SIM_SPEC.md): how the die looks and behaves, which began as a 1:1 copy of the interactive mockup
+- [Store](docs/STORE.md): selling modes and themes, licenses, choosing a die's modes from the app

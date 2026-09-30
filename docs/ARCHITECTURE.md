@@ -173,8 +173,10 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   roll, up to three; everyone starts with three). The Mode page is one tip right of the
   first page, so the dice flow is as short as it was. The dice setup and
   each game's options are saved apart, and `Settings::active()` gives the
-  die and count a throw rolls. `Settings.modes = false` removes the Mode
-  page (most snapshot scenarios use this).
+  die and count a throw rolls. The Mode page offers the modes that are
+  both licensed and turned on from the phone (`Settings.licensed`,
+  `Settings.enabled`; see [STORE.md](STORE.md)). With Dice alone there is
+  no Mode page (most snapshot scenarios use this).
 - **Hot Potato** (`potato.rs`). A game that doesn't roll. The pure `Potato`
   machine (Idle, Lit, Boom) takes the time and a fuse the firmware drew from
   the RNG, and returns `PotatoCommand`s (ignite, tick, boom, clear) that the firmware turns into haptics and smoke. In this mode
@@ -437,6 +439,9 @@ result (placeholder digits until the renderer lands).
 - **Outputs:** frames are pushed only when `frame_seq` changes. Rolls are sent
   with their digest and signature. `GET /api/device` returns the simulated
   die's serial and public key, so it can be registered with a local backend.
+- **Phone link:** `/phone` speaks the phone app's BLE messages
+  (`PhoneToDie` / `DieToPhone`) as JSON, handled between firmware ticks, so the
+  app can use the simulator as its die (`phone.rs`, [STORE.md](STORE.md#simulator-link)).
 - The simulated secure element uses a fixed, publicly known key. The server
   must never accept that key outside development.
 
@@ -516,6 +521,9 @@ and iOS arm64 plus the arm64 simulator.
   `PlatformContext` is a typealias for `Context`; on iOS it is a singleton.
   Both platform managers are stubs, with notes on the CoreBluetooth and
   android.bluetooth.le APIs they will use.
+  `SimulatorLink` is a third implementation that reaches the desktop
+  simulator's `/phone` WebSocket with Ktor, and `DieLinks` switches the app
+  between it and Bluetooth (see [STORE.md](STORE.md#simulator-link)).
 - `iosApp/`: a SwiftUI host that embeds `MainViewController()`. The Xcode
   project is generated from `project.yml` with XcodeGen, so no `.pbxproj` is
   kept in git.

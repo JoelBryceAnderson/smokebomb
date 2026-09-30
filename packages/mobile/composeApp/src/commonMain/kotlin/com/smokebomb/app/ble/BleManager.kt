@@ -1,5 +1,8 @@
 package com.smokebomb.app.ble
 
+import com.smokebomb.shared.DieKind
+import com.smokebomb.shared.Inventory
+import com.smokebomb.shared.ModeId
 import com.smokebomb.shared.SignedRoll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +20,9 @@ interface BleManager {
     /** Signed rolls pushed by the connected die as they happen. */
     val rolls: Flow<SignedRoll>
 
+    /** The connected die's modes, as it last reported them; null when not connected. */
+    val inventory: StateFlow<Inventory?>
+
     fun startScan()
     fun stopScan()
     suspend fun connect(die: DiscoveredDie)
@@ -24,6 +30,15 @@ interface BleManager {
 
     /** Pull rolls made while the phone was away. */
     suspend fun syncHistory(sinceCounter: Long): List<SignedRoll>
+
+    /**
+     * Choose which licensed modes the die's Mode page offers
+     * (`PhoneToDie::SetEnabledModes`). The die answers with a new [inventory].
+     */
+    suspend fun setEnabledModes(modes: Set<ModeId>)
+
+    /** Set up the dice a throw rolls (`PhoneToDie::SetDie`); Pass the Pot switches to that game. */
+    suspend fun setDie(kind: DieKind, count: Int)
 }
 
 data class DiscoveredDie(val id: String, val name: String, val rssi: Int)
