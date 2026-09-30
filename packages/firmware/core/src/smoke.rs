@@ -47,6 +47,14 @@ const BILL_ASPECT: f32 = 0.5;
 /// drawn solid, over what is behind them, and shaded as they turn.
 const BILL_PAPER: f32 = 250.0;
 const BILL_INK: f32 = 60.0;
+/// The face and shoulders, as a fraction of the paper.
+const BILL_TONE: f32 = 0.62;
+/// A bill's life and landing linger, against smoke's.
+const BILL_LIFE: f32 = 0.55;
+/// Where the corner `$`s sit and how big they are, in half-heights.
+const CORNER_X: f32 = 1.55;
+const CORNER_Y: f32 = 0.6;
+const CORNER_SCALE: f32 = 0.4;
 /// Held smoke added per frame while shaking, at most.
 const SHAKE_SPAWN_PER_FRAME: usize = 14;
 /// Timing slack at a boundary frame (s): well under a frame, well over f32
@@ -282,6 +290,15 @@ impl Smoke {
         }
     }
 
+    /// Bills are big, so they are gone sooner than smoke.
+    fn life_scale(&self) -> f32 {
+        if self.money {
+            BILL_LIFE
+        } else {
+            1.0
+        }
+    }
+
     fn full(&self) -> usize {
         let puffs = if self.lean() { FULL_REDUCED } else { FULL };
         // A bill is bigger than a puff: fewer of them.
@@ -344,21 +361,22 @@ impl Smoke {
     /// with a top-up and a scatter of embers.
     pub fn land(&mut self) {
         let now = self.time;
+        let linger = self.life_scale();
         for i in 0..self.particles.len() {
             if self.particles[i].hold {
-                let max = 2.0 + self.rng.r() * 1.4;
+                let max = (2.0 + self.rng.r() * 1.4) * self.life_scale();
                 let q = &mut self.particles[i];
                 q.hold = false;
                 q.life = 0.0;
                 q.max = max;
-                q.linger = now + 0.6;
+                q.linger = now + 0.6 * linger;
             }
         }
         let before = self.particles.len();
         let top_up = libm::roundf(self.full() as f32 * (1.0 - 0.8 * self.charge)) as usize;
         self.spawn(SpriteKind::Smoke, top_up, Where::All);
         for q in &mut self.particles[before..] {
-            q.linger = now + 0.6;
+            q.linger = now + 0.6 * linger;
         }
         let embers = if self.lean() { EMBERS_REDUCED } else { EMBERS };
         self.spawn(SpriteKind::Ember, embers, Where::All);
@@ -549,7 +567,10 @@ impl Smoke {
 
     // ---------- spawning (SIM_SPEC D3) ----------
 
-    fn push(&mut self, q: Particle) {
+    fn push(&mut self, mut q: Particle) {
+        if self.money && q.kind == SpriteKind::Smoke {
+            q.max *= BILL_LIFE;
+        }
         if self.amount == Amount::Off && matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember) {
             return;
         }
@@ -871,27 +892,91 @@ fn stamp_bill(fb: &mut Framebuffer, face: Face, p: [f32; 3], bill: &Bill) {
             }
             // Curl: the bill bows along its length, brighter on the crest.
             let curl = 1.0 - 0.3 * v * v + 0.12 * u;
-            let inked = au > 1.0 - edge_u || av > 1.0 - edge_v || dollar(u * l / w0, v * squareness);
-            let level = if inked { BILL_INK } else { BILL_PAPER * curl } * shade;
+            let ink = match bill_mark(u * l / w0, v * squareness) {
+                _ if au > 1.0 - edge_u || av > 1.0 - edge_v => Mark::Ink,
+                mark => mark,
+            };
+            let level = match ink {
+                Mark::Ink => BILL_INK,
+                Mark::Tone => BILL_PAPER * BILL_TONE,
+                Mark::None => BILL_PAPER * curl,
+            } * shade;
             fb.blend(x, y, level, bill.alpha);
         }
     }
 }
 
-/// Whether (`x`, `y`) is on a `$`, in units of the bill's half-height with
-/// the bill's centre at the origin and `y` up the bill's short side: an S of
-/// two stacked arcs with a bar through it.
-fn dollar(x: f32, y: f32) -> bool {
+/// What is printed at a point on a bill.
+#[derive(Clone, Copy, PartialEq)]
+enum Mark {
+    None,
+    /// A mid tone (the face).
+    Tone,
+    Ink,
+}
+
+/// What is printed at (`x`, `y`), in units of the bill's half-height with
+/// the bill's centre at the origin and `y` up its short side: a portrait in
+/// the middle, framed by an oval, and a `$` in each corner.
+fn bill_mark(x: f32, y: f32) -> Mark {
+    let corner = dollar(
+        (libm::fabsf(x) - CORNER_X) / CORNER_SCALE,
+        (libm::fabsf(y) - CORNER_Y) * if y < 0.0 { -1.0 } else { 1.0 } / CORNER_SCALE,
+        0.2,
+        0.14,
+    );
+    if corner {
+        Mark::Ink
+    } else {
+        portrait(x, y)
+    }
+}
+
+/// A bust in an oval frame: head, shoulders and a pair of eyes.
+fn portrait(x: f32, y: f32) -> Mark {
+    let ring = sqrtf((x / 0.72) * (x / 0.72) + (y / 0.9) * (y / 0.9));
+    if ring > 1.0 {
+        return Mark::None;
+    }
+    if ring > 0.86 {
+        return Mark::Ink;
+    }
+    // Head: an ellipse above the middle, its outline and its eyes.
+    let (hx, hy) = (x / 0.24, (y - 0.2) / 0.3);
+    let head = sqrtf(hx * hx + hy * hy);
+    let eye = |ex: f32| {
+        let (dx, dy) = (x - ex, y - 0.26);
+        dx * dx + dy * dy < 0.0016
+    };
+    if head < 1.0 {
+        return if eye(-0.09) || eye(0.09) || head > 0.78 {
+            Mark::Ink
+        } else {
+            Mark::Tone
+        };
+    }
+    // Shoulders: the top of a wide ellipse below the head.
+    let (sx, sy) = (x / 0.5, (y + 0.72) / 0.5);
+    let sh = sqrtf(sx * sx + sy * sy);
+    if y < -0.12 && sh < 1.0 {
+        return if sh > 0.75 { Mark::Ink } else { Mark::Tone };
+    }
+    Mark::None
+}
+
+/// Whether (`x`, `y`) is on a `$` of half-height about 0.85, its centre at the
+/// origin: an S of two stacked arcs with a bar through it. `stroke` and `bar`
+/// are half-widths, so a shrunk `$` can keep its lines a pixel wide.
+fn dollar(x: f32, y: f32, stroke: f32, bar: f32) -> bool {
     const R: f32 = 0.32;
-    const HALF_STROKE: f32 = 0.09;
     let arc = |cy: f32, keep: bool| {
         let (dx, dy) = (x, y - cy);
-        keep && libm::fabsf(sqrtf(dx * dx + dy * dy) - R) < HALF_STROKE
+        keep && libm::fabsf(sqrtf(dx * dx + dy * dy) - R) < stroke
     };
     // The upper arc is open at the lower right, the lower arc at the upper left.
     arc(R, !(x > 0.0 && y < R))
         || arc(-R, !(x < 0.0 && y > -R))
-        || (libm::fabsf(x) < 0.06 && libm::fabsf(y) < 0.85)
+        || (libm::fabsf(x) < bar && libm::fabsf(y) < 0.85)
 }
 
 // ---------- cube geometry ----------
@@ -1021,6 +1106,25 @@ mod tests {
             frames.iter().any(|f| f.pixels().iter().any(|&p| p > 0)),
             "bills are drawn without a sprite pack"
         );
+    }
+
+    #[test]
+    fn bills_clear_sooner_than_smoke() {
+        let clear_time = |money: bool| {
+            let mut s = smoke();
+            s.set_money(money);
+            s.throw();
+            s.land();
+            let mut t = 0.0;
+            while s.has_smoke() && t < 10.0 {
+                s.step(1.0 / 60.0);
+                t += 1.0 / 60.0;
+            }
+            t
+        };
+        let (smoke_t, bills_t) = (clear_time(false), clear_time(true));
+        assert!(bills_t < smoke_t * 0.7, "{bills_t} vs {smoke_t}");
+        assert!(bills_t < 2.5, "{bills_t}");
     }
 
     #[test]
