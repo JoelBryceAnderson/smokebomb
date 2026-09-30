@@ -23,8 +23,10 @@ name a required asset pack, which the phone installs with the license.
 The die enforces what it plays, not the app: a modified app must not be
 able to switch on a mode nobody paid for.
 
-- The server keeps purchases per **account** (`theme_purchases` today,
-  generalised to store items).
+- **Purchases follow the account, not the die.** The server keeps them
+  per account (`theme_purchases` today, generalised to store items), as the
+  App Store and Play keep non-consumable purchases per Apple ID or Google
+  account. A license on a die is only a copy of the purchase for that die.
 - When the owner installs an item on a die, the server issues a
   **license** for that die (`smokebomb_shared::License`):
 
@@ -40,11 +42,37 @@ able to switch on a mode nobody paid for.
   keeps it in internal flash. Licenses are the die's, not settings: loading
   or replacing settings never changes them (`Firmware::set_settings`).
 - An account can install an item on a limited number of dice (a server
-  setting, say 3). Selling a die with its licenses works because they're
-  bound to the die, not the account.
+  setting, say 3). The server records each license it issues, so it knows
+  which of the account's dice hold which items.
 - Dice mode is always licensed. The four current modes ship free, so a
   fresh die starts with all of them licensed; modes added later start
   unlicensed.
+
+## Handover and restore
+
+Because purchases follow the account, a die that changes hands leaves its
+licenses behind, and the old owner keeps everything they bought.
+
+- **Release.** The owner releases a die in the app (or factory resets it).
+  The phone tells the die to clear its licenses, and the server drops the
+  die from the account and frees its slots under the per-account die limit.
+- **Claim.** A new owner claims a die by pairing with it. Claiming always
+  resets the die first, which clears its licenses, so a used die arrives
+  with only the free modes, whatever the last owner did or didn't do.
+- **Restore.** On a claimed die, the app installs licenses for everything
+  the account owns ("Restore purchases", which the App Store requires for
+  non-consumables). The same happens on a new die, and after the owner
+  resets their own die.
+- **Offline gap.** The die has no internet, so it can't learn that it was
+  released. A die that is never reset or claimed keeps its licenses. That's
+  accepted: the per-account die limit bounds it, and nobody else can set up
+  that die without claiming it, which resets it.
+- **Family Sharing**, if turned on for store items, works the same way: a
+  family member's account owns the item too, so it installs on their dice.
+
+A "transfer with the die" option (the licenses go to the new owner's
+account and leave the old one) could be added later as an explicit choice.
+It isn't the default.
 
 ## Enabled modes
 
@@ -70,6 +98,7 @@ In `smokebomb_shared::protocol`, mirrored in Kotlin:
 | phone → die | `GetInventory` | Ask what the die can play |
 | phone → die | `SetEnabledModes(ModeSet)` | Choose the Mode page's modes |
 | phone → die | `InstallLicense(License)` | Unlock a store item |
+| phone → die | `ClearLicenses` | On release or claim: back to the free modes (planned) |
 | die → phone | `Inventory { licensed, enabled, active }` | The answer, and pushed on every change (including a mode picked on the die) |
 | phone → die | `BeginTheme`, `ThemeChunk`, `CommitTheme`, `SetTheme` | Theme upload and selection (planned) |
 
@@ -86,7 +115,12 @@ dropped connection never leaves a half-written theme in use.
 - `POST /v1/store/{slug}/purchase`: verify the App Store / Play receipt,
   record the purchase.
 - `POST /v1/devices/{serial}/licenses` `{ item }`: owner only; checks the
-  purchase and the per-account die limit, returns a signed `License`.
+  purchase and the per-account die limit, returns a signed `License` and
+  records it (`device_licenses`).
+- `GET /v1/devices/{serial}/licenses`: every license the owner's purchases
+  give this die, for restore.
+- Releasing a die (`DELETE /v1/devices/{serial}/owner`) deletes its
+  `device_licenses` rows and frees the slots.
 - The store signing key lives in the server's secrets (an HSM or KMS later),
   never in the repo.
 
@@ -123,6 +157,7 @@ simulated die. See [Getting started](GETTING_STARTED.md#the-app-with-the-simulat
 | `ModeId`, `ModeSet`, `License`, inventory messages (shared) | ✅ Defined |
 | Firmware: licensed and enabled sets, Mode page follows them, `inventory` / `set_enabled_modes` / `unlock_mode` | ✅ Working, tested |
 | Firmware: license signature check, store key, licenses in flash | 🗓 Planned |
+| Pairing, claim, release, restore; `ClearLicenses` | 🗓 Planned |
 | App: Modes and Dice sections on the Die tab | ✅ Working against the simulator; Bluetooth still stubbed |
 | Simulator link over WebSocket (`/phone`, `SimulatorLink`) | ✅ Working: modes, dice setup, live rolls |
 | Theme upload over BLE, theme selection | 🗓 Planned |
