@@ -26,4 +26,21 @@ class SharedModelsTest {
         assertEquals("d20", roll.copy(die = "d20", values = listOf(4)).notation)
         assertEquals("Pass the Pot ×2", roll.copy(die = "pass_the_pot").notation)
     }
+
+    @Test
+    fun modeSets() {
+        assertEquals(ModeId.PIG_TOSS, ModeId.fromWire("pig_toss"))
+        assertNull(ModeId.fromWire("chess"))
+        val all = ModeId.entries.toSet()
+        assertEquals(0b1111, ModeId.maskOf(all))
+        assertEquals(all, ModeId.setOf(0b1111))
+        assertEquals(setOf(ModeId.DICE), ModeId.setOf(1 or (1 shl 15)), "unknown bits are skipped")
+    }
+
+    @Test
+    fun inventoryRequestsKeepDiceAndDropUnlicensed() {
+        val inv = Inventory(setOf(ModeId.DICE, ModeId.HOT_POTATO), setOf(ModeId.DICE), ModeId.DICE)
+        assertEquals(setOf(ModeId.HOT_POTATO, ModeId.DICE), inv.request(setOf(ModeId.HOT_POTATO, ModeId.PIG_TOSS)))
+        assertEquals(setOf(ModeId.DICE), inv.request(emptySet()))
+    }
 }

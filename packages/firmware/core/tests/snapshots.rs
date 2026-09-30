@@ -25,6 +25,7 @@ use smokebomb_core::Firmware;
 use smokebomb_hal::{Face, FACE_COUNT};
 use smokebomb_hal_simulator::world::{TipDir, World, DEFAULT_VIEWER_RIGHT};
 use smokebomb_hal_simulator::{imu_script, SimHandle, SimPlatform};
+use smokebomb_shared::ModeSet;
 
 const FPS: f64 = 60.0;
 const SIDE: usize = 96;
@@ -94,7 +95,7 @@ impl Run {
         // Most menu scenarios were written for the plain three-page dice
         // menu; `menu-modes` covers the default one, with its Mode page.
         fw.set_settings(Settings {
-            modes,
+            enabled: if modes { ModeSet::ALL } else { ModeSet::DICE },
             ..Settings::default()
         });
         fw.smoke_mut().set_rng(SmokeRng::new(SMOKE_SEED));
@@ -459,7 +460,6 @@ fn setup_icons() {
 
     fn pick(run: &mut Run, play: PlayMode, die: DieKind) {
         run.fw.set_settings(Settings {
-            modes: true,
             play,
             die,
             ..Settings::default()
@@ -540,7 +540,7 @@ impl Run {
 
 fn pigs_scenario(name: &str, throw: Input) {
     let run = Run::new().with_settings(|s| {
-        s.modes = true;
+        s.enabled = ModeSet::ALL;
         s.play = smokebomb_core::menu::PlayMode::PigToss;
     });
     run_timeline(
@@ -575,7 +575,7 @@ fn pigs_smooch() {
 fn pigs_lock_in() {
     use smokebomb_core::pigs::Pose::*;
     let run = Run::new().with_settings(|s| {
-        s.modes = true;
+        s.enabled = ModeSet::ALL;
         s.play = smokebomb_core::menu::PlayMode::PigToss;
     });
     run_timeline(
@@ -591,7 +591,7 @@ fn pigs_lock_in() {
 fn pigs_smooch_wipes_the_score() {
     use smokebomb_core::pigs::Pose::*;
     let run = Run::new().with_settings(|s| {
-        s.modes = true;
+        s.enabled = ModeSet::ALL;
         s.play = smokebomb_core::menu::PlayMode::PigToss;
     });
     run_timeline(
@@ -613,7 +613,7 @@ fn pigs_smooch_wipes_the_score() {
 #[test]
 fn pigs_wake_label() {
     let run = Run::new().with_settings(|s| {
-        s.modes = true;
+        s.enabled = ModeSet::ALL;
         s.play = smokebomb_core::menu::PlayMode::PigToss;
     });
     run_timeline("pigs-wake", run, &[7.0, 7.5], vec![(6.6, Run::tap)]);
@@ -676,7 +676,7 @@ const SMOKE_ITEM: usize = 2;
 #[test]
 fn pot_bills() {
     let run = Run::new().with_settings(|s| {
-        s.modes = true;
+        s.enabled = ModeSet::ALL;
         s.play = smokebomb_core::menu::PlayMode::PassThePot;
     });
     run_timeline(

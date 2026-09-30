@@ -66,6 +66,40 @@ data class SignedRoll(
         }
 }
 
+/**
+ * A game mode. [bit] is the mode's bit in a mode set and matches `ModeId`
+ * in `packages/shared/src/modes.rs`; [wire] matches `ModeId::wire_name`.
+ */
+enum class ModeId(val bit: Int, val wire: String, val label: String) {
+    DICE(0, "dice", "Dice"),
+    PASS_THE_POT(1, "pass_the_pot", "Pass the Pot"),
+    HOT_POTATO(2, "hot_potato", "Hot Potato"),
+    PIG_TOSS(3, "pig_toss", "Pig Toss");
+
+    companion object {
+        fun fromWire(wire: String): ModeId? = entries.firstOrNull { it.wire == wire }
+        fun fromBit(bit: Int): ModeId? = entries.firstOrNull { it.bit == bit }
+
+        /** The modes in a `ModeSet` bitmask, in wire order; unknown bits are skipped. */
+        fun setOf(mask: Int): Set<ModeId> = entries.filterTo(LinkedHashSet()) { mask and (1 shl it.bit) != 0 }
+
+        fun maskOf(modes: Set<ModeId>): Int = modes.fold(0) { m, id -> m or (1 shl id.bit) }
+    }
+}
+
+/**
+ * What a die can play (`DieToPhone::Inventory`). Dice is always licensed
+ * and enabled.
+ */
+data class Inventory(
+    val licensed: Set<ModeId>,
+    val enabled: Set<ModeId>,
+    val active: ModeId,
+) {
+    /** The set the phone may ask for: licensed modes only, Dice always on. */
+    fun request(enabled: Set<ModeId>): Set<ModeId> = (enabled intersect licensed) + ModeId.DICE
+}
+
 data class Device(
     val serial: String,
     val publicKey: String,

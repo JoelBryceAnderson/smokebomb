@@ -7,9 +7,11 @@
 #![no_std]
 
 pub mod assets;
+pub mod modes;
 pub mod protocol;
 pub mod roll;
 pub mod types;
 
+pub use modes::{License, LicensedItem, ModeId, ModeSet};
 pub use roll::{RollRecord, SignedRoll};
 pub use types::{DeviceSerial, DieKind, Face, PotFace, SessionId};

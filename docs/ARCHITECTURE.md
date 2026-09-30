@@ -173,8 +173,10 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   roll, up to three; everyone starts with three). The Mode page is one tip right of the
   first page, so the dice flow is as short as it was. The dice setup and
   each game's options are saved apart, and `Settings::active()` gives the
-  die and count a throw rolls. `Settings.modes = false` removes the Mode
-  page (most snapshot scenarios use this).
+  die and count a throw rolls. The Mode page offers the modes that are
+  both licensed and turned on from the phone (`Settings.licensed`,
+  `Settings.enabled`; see [STORE.md](STORE.md)). With Dice alone there is
+  no Mode page (most snapshot scenarios use this).
 - **Hot Potato** (`potato.rs`). A game that doesn't roll. The pure `Potato`
   machine (Idle, Lit, Boom) takes the time and a fuse the firmware drew from
   the RNG, and returns `PotatoCommand`s (ignite, tick, boom, clear) that the firmware turns into haptics and smoke. In this mode

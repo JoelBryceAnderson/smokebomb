@@ -1,6 +1,8 @@
 package com.smokebomb.app.ble
 
 import android.content.Context
+import com.smokebomb.shared.Inventory
+import com.smokebomb.shared.ModeId
 import com.smokebomb.shared.SignedRoll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +23,7 @@ class AndroidBleManager(@Suppress("unused") private val context: Context) : BleM
     private val _state = MutableStateFlow<BleState>(BleState.Idle)
     override val state: StateFlow<BleState> = _state.asStateFlow()
     override val rolls: Flow<SignedRoll> = emptyFlow()
+    override val inventory: StateFlow<Inventory?> = MutableStateFlow<Inventory?>(null).asStateFlow()
 
     override fun startScan() {
         _state.value = BleState.Error("Android BLE is not implemented yet")
@@ -39,4 +42,6 @@ class AndroidBleManager(@Suppress("unused") private val context: Context) : BleM
     }
 
     override suspend fun syncHistory(sinceCounter: Long): List<SignedRoll> = emptyList()
+
+    override suspend fun setEnabledModes(modes: Set<ModeId>) = Unit
 }

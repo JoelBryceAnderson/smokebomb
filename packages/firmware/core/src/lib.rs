@@ -36,8 +36,9 @@ use smokebomb_hal::{
     Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Magnetometer, Peripherals, Platform,
     Power, Rng, SecureElement, Touch, FRAME_BYTES,
 };
+use smokebomb_shared::protocol::Inventory;
 use smokebomb_shared::types::MAX_POT_DICE;
-use smokebomb_shared::{DieKind, SignedRoll};
+use smokebomb_shared::{DieKind, ModeId, ModeSet, SignedRoll};
 
 use display::Framebuffer;
 use font::Fonts;
@@ -245,11 +246,36 @@ impl<P: Platform> Firmware<P> {
 
     /// Replaces the settings, as when they're loaded from flash at boot.
     pub fn set_settings(&mut self, settings: Settings) {
-        // The die's id is its identity, not a setting: keep it.
+        // The die's id and licenses are its own, not settings: keep them.
         self.settings = Settings {
             device_id: self.settings.device_id,
+            licensed: self.settings.licensed,
             ..settings
         };
+        self.apply_settings();
+    }
+
+    /// What the die can play and is set up for, for the phone.
+    pub fn inventory(&self) -> Inventory {
+        Inventory {
+            licensed: self.settings.licensed.with(ModeId::Dice),
+            enabled: self.settings.modes(),
+            active: self.settings.play().id(),
+        }
+    }
+
+    /// The phone picks which licensed modes the Mode page offers. If the
+    /// current mode is turned off the die goes back to Dice.
+    pub fn set_enabled_modes(&mut self, enabled: ModeSet) {
+        self.settings.enabled = enabled.with(ModeId::Dice);
+        self.apply_settings();
+    }
+
+    /// Unlock a mode on this die. The caller has checked the store's
+    /// license; verifying it here is still to do (docs/STORE.md).
+    pub fn unlock_mode(&mut self, mode: ModeId) {
+        self.settings.licensed = self.settings.licensed.with(mode);
+        self.settings.enabled = self.settings.enabled.with(mode);
         self.apply_settings();
     }
 
