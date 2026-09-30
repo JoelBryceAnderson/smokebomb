@@ -38,10 +38,10 @@ const GOLD_REDUCED: usize = 40;
 const FIZZLE: usize = 36;
 const FIZZLE_REDUCED: usize = 12;
 /// Bills rained per hundred puffs of smoke.
-const BILLS_PER_PUFF_PCT: usize = 30;
+const BILLS_PER_PUFF_PCT: usize = 12;
 /// A bill's half-length as a fraction of its particle's size, and its
 /// half-width as a fraction of its length.
-const BILL_LEN: f32 = 0.62;
+const BILL_LEN: f32 = 1.25;
 const BILL_ASPECT: f32 = 0.5;
 /// A bill's paper (front, lit face-on) and ink, as 0–255 levels. Bills are
 /// drawn solid, over what is behind them, and shaded as they turn.
@@ -856,8 +856,11 @@ fn stamp_bill(fb: &mut Framebuffer, face: Face, p: [f32; 3], bill: &Bill) {
     let y1 = (libm::ceilf(py + l).max(0.0) as usize).min(PANEL_HEIGHT);
     let x0 = libm::floorf(px - l).max(0.0) as usize;
     let x1 = (libm::ceilf(px + l).max(0.0) as usize).min(PANEL_WIDTH);
-    let edge_u = (1.0 / l).max(0.08);
-    let edge_v = (1.0 / w.max(1.0)).max(0.08);
+    // The bill's unsqueezed half-width: the unit the $ is drawn in, so it
+    // squeezes with the bill as it turns.
+    let w0 = l * BILL_ASPECT;
+    let edge_u = (1.0 / l).max(0.05);
+    let edge_v = (1.0 / w.max(1.0)).max(0.05);
     for y in y0..y1 {
         for x in x0..x1 {
             let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
@@ -867,16 +870,28 @@ fn stamp_bill(fb: &mut Framebuffer, face: Face, p: [f32; 3], bill: &Bill) {
                 continue;
             }
             // Curl: the bill bows along its length, brighter on the crest.
-            let curl = 1.0 - 0.35 * v * v + 0.15 * u;
-            let r = sqrtf(u * u * 0.35 + v * v);
-            let seal = (0.36..0.55).contains(&r) || r < 0.18;
-            let frame = (au > 0.78 && au < 0.78 + edge_u) || (av > 0.72 && av < 0.72 + edge_v);
-            let border = au > 1.0 - edge_u || av > 1.0 - edge_v;
-            let inked = border || (frame && au < 0.78 + edge_u && av < 0.72 + edge_v) || (seal && av < 0.72);
+            let curl = 1.0 - 0.3 * v * v + 0.12 * u;
+            let inked = au > 1.0 - edge_u || av > 1.0 - edge_v || dollar(u * l / w0, v * squareness);
             let level = if inked { BILL_INK } else { BILL_PAPER * curl } * shade;
             fb.blend(x, y, level, bill.alpha);
         }
     }
+}
+
+/// Whether (`x`, `y`) is on a `$`, in units of the bill's half-height with
+/// the bill's centre at the origin and `y` up the bill's short side: an S of
+/// two stacked arcs with a bar through it.
+fn dollar(x: f32, y: f32) -> bool {
+    const R: f32 = 0.32;
+    const HALF_STROKE: f32 = 0.09;
+    let arc = |cy: f32, keep: bool| {
+        let (dx, dy) = (x, y - cy);
+        keep && libm::fabsf(sqrtf(dx * dx + dy * dy) - R) < HALF_STROKE
+    };
+    // The upper arc is open at the lower right, the lower arc at the upper left.
+    arc(R, !(x > 0.0 && y < R))
+        || arc(-R, !(x < 0.0 && y > -R))
+        || (libm::fabsf(x) < 0.06 && libm::fabsf(y) < 0.85)
 }
 
 // ---------- cube geometry ----------
@@ -999,7 +1014,7 @@ mod tests {
         }
         s.throw();
         assert_eq!(s.particles.len(), s.full());
-        assert_eq!(s.full(), 114);
+        assert_eq!(s.full(), 45);
         let mut frames = [Framebuffer::new(); 6];
         s.draw(&mut frames);
         assert!(
