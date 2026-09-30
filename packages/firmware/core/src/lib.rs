@@ -13,6 +13,7 @@
 extern crate std;
 
 pub mod display;
+pub mod effects;
 pub mod font;
 pub mod gfx;
 pub mod icons;
@@ -124,10 +125,10 @@ pub struct Firmware<P: Platform> {
     pig_land: f32,
     /// When the die landed, so the pigs settle from there.
     pig_landed_ms: u64,
-    /// Scratch for drawing the pigs.
-    pig_z: pigfx::DepthBuffer,
     roller: RollEngine,
-    smoke: Smoke,
+    /// The smoke, or in Pig Toss the pigs (cast once a frame and laid onto
+    /// every face): they share the memory.
+    fx: effects::Effects,
     /// A max or dud waiting for the smoke to clear (SIM_SPEC C6).
     pending_special: Option<Special>,
     last_tick_ms: Option<u64>,
@@ -198,7 +199,12 @@ impl<P: Platform> Firmware<P> {
         // referenced. The pattern in `_fields` fails to compile if a field is
         // added and not listed there; add its write here too.
         unsafe {
-            Smoke::init(&mut *addr_of_mut!((*p).smoke).cast(), &mut hw.assets, &pack, seed);
+            effects::Effects::init(
+                &mut *addr_of_mut!((*p).fx).cast(),
+                &mut hw.assets,
+                Smoke::sprites_in(&pack),
+                seed,
+            );
             Fonts::init(&mut *addr_of_mut!((*p).fonts).cast(), &mut hw.assets, &pack);
         }
         let roller = RollEngine::new(&mut hw.secure_element)?;
@@ -213,7 +219,6 @@ impl<P: Platform> Firmware<P> {
             addr_of_mut!((*p).frames).write_bytes(0, 1);
             addr_of_mut!((*p).layer).write_bytes(0, 1);
             addr_of_mut!((*p).panel).write_bytes(0, 1);
-            addr_of_mut!((*p).pig_z).write_bytes(0, 1);
             addr_of_mut!((*p).hw).write(hw);
             addr_of_mut!((*p).sm).write(StateMachine::new());
             addr_of_mut!((*p).motion).write(MotionDetector::new());
@@ -260,9 +265,8 @@ impl<P: Platform> Firmware<P> {
                 pig_clock,
                 pig_land,
                 pig_landed_ms,
-                pig_z,
                 roller,
-                smoke,
+                fx,
                 pending_special,
                 last_tick_ms,
                 fonts,
@@ -305,7 +309,9 @@ impl<P: Platform> Firmware<P> {
     /// smoke clouds shrink.
     pub fn set_reduced_motion(&mut self, on: bool) {
         self.reduced_motion = on;
-        self.smoke.set_reduced_motion(on);
+        if let Some(smoke) = self.fx.smoke() {
+            smoke.set_reduced_motion(on);
+        }
     }
 
     pub fn mode(&self) -> &Mode {
@@ -353,14 +359,16 @@ impl<P: Platform> Firmware<P> {
 
     /// The saved mode decides whether throws roll or belong to a game.
     fn apply_settings(&mut self) {
-        // Pig Toss has pigs on the faces instead of smoke.
-        self.smoke
-            .set_amount(if self.settings.play() == PlayMode::PigToss {
-                smoke::Amount::Off
-            } else {
-                self.settings.smoke_amount()
-            });
-        self.smoke.set_money(self.settings.play() == PlayMode::PassThePot);
+        // Pig Toss has pigs on the faces instead of smoke, in its memory.
+        if self.settings.play() == PlayMode::PigToss {
+            self.fx.use_pigs();
+        } else {
+            let smoke = self.fx.use_smoke(&mut self.hw.assets);
+            smoke.set_amount(self.settings.smoke_amount());
+            smoke.set_money(self.settings.play() == PlayMode::PassThePot);
+            smoke.set_reduced_motion(self.reduced_motion);
+            smoke.set_up(self.gravity.up());
+        }
         self.sm.set_rolls(self.settings.play().rolls());
         self.potato = Potato::new();
         // Saving the menu keeps a game going unless the table changed size.
@@ -403,9 +411,9 @@ impl<P: Platform> Firmware<P> {
     }
 
     /// The particle system, for tests that replay the mockup's random
-    /// sequence.
-    pub fn smoke_mut(&mut self) -> &mut Smoke {
-        &mut self.smoke
+    /// sequence. None in Pig Toss, which has the pigs instead.
+    pub fn smoke_mut(&mut self) -> Option<&mut Smoke> {
+        self.fx.smoke()
     }
 
     /// The text orientation the menu page on `face` is drawn in, if one is.
@@ -435,7 +443,10 @@ impl<P: Platform> Firmware<P> {
             // Smoke falls with gravity even while the die is shaken or
             // tumbling, as in the mockup.
             self.gravity.update(&sample, IMU_SAMPLE_S);
-            self.smoke.set_up(self.gravity.up());
+            let up = self.gravity.up();
+            if let Some(smoke) = self.fx.smoke() {
+                smoke.set_up(up);
+            }
             if let Some(face) = motion::up_face(&sample) {
                 self.up_face = face;
             }
@@ -524,8 +535,9 @@ impl<P: Platform> Firmware<P> {
         }
         if self.potato.is_lit() {
             let heat = self.potato.heat(now);
-            self.smoke
-                .smolder(SMOLDER_MIN + (SMOLDER_MAX - SMOLDER_MIN) * heat);
+            if let Some(smoke) = self.fx.smoke() {
+                smoke.smolder(SMOLDER_MIN + (SMOLDER_MAX - SMOLDER_MIN) * heat);
+            }
         }
         let after = *self.sm.mode();
         self.update_sleep(now, input, &after)?;
@@ -687,16 +699,24 @@ impl<P: Platform> Firmware<P> {
         match cmd {
             PotatoCommand::Ignite => {
                 self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
-                self.smoke.smolder(SMOLDER_MIN);
+                if let Some(smoke) = self.fx.smoke() {
+                    smoke.smolder(SMOLDER_MIN);
+                }
             }
             PotatoCommand::Tick => self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?,
             PotatoCommand::Boom => {
                 self.hw.haptics.play(smokebomb_hal::HapticEffect::Buzz)?;
                 // A full cloud that drains over the faces, with embers.
-                self.smoke.throw();
-                self.smoke.land();
+                if let Some(smoke) = self.fx.smoke() {
+                    smoke.throw();
+                    smoke.land();
+                }
             }
-            PotatoCommand::Clear => self.smoke.clear(),
+            PotatoCommand::Clear => {
+                if let Some(smoke) = self.fx.smoke() {
+                    smoke.clear();
+                }
+            }
         }
         Ok(())
     }
@@ -757,34 +777,39 @@ impl<P: Platform> Firmware<P> {
     /// throw and landing first, then a step.
     fn update_smoke(&mut self, now: u64, before: &Mode, after: &Mode) {
         let entered = |m: fn(&Mode) -> bool| !m(before) && m(after);
-        if entered(|m| matches!(m, Mode::Shaking)) {
-            self.smoke.shake_start();
+        if entered(|m| matches!(m, Mode::Shaking) || matches!(m, Mode::Airborne)) {
             self.pending_special = None;
         }
+        let dt = self.frame_dt(now);
+        self.step_pigs(dt, before, after, now);
+        // Pig Toss has no smoke.
+        let Some(smoke) = self.fx.smoke() else {
+            return;
+        };
+        if entered(|m| matches!(m, Mode::Shaking)) {
+            smoke.shake_start();
+        }
         if entered(|m| matches!(m, Mode::Airborne)) {
-            self.smoke.throw();
-            self.pending_special = None;
+            smoke.throw();
         }
         // Landed: the die has stopped after the tumble (the mockup's
         // landing, about 0.35 s before the result shows). Shaken and set
         // straight down counts as a throw that has landed.
         let resting = self.motion.stopped() || matches!(after, Mode::Reveal { .. });
-        if self.smoke.shaking() && matches!(after, Mode::Reveal { .. }) {
-            self.smoke.throw();
+        if smoke.shaking() && matches!(after, Mode::Reveal { .. }) {
+            smoke.throw();
         }
-        if self.smoke.tumbling() && resting && !matches!(after, Mode::Airborne) {
-            self.smoke.land();
+        if smoke.tumbling() && resting && !matches!(after, Mode::Airborne) {
+            smoke.land();
         }
         if entered(|m| matches!(m, Mode::Menu) || matches!(m, Mode::Nest)) {
-            self.smoke.clear();
+            smoke.clear();
         }
-        let dt = self.frame_dt(now);
-        self.step_pigs(dt, before, after, now);
-        self.smoke.step(dt);
+        smoke.step(dt);
         // A max or dud shows once the smoke has cleared from the result.
         if let Some(special) = self.pending_special {
-            if self.ui.showing_result(now) && !self.smoke.has_smoke() && !self.smoke.tumbling() {
-                self.smoke.special(special);
+            if self.ui.showing_result(now) && !smoke.has_smoke() && !smoke.tumbling() {
+                smoke.special(special);
                 self.ui.set_special(now, special);
                 self.pending_special = None;
             }
@@ -1004,7 +1029,9 @@ impl<P: Platform> Firmware<P> {
             // The draft is dropped: powering off saves nothing.
             Command::MenuPowerOff => {
                 if self.menu.take().is_some() {
-                    self.smoke.clear();
+                    if let Some(smoke) = self.fx.smoke() {
+                        smoke.clear();
+                    }
                     self.pending_special = None;
                     self.ui.power_off();
                     self.hw.display.set_enabled(false)?;
@@ -1148,7 +1175,7 @@ impl<P: Platform> Firmware<P> {
             last_roll,
             menu,
             pigs,
-            pig_z,
+            fx,
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
@@ -1159,6 +1186,12 @@ impl<P: Platform> Firmware<P> {
             record.is_some()
         };
         let blackout = ui.blackout() || asleep;
+        // Every face shows the same pigs: cast them once for all of them.
+        if let Some(scene) = pig_scene.filter(|_| !blackout) {
+            if let Some(pigs) = fx.pigs() {
+                pigs.draw(scene);
+            }
+        }
 
         for face in Face::ALL {
             let fb = &mut frames[face.index()];
@@ -1265,8 +1298,9 @@ impl<P: Platform> Firmware<P> {
                 // the face-down screen stays dark (H2).
                 let in_air = matches!(scene, pigfx::Scene::Tumbling(_));
                 if in_air || face != up.opposite() {
-                    // Each face shows a different moment of the same throw.
-                    pigfx::draw(c.painter, pig_z, scene, face.index() as f32 * 0.9, pig_alpha);
+                    if let Some(pigs) = fx.pigs() {
+                        pigs.lay_onto(fb_of(c.painter), rot, pig_alpha);
+                    }
                 }
             }
             match potato_face {
@@ -1277,7 +1311,9 @@ impl<P: Platform> Firmware<P> {
         }
 
         // Smoke over everything, wrapping round the edges (SIM_SPEC D1).
-        self.smoke.draw(&mut self.frames);
+        if let Some(smoke) = self.fx.smoke_ref() {
+            smoke.draw(&mut self.frames);
+        }
         for face in Face::ALL {
             self.frames[face.index()].quantize(&mut self.panel);
             self.hw.display.write_frame(face, &self.panel)?;

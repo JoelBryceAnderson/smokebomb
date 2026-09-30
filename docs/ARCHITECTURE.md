@@ -76,7 +76,7 @@ smokebomb/
 
 | Function | Part | Bus | HAL trait |
 |---|---|---|---|
-| MCU + BLE + NFC | nRF54L15 (Cortex-M33, 256 KB RAM) | — | — |
+| MCU + BLE + NFC | nRF54L15 (Cortex-M33, 256 KB RAM, 188 KB of it the app core's; see Memory) | — | — |
 | Six faces | 6× SSD1317 96×96 OLED, 4-bit grey | SPIM, shared clock/data, 6 CS | `Display` |
 | Motion | LSM6DSx 6-axis IMU | TWIM | `Imu` |
 | Touch | Capacitive pad per face | GPIO/COMP | `Touch` |
@@ -364,6 +364,9 @@ drawn procedurally, heavier than smoke, so they fall off the faces sooner
   mockup's `now`. A tick that comes on time counts as exactly 1/60 s.
 - **Random numbers** come from mulberry32. Seeded from the TRNG at boot; the
   snapshot tests seed it, so the smoke is repeatable.
+- **Storage:** particles are kept packed, 24 bytes each: a particle always
+  lies on its face, so its position and velocity keep only the face's other
+  two axes, in fixed point. They are unpacked only while stepped or drawn.
 - **Cost:** a full cloud is ~500 particles and ~4M sprite pixels a tick at
   96×96, about 8 ms on a desktop (the core is built with `opt-level = 3`
   even in dev builds for this). Stamps skip their invisible outer ring and
@@ -375,6 +378,34 @@ drawn procedurally, heavier than smoke, so they fall off the faces sooner
 clouds are snapshots like the other screens (see
 [Screen snapshots](#screen-snapshots)); the throws run on a seeded world
 model with a scripted roll.
+
+### Memory
+
+The nRF54L15's app core has **188 KB** of RAM: the rest of the chip's 256 KB
+is the FLPR core's. A build of the Zephyr app for the nRF54L15 DK (Zephyr,
+Bluetooth, NFC, and a stub in place of the Rust firmware) takes about 50 KB
+of it, leaving about 142 KB for the firmware.
+
+- **The firmware lives in a static.** `Firmware` is built in place in `.bss`
+  (`Firmware::init`), never on the 8 KB main stack.
+- **Budget:** `Firmware` must fit in `RAM_BUDGET` (120 KB, in
+  `packages/firmware/src/lib.rs`), which leaves ~20 KB for the Rust statics,
+  the stacks and margin. It is a compile-time check on the board target, so
+  CI's board build fails on a change that goes over. Raise it only with a
+  measured build.
+- **One mode's visuals at a time:** the smoke and Pig Toss's pigs never show
+  together, so they share one block of memory (`effects.rs`). Changing mode
+  builds the one needed in place; going back to smoke reloads its sprites
+  from the pack and carries on its random sequence. A new game's per-frame
+  visuals belong there, as another variant, rather than in a field of their
+  own: the block costs the biggest of them, not the sum.
+- **Pigs** are ray-cast once a frame, not once a face: every face shows the
+  same pigs, laid onto it turned the way it reads (`pigfx::Canvas`). They
+  are cast eight rows at a time, so the depth buffer covers a strip, into a
+  picture of a byte a pixel (7 bits of shade where fully covered, coverage
+  and shade at the edges). Pigs at rest aren't cast again.
+- **The biggest costs left** are the six 8-bit framebuffers (54 KB; the
+  panel shows 4 bits) and the drawing `Layer` (27 KB).
 
 ### Faces
 

@@ -98,7 +98,9 @@ impl Run {
             enabled: if modes { ModeSet::ALL } else { ModeSet::DICE },
             ..Settings::default()
         });
-        fw.smoke_mut().set_rng(SmokeRng::new(SMOKE_SEED));
+        fw.smoke_mut()
+            .expect("dice have smoke")
+            .set_rng(SmokeRng::new(SMOKE_SEED));
         let mut run = Self {
             sim,
             fw,
