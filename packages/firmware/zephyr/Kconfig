@@ -1,0 +1,10 @@
+# Options of the Smokebomb Zephyr app.
+
+config SMOKEBOMB_BENCH
+	bool "Run the frame benchmark instead of the firmware"
+	help
+	  Build the image as the frame benchmark: it times a frame's heaviest
+	  work (sugar, pigs, dithering) on the board, prints the results and
+	  stops. It needs no drivers. Turned on by bench.conf.
+
+source "Kconfig.zephyr"

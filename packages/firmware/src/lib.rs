@@ -48,15 +48,17 @@ pub mod board {
     static mut FIRMWARE: MaybeUninit<Firmware> = MaybeUninit::uninit();
 
     /// The most RAM the firmware's state may take. The app core has 188 KB
-    /// (the rest of the chip's 256 KB is the FLPR core's), and Zephyr,
-    /// Bluetooth and NFC took 50,644 B of it in a build of the Zephyr app
-    /// for the nRF54L15 DK, leaving about 141,900 B. This leaves ~20 KB of
-    /// that for the Rust code's own statics, the stacks and some margin.
+    /// (the rest of the chip's 256 KB is the FLPR core's). Zephyr,
+    /// Bluetooth, NFC and the stacks take about 51 KB of it, so the board
+    /// image for the nRF54L15 DK, with `Firmware` at 116,440 B, uses
+    /// 167,524 B (87%). The budget leaves ~20 KB for the Rust code's other
+    /// statics and some margin.
     ///
     /// If a change trips this, don't just raise it: a game's per-frame
     /// visuals belong in `smokebomb_core::effects::Effects`, which holds one
     /// mode's at a time, rather than in a field of their own. Raise it only
-    /// with a measured build that shows the room is there.
+    /// with a measured build that shows the room is there (CI's Zephyr
+    /// image workflow reports the image's RAM).
     pub const RAM_BUDGET: usize = 120 * 1024;
 
     const _: () = assert!(
@@ -84,9 +86,29 @@ pub mod board {
         let Ok(fw) = boot() else {
             return -1;
         };
+        let period = 1_000_000 / smokebomb_core::TICK_HZ as u64;
+        // SAFETY (both shim calls): they only read Zephyr's clock or sleep.
+        let mut next = unsafe { sb_uptime_us() };
         loop {
             let _ = fw.tick();
-            // TODO: k_msleep(1000 / TICK_HZ) via the Zephyr shim.
+            // Tick on a fixed beat: sleep until the next one is due. A tick
+            // that ran long doesn't push the beat back; one that ran more
+            // than a beat long drops the beats it missed.
+            next += period;
+            let now = unsafe { sb_uptime_us() };
+            if now < next {
+                unsafe { sb_sleep_us((next - now) as u32) };
+            } else {
+                next = now;
+            }
         }
+    }
+
+    // The Zephyr app's C shim (`packages/firmware/zephyr/src/shim.c`).
+    extern "C" {
+        /// Time since boot, µs.
+        fn sb_uptime_us() -> u64;
+        /// Sleep this thread for at least `us` µs.
+        fn sb_sleep_us(us: u32);
     }
 }

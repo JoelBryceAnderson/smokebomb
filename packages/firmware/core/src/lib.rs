@@ -12,6 +12,7 @@
 #[cfg(test)]
 extern crate std;
 
+pub mod bench;
 pub mod display;
 pub mod effects;
 pub mod font;

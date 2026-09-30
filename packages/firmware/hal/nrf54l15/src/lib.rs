@@ -1,8 +1,10 @@
 //! Production-board HAL: nRF54L15 (Cortex-M33 @ 128 MHz) running Zephyr.
 //!
-//! **Stub.** Every driver returns [`HalError::NotImplemented`]. The plan is
-//! to call Zephyr device drivers through a thin C shim (`zephyr/src/shim.c`)
-//! exposed via `extern "C"`, keeping Rust the owner of all application logic.
+//! **Stub.** Every driver returns [`HalError::NotImplemented`]: it asks the
+//! Zephyr app's C shim (`zephyr/src/shim.c`), whose `sb_hal_todo` always
+//! says no. The plan is to call Zephyr device drivers through that shim,
+//! keeping Rust the owner of all application logic; each driver replaces its
+//! `todo` as it lands.
 //!
 //! | Peripheral       | Part         | Bus                  |
 //! |------------------|--------------|----------------------|
@@ -56,35 +58,51 @@ pub fn peripherals() -> Peripherals<Nrf54l15> {
     }
 }
 
-const TODO: HalError = HalError::NotImplemented;
+extern "C" {
+    /// The shim's stand-in for a driver: always fails (`-ENOSYS`).
+    fn sb_hal_todo() -> i32;
+}
+
+/// A driver that isn't written yet: fails with
+/// [`HalError::NotImplemented`]. It asks the shim rather than failing here
+/// so the compiler can't tell it always fails; otherwise it would drop the
+/// firmware after the first call at boot as unreachable, and the board
+/// image would link almost none of it. `stand_in` is never used.
+fn todo<T>(stand_in: impl FnOnce() -> T) -> HalResult<T> {
+    // SAFETY: the shim takes no arguments and touches nothing.
+    match unsafe { sb_hal_todo() } {
+        0 => Ok(stand_in()),
+        _ => Err(HalError::NotImplemented),
+    }
+}
 
 pub struct Ssd1317Array;
 impl Display for Ssd1317Array {
     fn write_frame(&mut self, _face: Face, _frame: &FrameBytes) -> HalResult<()> {
-        Err(TODO) // DMA frame into the back buffer for this CS line
+        todo(|| ()) // DMA frame into the back buffer for this CS line
     }
     fn flush(&mut self) -> HalResult<()> {
-        Err(TODO)
+        todo(|| ())
     }
     fn set_brightness(&mut self, _face: Face, _level: u8) -> HalResult<()> {
-        Err(TODO) // SSD1317 0x81 contrast command
+        todo(|| ()) // SSD1317 0x81 contrast command
     }
     fn set_enabled(&mut self, _enabled: bool) -> HalResult<()> {
-        Err(TODO) // 0xAE / 0xAF display off/on
+        todo(|| ()) // 0xAE / 0xAF display off/on
     }
 }
 
 pub struct Lsm6dsx;
 impl Imu for Lsm6dsx {
     fn read(&mut self) -> HalResult<Option<ImuSample>> {
-        Err(TODO) // Zephyr sensor API, FIFO + free-fall/wake-up interrupts
+        todo(|| None) // Zephyr sensor API, FIFO + free-fall/wake-up interrupts
     }
 }
 
 pub struct NestMag;
 impl Magnetometer for NestMag {
     fn read(&mut self) -> HalResult<[i32; 3]> {
-        Err(TODO) // one-shot measurement over I2C, with the panel supply paused
+        todo(|| [0; 3]) // one-shot measurement over I2C, with the panel supply paused
     }
     fn hard_iron(&self) -> [i32; 3] {
         [0; 3] // factory calibration, from the die's OTP page
@@ -94,7 +112,7 @@ impl Magnetometer for NestMag {
 pub struct CapTouch;
 impl Touch for CapTouch {
     fn read(&mut self) -> HalResult<u8> {
-        Err(TODO)
+        todo(|| 0)
     }
 }
 
@@ -104,53 +122,58 @@ impl Ble for ZephyrBle {
         false
     }
     fn send(&mut self, _payload: &[u8]) -> HalResult<()> {
-        Err(TODO) // bt_gatt_notify on the Sugarcube characteristic
+        todo(|| ()) // bt_gatt_notify on the Sugarcube characteristic
     }
     fn receive(&mut self, _buf: &mut [u8]) -> HalResult<Option<usize>> {
-        Err(TODO)
+        todo(|| None)
     }
     fn set_advertising(&mut self, _enabled: bool) -> HalResult<()> {
-        Err(TODO)
+        todo(|| ())
     }
 }
 
 pub struct Atecc608;
 impl SecureElement for Atecc608 {
     fn serial(&mut self) -> HalResult<[u8; 9]> {
-        Err(TODO) // config zone bytes 0-3, 8-12
+        todo(|| [0; 9]) // config zone bytes 0-3, 8-12
     }
     fn public_key(&mut self) -> HalResult<[u8; 64]> {
-        Err(TODO) // GenKey (public) on slot 0
+        todo(|| [0; 64]) // GenKey (public) on slot 0
     }
     fn sign_digest(&mut self, _digest: &[u8; 32]) -> HalResult<[u8; 64]> {
-        Err(TODO) // Nonce (passthrough) + Sign (external)
+        todo(|| [0; 64]) // Nonce (passthrough) + Sign (external)
     }
     fn next_counter(&mut self) -> HalResult<u32> {
-        Err(TODO) // Counter (increment) on counter 0
+        todo(|| 0) // Counter (increment) on counter 0
     }
 }
 
 pub struct Cracen;
 impl Rng for Cracen {
     fn fill_bytes(&mut self, _buf: &mut [u8]) -> HalResult<()> {
-        Err(TODO) // sys_csrand_get, reseeded from ATECC608 Random
+        todo(|| ()) // sys_csrand_get, reseeded from ATECC608 Random
     }
 }
 
 pub struct Drv2605l;
 impl Haptics for Drv2605l {
     fn play(&mut self, _effect: HapticEffect) -> HalResult<()> {
-        Err(TODO)
+        todo(|| ())
     }
 }
 
 pub struct Npm1300;
 impl Power for Npm1300 {
     fn battery(&mut self) -> HalResult<BatteryStatus> {
-        Err(TODO)
+        todo(|| BatteryStatus {
+            percent: 0,
+            millivolts: 0,
+            vbus: false,
+            charge: ChargeState::Idle,
+        })
     }
     fn set_mode(&mut self, _mode: PowerMode) -> HalResult<()> {
-        Err(TODO)
+        todo(|| ())
     }
 }
 
@@ -160,14 +183,14 @@ impl AssetStore for QspiFlash {
         64 * 1024 * 1024
     }
     fn read(&mut self, _offset: u32, _buf: &mut [u8]) -> HalResult<()> {
-        Err(TODO) // flash_read on the QSPI NOR device
+        todo(|| ()) // flash_read on the QSPI NOR device
     }
 }
 
 pub struct Nfct;
 impl Nfc for Nfct {
     fn set_payload(&mut self, _ndef: &[u8]) -> HalResult<()> {
-        Err(TODO)
+        todo(|| ())
     }
 }
 

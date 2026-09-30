@@ -1,0 +1,106 @@
+name: CI · Zephyr image
+
+# Builds the board image: the Zephyr app with MCUboot and the Rust firmware
+# linked in, and the frame benchmark (bench.conf). It needs the nRF Connect
+# SDK (a few GB), so it runs on changes to the board side, on main, and by
+# hand, rather than on every pull request.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "packages/firmware/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-zephyr.yml"
+  pull_request:
+    paths:
+      - "packages/firmware/zephyr/**"
+      - "packages/firmware/hal/nrf54l15/**"
+      - "packages/firmware/src/**"
+      - ".github/workflows/ci-zephyr.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  BOARD: nrf54l15dk/nrf54l15/cpuapp
+  NCS: ${{ github.workspace }}/../ncs
+
+jobs:
+  zephyr:
+    name: Zephyr image (nRF54L15 DK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv8m.main-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install west and the build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends device-tree-compiler gperf ninja-build
+          pip install west
+      - name: SDK revision
+        id: rev
+        # The revision the app is pinned to, in its west.yml.
+        run: |
+          echo "ncs=$(python -c "import yaml; print(yaml.safe_load(open('packages/firmware/zephyr/west.yml'))['manifest']['projects'][0]['revision'])")" >> "$GITHUB_OUTPUT"
+      - name: Cache the nRF Connect SDK
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.NCS }}
+            ~/zephyr-sdk
+          key: ncs-${{ steps.rev.outputs.ncs }}-v1
+      - name: Fetch the nRF Connect SDK
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          west init -m https://github.com/nrfconnect/sdk-nrf --mr "${{ steps.rev.outputs.ncs }}" "$NCS"
+          cd "$NCS"
+          west update --narrow -o=--depth=1
+          V=$(cat zephyr/SDK_VERSION)
+          URL=https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v$V
+          mkdir -p ~/zephyr-sdk && cd ~/zephyr-sdk
+          curl -sSLf "$URL/zephyr-sdk-${V}_linux-x86_64_minimal.tar.xz" | tar xJ --strip-components=1
+          curl -sSLf "$URL/toolchain_linux-x86_64_arm-zephyr-eabi.tar.xz" | tar xJ
+      - name: Install the SDK's Python requirements
+        run: |
+          pip install -r "$NCS/zephyr/scripts/requirements-base.txt" \
+                      -r "$NCS/zephyr/scripts/requirements-build-test.txt" \
+                      -r "$NCS/nrf/scripts/requirements-build.txt"
+      - name: Build the firmware image
+        run: |
+          mkdir -p build
+          cd "$NCS"
+          ZEPHYR_SDK_INSTALL_DIR=~/zephyr-sdk west build -p always -b "$BOARD" \
+            -d "$GITHUB_WORKSPACE/build/firmware" "$GITHUB_WORKSPACE/packages/firmware/zephyr" \
+            | tee "$GITHUB_WORKSPACE/build/firmware.log"
+      - name: Build the benchmark image
+        run: |
+          cd "$NCS"
+          ZEPHYR_SDK_INSTALL_DIR=~/zephyr-sdk west build -p always -b "$BOARD" \
+            -d "$GITHUB_WORKSPACE/build/bench" "$GITHUB_WORKSPACE/packages/firmware/zephyr" \
+            -- -DEXTRA_CONF_FILE=bench.conf \
+            | tee "$GITHUB_WORKSPACE/build/bench.log"
+      - name: Memory report
+        run: |
+          for image in firmware bench; do
+            echo "### $image image" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E "Memory region|FLASH:|RAM:" "build/$image.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Upload the benchmark image
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-nrf54l15dk
+          path: build/bench/merged.hex
