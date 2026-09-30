@@ -104,7 +104,7 @@ impl Ble for ZephyrBle {
         false
     }
     fn send(&mut self, _payload: &[u8]) -> HalResult<()> {
-        Err(TODO) // bt_gatt_notify on the Smokebomb characteristic
+        Err(TODO) // bt_gatt_notify on the Sugarcube characteristic
     }
     fn receive(&mut self, _buf: &mut [u8]) -> HalResult<Option<usize>> {
         Err(TODO)

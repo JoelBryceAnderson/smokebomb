@@ -5,7 +5,7 @@ package com.smokebomb.shared
  * semantics in sync with `packages/shared/src` and `docs/API.md`.
  */
 
-/** BLE GATT service advertised by every Smokebomb (placeholder UUID). */
+/** BLE GATT service advertised by every Sugarcube (placeholder UUID). */
 const val SMOKEBOMB_SERVICE_UUID = "5b0e0000-5b0e-4d1e-9a5e-736d6f6b6562"
 
 const val MAX_DICE = 10

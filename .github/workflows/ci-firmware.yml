@@ -83,5 +83,5 @@ jobs:
         run: |
           cargo run --features=simulator &
           for i in $(seq 1 30); do curl -sf localhost:3000/api/state && break; sleep 1; done
-          curl -sf localhost:3000/ | grep -q "Smokebomb Simulator"
+          curl -sf localhost:3000/ | grep -q "Sugarcube Simulator"
           curl -sf localhost:3000/api/device

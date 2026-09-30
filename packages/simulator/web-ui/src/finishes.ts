@@ -1,4 +1,4 @@
-// Finish (colour) data from the Smokebomb design brief. This page runs three.js
+// Finish (colour) data from the Sugarcube design brief. This page runs three.js
 // with colour management on, so hex values here are the "sRGB equivalent"
 // column (the mockup's r128 fed the linear values straight into the shader).
 // Screens are never tinted by a finish.

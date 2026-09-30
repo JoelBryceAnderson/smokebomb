@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Link to a Smokebomb over BLE. Common code only sees this interface; each
+ * Link to a Sugarcube over BLE. Common code only sees this interface; each
  * platform supplies an implementation through [createBleManager]
  * (CoreBluetooth on iOS, android.bluetooth.le on Android).
  *

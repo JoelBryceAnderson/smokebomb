@@ -73,7 +73,7 @@ const REGULATORY: u8 = 8;
 
 /// What the Regulatory row shows, on two lines. FCC ID and IC are
 /// placeholders until the die is certified.
-const REGULATORY_LINES: [&str; 2] = ["FCC ID: TBD", "IC: TBD · CE · SB-1"];
+const REGULATORY_LINES: [&str; 2] = ["FCC ID: TBD", "IC: TBD · CE · SC-1"];
 
 /// The chosen option of every Settings item.
 pub type Choices = [u8; SETTINGS.len()];
@@ -497,7 +497,7 @@ impl Draft {
         if self.setting == REGULATORY {
             let _ = s.push_str(REGULATORY_LINES[0]);
         } else if self.setting == ABOUT {
-            let _ = write!(s, "v{} · SB-{:04X}", env!("CARGO_PKG_VERSION"), self.device_id);
+            let _ = write!(s, "v{} · SC-{:04X}", env!("CARGO_PKG_VERSION"), self.device_id);
         } else {
             let _ = s.push_str(self.setting().1);
         }
@@ -869,7 +869,7 @@ mod tests {
         assert_eq!(d.setting().0, "About");
         assert_eq!(
             d.setting_value().as_str(),
-            concat!("v", env!("CARGO_PKG_VERSION"), " · SB-A1B2")
+            concat!("v", env!("CARGO_PKG_VERSION"), " · SC-A1B2")
         );
         // Other rows show their value.
         assert_eq!(
@@ -883,7 +883,7 @@ mod tests {
         let d = settings_page().tipped(TipDir::Down);
         assert_eq!(d.setting().0, "Regulatory");
         assert_eq!(d.setting_value().as_str(), "FCC ID: TBD");
-        assert_eq!(d.setting_detail(), Some("IC: TBD · CE · SB-1"));
+        assert_eq!(d.setting_detail(), Some("IC: TBD · CE · SC-1"));
         assert_eq!(d.tipped(TipDir::Up).setting_detail(), None);
     }
 

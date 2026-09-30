@@ -1,4 +1,5 @@
-//! Space Grotesk text from the asset pack.
+//! Space Grotesk text from the asset pack, and the Pacifico script the
+//! Sugarcube wordmark is set in ([`SCRIPT`]).
 //!
 //! Each font section holds one weight at one size, pre-rasterized at panel
 //! resolution with 8-bit coverage (see [`smokebomb_shared::assets`]). Sizes are
@@ -28,6 +29,10 @@ use crate::pack::{PackIndex, MAX_SECTIONS};
 /// The weight every screen uses. The mockup asks for 600 for labels but only
 /// loads 400/500/700, so it renders them at 700 (SIM_SPEC G14, H8).
 pub const BOLD: u16 = 700;
+/// The wordmark's script face (Pacifico), which only comes in a few sizes.
+pub const SCRIPT: u16 = smokebomb_shared::assets::SCRIPT_WEIGHT;
+/// Width of the soft pen edge when script is written on, in panel px.
+const PEN_EDGE: f32 = 3.0;
 
 /// Largest glyph bitmap the renderer will draw (bytes).
 const GLYPH_BUF: usize = 4096;
@@ -95,6 +100,13 @@ impl Fonts {
             .filter(|f| f.header.weight == weight)
             .min_by_key(|f| (f.header.canvas_px as i32 - canvas_px as i32).abs())
             .copied()
+    }
+
+    /// Like [`Self::pick`], falling back to Space Grotesk when a pack has no
+    /// cut of `weight` (a pack built before the script face).
+    fn pick_or_bold(&self, weight: u16, canvas_px: u16) -> Option<FontSize> {
+        self.pick(weight, canvas_px)
+            .or_else(|| self.pick(BOLD, canvas_px))
     }
 
     fn glyph<A: AssetStore>(assets: &mut A, f: &FontSize, cp: u32) -> Option<GlyphEntry> {
@@ -166,7 +178,12 @@ impl Fonts {
 
     /// Advance width of `text` in canvas units.
     pub fn measure<A: AssetStore>(&self, assets: &mut A, text: &str, canvas_px: u16) -> f32 {
-        match self.pick(BOLD, canvas_px) {
+        self.measure_in(assets, BOLD, text, canvas_px)
+    }
+
+    /// Advance width of `text` in `weight` ([`BOLD`] or [`SCRIPT`]), in canvas units.
+    pub fn measure_in<A: AssetStore>(&self, assets: &mut A, weight: u16, text: &str, canvas_px: u16) -> f32 {
+        match self.pick_or_bold(weight, canvas_px) {
             Some(f) => Self::layout(assets, &f, text).1 / K,
             None => 0.0,
         }
@@ -186,13 +203,66 @@ impl Fonts {
         align: Align,
         style: Style,
     ) {
-        let Some(f) = self.pick(BOLD, canvas_px) else {
+        self.draw_in(assets, painter, BOLD, text, (x, y), canvas_px, align, 1.0, style);
+    }
+
+    /// Draw `text` in the wordmark script, centred on `(x, y)` and written
+    /// on from the left: only the first `reveal` (0–1) of its width shows,
+    /// behind a soft pen edge.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_script<A: AssetStore>(
+        &mut self,
+        assets: &mut A,
+        painter: &mut Painter,
+        text: &str,
+        x: f32,
+        y: f32,
+        canvas_px: u16,
+        reveal: f32,
+        style: Style,
+    ) {
+        self.draw_in(
+            assets,
+            painter,
+            SCRIPT,
+            text,
+            (x, y),
+            canvas_px,
+            Align::Center,
+            reveal,
+            style,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_in<A: AssetStore>(
+        &mut self,
+        assets: &mut A,
+        painter: &mut Painter,
+        weight: u16,
+        text: &str,
+        (x, y): (f32, f32),
+        canvas_px: u16,
+        align: Align,
+        reveal: f32,
+        style: Style,
+    ) {
+        if reveal <= 0.0 {
+            return;
+        }
+        let Some(f) = self.pick_or_bold(weight, canvas_px) else {
             return;
         };
         let (glyphs, width) = Self::layout(assets, &f, text);
         // Text space: panel px at the cut's own size, origin at the canvas
         // origin. Canvas units × K = text-space px.
         let start = x * K - if align == Align::Center { width / 2.0 } else { 0.0 };
+        // The pen: everything left of it shows, fading over PEN_EDGE.
+        let pen = if reveal >= 1.0 {
+            f32::INFINITY
+        } else {
+            start + (width + PEN_EDGE) * reveal
+        };
         // `middle` is the middle of the em box, where Chrome scales the
         // font's ascent and descent to span exactly one em.
         let (ascent, descent) = (f.header.ascent_q6 as f32, f.header.descent_q6 as f32);
@@ -219,7 +289,10 @@ impl Fonts {
             for py in bounds.y0..bounds.y1 {
                 for px in bounds.x0..bounds.x1 {
                     let (cx, cy) = painter.xf.inverse(px as f32 + 0.5, py as f32 + 0.5);
-                    let c = bilinear(buf, w, h, cx * K - gx - 0.5, cy * K - gy - 0.5);
+                    let mut c = bilinear(buf, w, h, cx * K - gx - 0.5, cy * K - gy - 0.5);
+                    if pen.is_finite() {
+                        c *= ((pen - cx * K) / PEN_EDGE).clamp(0.0, 1.0);
+                    }
                     painter.cover(px, py, c);
                 }
             }
@@ -265,7 +338,7 @@ mod tests {
         assert_eq!(fit_px("d20", 50, 150.0), 50);
         // fitPx("Pass the Pot ×2", 50) → floor(150 / (15 × 0.58)) = 17
         assert_eq!(fit_px("Pass the Pot ×2", 50, 150.0), 17);
-        // fitPx("SMOKEBOMB", 28, 142) → floor(142 / 5.22) = 27
-        assert_eq!(fit_px("SMOKEBOMB", 28, 142.0), 27);
+        // fitPx("SUGARCUBE", 28, 142) → floor(142 / 5.22) = 27
+        assert_eq!(fit_px("SUGARCUBE", 28, 142.0), 27);
     }
 }

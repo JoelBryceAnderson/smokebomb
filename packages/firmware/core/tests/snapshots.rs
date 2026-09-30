@@ -428,7 +428,7 @@ fn run_timeline(scenario: &str, run: Run, times: &[f64], inputs: Vec<(f64, Input
 
 #[test]
 fn boot() {
-    // 2.7–5.5 s is the top face's smoke burst.
+    // 2.2–3.8 s is the top face's sugar cube dissolving and the wordmark writing on.
     run_timeline(
         "boot",
         Run::new(),

@@ -1,4 +1,4 @@
-# Smokebomb REST API
+# Sugarcube REST API
 
 Base URL: `http://127.0.0.1:8080` in development. All bodies are JSON, and
 versioned endpoints live under `/v1`. Byte fields (serials, keys, digests,
@@ -100,7 +100,7 @@ version and `last_seen_at` instead.
 ```
 
 > ⚠️ Registration isn't authenticated yet. Before launch it must require a
-> factory attestation, meaning the device key signed by the Smokebomb
+> factory attestation, meaning the device key signed by the Sugarcube
 > manufacturing CA.
 
 ### `GET /v1/devices/{serial}` ✅

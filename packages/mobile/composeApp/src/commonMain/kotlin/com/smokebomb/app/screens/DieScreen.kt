@@ -28,7 +28,7 @@ fun DieScreen(ble: BleManager, modifier: Modifier = Modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             when (val s = state) {
                 BleState.Off -> Text("Turn on Bluetooth to find your die.")
-                BleState.Idle -> Button(onClick = ble::startScan) { Text("Find my Smokebomb") }
+                BleState.Idle -> Button(onClick = ble::startScan) { Text("Find my Sugarcube") }
                 is BleState.Scanning -> {
                     Text(if (s.found.isEmpty()) "Scanning…" else "Tap a die to connect")
                     LazyColumn {
