@@ -3,23 +3,23 @@
 //! Two pigs are thrown every time. Each lands in one of six poses, drawn at
 //! the odds a tossed pig-shaped token really lands in, so a pose is worth
 //! more the rarer it is. Throw as often as you like to build up the turn's
-//! score, then tap to bank it and pass the die; a bust loses the turn's
+//! score, then tap to bank it and pass the die; an oops loses the turn's
 //! score.
 //!
 //! | Pose | Odds | Points |
 //! |---|---|---|
-//! | Side (dot up / plain up) | 30.2 % / 34.9 % | 0 |
-//! | Back | 22.4 % | 5 |
-//! | Feet | 8.8 % | 5 |
-//! | Nose | 3.0 % | 10 |
-//! | Ear | 0.7 % | 15 |
+//! | Snooze (dot up / plain up) | 30.2 % / 34.9 % | 0 |
+//! | Belly Up | 22.4 % | 5 |
+//! | Strut | 8.8 % | 5 |
+//! | Nose Dive | 3.0 % | 10 |
+//! | Tipsy | 0.7 % | 15 |
 //!
-//! - Two sides that don't match (one dot up, one plain up) is a **bust**:
+//! - Two snoozes that don't match (one dot up, one plain up) is an **oops**:
 //!   the turn's score is lost and the die passes.
-//! - Two matching sides score 1 point.
-//! - A side next to any other pose scores only the other pig.
-//! - Two matching poses that aren't sides is a **double**: four times one
-//!   pig, so a double back is 20 and a double ear is 60.
+//! - Two matching snoozes are **nap time**: 1 point.
+//! - A snooze next to any other pose scores only the other pig.
+//! - Two matching poses that aren't snoozes are a **twin**: four times one
+//!   pig, so twin belly up is 20 and twin tipsy is 60.
 //! - Anything else is the two pigs' points added together.
 //!
 //! First to [`TARGET`] wins, once they bank it.
@@ -106,11 +106,11 @@ impl Pose {
 
     pub fn name(self) -> &'static str {
         match self {
-            Pose::SideDot | Pose::SidePlain => "Side",
-            Pose::Back => "Back",
-            Pose::Feet => "Feet",
-            Pose::Nose => "Nose",
-            Pose::Ear => "Ear",
+            Pose::SideDot | Pose::SidePlain => "Snooze",
+            Pose::Back => "Belly Up",
+            Pose::Feet => "Strut",
+            Pose::Nose => "Nose Dive",
+            Pose::Ear => "Tipsy",
         }
     }
 }
@@ -135,14 +135,14 @@ pub fn score(poses: [Pose; 2]) -> Outcome {
     }
 }
 
-/// A name for a throw: `Double Feet`, `Back + Nose`, `Bust`.
+/// A name for a throw: `Twin Strut`, `Belly Up + Nose Dive`, `Oops`.
 pub fn throw_label(poses: [Pose; 2]) -> String<32> {
     let [a, b] = poses;
     let mut s = String::new();
     let _ = match score(poses) {
-        Outcome::Bust => write!(s, "Bust"),
-        Outcome::Score(1) if a.is_side() && b.is_side() => write!(s, "Sides"),
-        _ if a == b => write!(s, "Double {}", a.name()),
+        Outcome::Bust => write!(s, "Oops"),
+        Outcome::Score(1) if a.is_side() && b.is_side() => write!(s, "Nap Time"),
+        _ if a == b => write!(s, "Twin {}", a.name()),
         _ if a.is_side() => write!(s, "{}", b.name()),
         _ if b.is_side() => write!(s, "{}", a.name()),
         _ => write!(s, "{} + {}", a.name(), b.name()),
@@ -359,11 +359,11 @@ mod tests {
 
     #[test]
     fn labels_name_the_throw() {
-        assert_eq!(throw_label([SideDot, SidePlain]).as_str(), "Bust");
-        assert_eq!(throw_label([SidePlain, SidePlain]).as_str(), "Sides");
-        assert_eq!(throw_label([Feet, Feet]).as_str(), "Double Feet");
-        assert_eq!(throw_label([SideDot, Nose]).as_str(), "Nose");
-        assert_eq!(throw_label([Back, Feet]).as_str(), "Back + Feet");
+        assert_eq!(throw_label([SideDot, SidePlain]).as_str(), "Oops");
+        assert_eq!(throw_label([SidePlain, SidePlain]).as_str(), "Nap Time");
+        assert_eq!(throw_label([Feet, Feet]).as_str(), "Twin Strut");
+        assert_eq!(throw_label([SideDot, Nose]).as_str(), "Nose Dive");
+        assert_eq!(throw_label([Back, Feet]).as_str(), "Belly Up + Strut");
     }
 
     #[test]

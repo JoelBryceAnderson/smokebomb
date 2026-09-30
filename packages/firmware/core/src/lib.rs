@@ -113,6 +113,8 @@ pub struct Firmware<P: Platform> {
     pig_land: f32,
     /// When the die landed, so the pigs settle from there.
     pig_landed_ms: u64,
+    /// Scratch for drawing the pigs.
+    pig_z: pigfx::DepthBuffer,
     roller: RollEngine,
     smoke: Smoke,
     /// A max or dud waiting for the smoke to clear (SIM_SPEC C6).
@@ -171,6 +173,7 @@ impl<P: Platform> Firmware<P> {
             pig_clock: 0.0,
             pig_land: 0.0,
             pig_landed_ms: 0,
+            pig_z: pigfx::DepthBuffer::new(),
             roller,
             smoke,
             pending_special: None,
@@ -938,6 +941,7 @@ impl<P: Platform> Firmware<P> {
             last_roll,
             menu,
             pigs,
+            pig_z,
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
@@ -1046,7 +1050,7 @@ impl<P: Platform> Firmware<P> {
                 let in_air = matches!(scene, pigfx::Scene::Tumbling(_));
                 if in_air || face != up.opposite() {
                     // Each face shows a different moment of the same throw.
-                    pigfx::draw(c.painter, scene, face.index() as f32 * 0.9, pig_alpha);
+                    pigfx::draw(c.painter, pig_z, scene, face.index() as f32 * 0.9, pig_alpha);
                 }
             }
             match potato_face {

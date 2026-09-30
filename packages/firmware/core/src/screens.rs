@@ -357,7 +357,7 @@ pub fn draw_pig_score<A: AssetStore>(
     if pop > 0.0 {
         let mut big: String<8> = String::new();
         let _ = match throw.outcome {
-            Outcome::Bust => write!(big, "BUST"),
+            Outcome::Bust => write!(big, "OOPS"),
             Outcome::Score(p) => write!(big, "+{p}"),
         };
         let px = big_size(big.len()).min(52.0) * 0.8;
