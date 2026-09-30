@@ -180,6 +180,10 @@ pub struct Firmware<P: Platform> {
     /// Sugar Run: the game, and which maze face each screen shows.
     run: maze::Game,
     run_view: maze::View,
+    /// The screen the runner is kept on: the one that was up when the run
+    /// began (or carried on after a pause). It stays that screen however
+    /// far the die is tipped, so leaning hard never moves the runner.
+    run_screen: Face,
     /// The way the die was last tipped, in die axes: the runner turns that
     /// way at the next opening.
     run_want: Option<Face>,
@@ -276,6 +280,7 @@ impl<P: Platform> Firmware<P> {
             addr_of_mut!((*p).last_roll).write(None);
             addr_of_mut!((*p).run).write(maze::Game::new(settings.ants));
             addr_of_mut!((*p).run_view).write(maze::View::new());
+            addr_of_mut!((*p).run_screen).write(Face::PosY);
             addr_of_mut!((*p).run_want).write(None);
             addr_of_mut!((*p).run_level_since).write(None);
             addr_of_mut!((*p).run_paused_at).write(0);
@@ -324,6 +329,7 @@ impl<P: Platform> Firmware<P> {
                 last_roll,
                 run,
                 run_view,
+                run_screen,
                 run_want,
                 run_level_since,
                 run_paused_at,
@@ -680,7 +686,8 @@ impl<P: Platform> Firmware<P> {
         self.run_armed = false;
         let seed = self.hw.rng.next_u32()?;
         let events = self.run.start(now, seed);
-        self.run_view.snap(self.up_face, maze::START.face());
+        self.run_screen = self.up_face;
+        self.run_view.snap(self.run_screen, maze::START.face());
         self.run_want = None;
         self.run_level_since = None;
         self.ui.game_started();
@@ -699,20 +706,32 @@ impl<P: Platform> Firmware<P> {
         self.run_level_since = None;
     }
 
-    /// Sugar Run each tick: steer by the tilt, pause when the die is set
-    /// down and carry on when it's tilted again, keep the runner's face on
-    /// top, and play the run.
+    /// Sugar Run each tick: steer by the lean of the play screen, pause when
+    /// the die is set down and carry on when it's tilted again, keep the
+    /// runner's face on the play screen, and play the run.
+    ///
+    /// The play screen is locked for the run: tipping the die past 45°
+    /// changes which face is up, but not where the runner is. Only the
+    /// runner crossing an edge rolls the map. A pause lets go of the lock,
+    /// so a die set down on another face carries on with that one on top.
     fn update_run(&mut self, now: u64, dt: f32) -> HalResult<()> {
-        let up = self.up_face;
-        let (downhill, lean) = downhill(self.gravity.up(), up);
-        if lean >= RUN_STEER {
-            self.run_want = downhill;
+        let sky = self.gravity.up();
+        if self.run.phase() == RunPhase::Paused {
+            self.run_screen = self.up_face;
         }
+        let screen = self.run_screen;
+        let (downhill_way, lean) = downhill(sky, screen);
+        if lean >= RUN_STEER {
+            self.run_want = downhill_way;
+        }
+        // Set down means lying level on whatever face, not only the play
+        // screen.
+        let (_, top_lean) = downhill(sky, self.up_face);
         match self.run.phase() {
             RunPhase::Paused if lean >= RUN_RESUME => {
                 self.run.resume(now.saturating_sub(self.run_paused_at));
             }
-            RunPhase::Playing if self.motion.is_still() && lean < RUN_LEVEL => {
+            RunPhase::Playing if self.motion.is_still() && top_lean < RUN_LEVEL => {
                 let since = *self.run_level_since.get_or_insert(now);
                 if now.saturating_sub(since) >= RUN_PAUSE_MS {
                     self.pause_run(now);
@@ -720,7 +739,7 @@ impl<P: Platform> Firmware<P> {
             }
             _ => self.run_level_since = None,
         }
-        self.run_view.update(now, up, self.run.runner.face());
+        self.run_view.update(now, screen, self.run.runner.face());
         let want = self.run_want.map(|d| self.run_view.maze_way(d));
         let events = self.run.step(now, dt, want);
         self.feel_run(&events)
