@@ -151,7 +151,21 @@ label.check {
   gap: 8px;
 }
 
+.motion-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+button.throw .sub {
+  display: block;
+  font-weight: 400;
+  font-size: 0.8em;
+  opacity: 0.75;
+  margin-top: 2px;
+}
+
 button.throw {
+  flex: 1;
   width: 100%;
   padding: 14px;
   font-weight: 600;

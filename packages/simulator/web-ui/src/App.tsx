@@ -251,29 +251,42 @@ export function App() {
       <aside className="panel">
         <section>
           <h2>Motion</h2>
-          <button
-            className="primary throw"
-            onPointerDown={(e) => {
-              e.currentTarget.setPointerCapture(e.pointerId);
-              shakeStart();
-            }}
-            onPointerUp={() => shakeEnd(true)}
-            onPointerCancel={() => shakeEnd(false)}
-            onKeyDown={(e) => {
-              if ((e.key === " " || e.key === "Enter") && !e.repeat) {
-                e.preventDefault();
-                shakeStart();
-              }
-            }}
-            onKeyUp={(e) => {
-              if (e.key === " " || e.key === "Enter") {
-                e.preventDefault();
-                shakeEnd(true);
-              }
-            }}
-          >
-            Hold to shake, release to throw
-          </button>
+          <div className="motion-buttons">
+            {[
+              { throws: false, label: "Shake", hint: "Hold to shake, let go to keep it in your hand" },
+              { throws: true, label: "Throw", hint: "Hold to shake, let go to throw" },
+            ].map(({ throws, label, hint }) => (
+              <button
+                key={label}
+                className={throws ? "primary throw" : "throw"}
+                title={hint}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  shakeStart();
+                }}
+                onPointerUp={() => shakeEnd(throws)}
+                onPointerCancel={() => shakeEnd(false)}
+                onKeyDown={(e) => {
+                  if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                    e.preventDefault();
+                    shakeStart();
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (e.key === " " || e.key === "Enter") {
+                    e.preventDefault();
+                    shakeEnd(throws);
+                  }
+                }}
+              >
+                {label}
+                <span className="sub">{throws ? "hold, release to throw" : "hold, release to keep"}</span>
+              </button>
+            ))}
+          </div>
+          <p className="muted">
+            Shake without throwing to start Sugar Run, or mid-run to burst sugar at the ants.
+          </p>
         </section>
 
         <section>
@@ -305,7 +318,7 @@ export function App() {
           <h2>Lean in the hand</h2>
           <p className="muted">
             Hold to tip the die about 20° and keep it there; let go and it levels again. Sugar Run steers by
-            this: the runner heads for the lowered side. Keys W A S D work too. While a run plays, the die is
+            this: the sugar cube heads for the lowered side. Keys W A S D work too. While a run plays, the die is
             held up about 40° toward you so you can watch its top screen, and leans go on top of that.
           </p>
           <div className="tip-pad">

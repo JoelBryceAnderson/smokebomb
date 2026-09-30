@@ -1,5 +1,5 @@
 //! Line-art icons for the setup label: a wireframe of each die's solid, a
-//! bomb for Hot Potato, a banknote for Pass the Pot and the runner for
+//! bomb for Hot Potato, a banknote for Pass the Pot and the sugar cube for
 //! Sugar Run. Coordinates are
 //! canvas units around the icon's centre; `r` is the icon's radius.
 
@@ -42,13 +42,11 @@ pub fn draw_setup_icon<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, cx: f32, cy:
     }
 }
 
-/// Sugar Run: the runner, mouth open, with sugar to eat ahead of it.
+/// Sugar Run: the sugar cube, with crystals to find beside it.
 fn sugar_run<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Style) {
-    crate::mazefx::draw_runner_icon(c.painter, cx - r * 0.32, cy, r * 0.62, style);
-    for k in 0..2 {
-        let x = cx + r * (0.55 + 0.4 * k as f32);
-        c.painter.fill_circle(x, cy, r * 0.11, style);
-    }
+    crate::mazefx::draw_cube_icon(c.painter, cx - r * 0.3, cy + r * 0.12, r * 0.5, style);
+    crate::mazefx::draw_crystal_icon(c.painter, cx + r * 0.62, cy - r * 0.42, r * 0.22, style);
+    crate::mazefx::draw_crystal_icon(c.painter, cx + r * 0.72, cy + r * 0.3, r * 0.15, style);
 }
 
 /// A banknote on its own, as the setup icon draws it (Pass the Pot's bills

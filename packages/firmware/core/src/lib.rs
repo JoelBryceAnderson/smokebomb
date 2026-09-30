@@ -598,6 +598,11 @@ impl<P: Platform> Firmware<P> {
                 match event {
                     // A shake starts a run once the die settles in the hand.
                     Event::Motion(Motion::Shaking) if !self.run.in_play() => self.run_armed = true,
+                    // Mid-run, a shake bursts sugar and dazes the ants near.
+                    Event::Motion(Motion::Shaking) if self.run.phase() == RunPhase::Playing => {
+                        let events = self.run.burst(now);
+                        self.feel_run(&events)?;
+                    }
                     Event::Motion(Motion::Rest) if self.run_armed => self.start_run(now)?,
                     // Mid-run the die is in the hand: a finger on a screen
                     // is the grip, not a tap or a hold.
@@ -832,22 +837,21 @@ impl<P: Platform> Firmware<P> {
         use smokebomb_hal::HapticEffect as H;
         for e in events {
             let effect = match e {
-                RunEvent::Dot => None,
-                RunEvent::Started | RunEvent::Lump => Some(H::Tick),
-                RunEvent::AteAnt => Some(H::LandingThud),
-                RunEvent::Caught => {
-                    // The runner bursts into sugar.
+                RunEvent::Started => Some(H::Tick),
+                RunEvent::Crystal => Some(H::MenuTip),
+                RunEvent::Earned => Some(H::MenuSave),
+                RunEvent::Burst | RunEvent::Caught => {
+                    // A cloud of sugar: blown off the cube in a burst, or
+                    // the cube itself dissolving.
                     if let Some(smoke) = self.fx.smoke() {
                         smoke.throw();
                         smoke.land();
                     }
-                    Some(H::Buzz)
-                }
-                RunEvent::Cleared => {
-                    if let Some(smoke) = self.fx.smoke() {
-                        smoke.special(Special::Max);
-                    }
-                    Some(H::MaxCelebration)
+                    Some(if *e == RunEvent::Burst {
+                        H::LandingThud
+                    } else {
+                        H::Buzz
+                    })
                 }
                 RunEvent::GameOver => Some(H::Dud),
             };
@@ -867,17 +871,12 @@ impl<P: Platform> Firmware<P> {
         let secs = |since: u64| now.saturating_sub(since) as f32 / 1000.0;
         let (alpha, overlay) = match self.run.phase() {
             RunPhase::Ready => return None,
-            RunPhase::Playing => (1.0, RunOverlay::None),
+            RunPhase::Playing => (1.0, RunOverlay::Bursts),
             RunPhase::Paused => (0.3, RunOverlay::Paused),
             RunPhase::Caught { since } => {
                 let t = secs(since);
                 let fade = ((t - 1.2) / 0.3).clamp(0.0, 1.0);
                 (1.0 - 0.65 * fade, RunOverlay::Lives(t - 1.2))
-            }
-            RunPhase::Cleared { since } => {
-                let t = secs(since);
-                let flash = 0.6 + 0.4 * libm::cosf(t * core::f32::consts::TAU * 2.5);
-                (flash, RunOverlay::Level(t - 1.0))
             }
             RunPhase::Over { since } => {
                 let t = secs(since);
@@ -1501,6 +1500,7 @@ impl<P: Platform> Firmware<P> {
         let asleep = self.asleep;
         let nest_faces = self.nest_faces(now, &mode, battery);
         let run_screen = self.run_screen(now, &mode);
+        let play_screen = self.run_screen;
         let Self {
             frames,
             layer,
@@ -1674,7 +1674,10 @@ impl<P: Platform> Firmware<P> {
             match run_face.map(|rs| rs.overlay) {
                 Some(RunOverlay::Paused) => screens::draw_run_paused(&mut c, run.score()),
                 Some(RunOverlay::Lives(t)) if t > 0.0 => screens::draw_run_lives(&mut c, run.lives(), t),
-                Some(RunOverlay::Level(t)) if t > 0.0 => screens::draw_run_level(&mut c, run.level() + 1, t),
+                // The bursts in hand, along the foot of the cube's screen.
+                Some(RunOverlay::Bursts) if face == play_screen => {
+                    screens::draw_run_bursts(&mut c, run.bursts())
+                }
                 Some(RunOverlay::Over(t, fade)) => screens::draw_run_over(&mut c, run.score(), t, fade),
                 _ => {}
             }
@@ -1707,12 +1710,11 @@ struct RunScreen {
 
 #[derive(Clone, Copy)]
 enum RunOverlay {
-    None,
+    /// Playing: the bursts in hand, on the cube's screen.
+    Bursts,
     Paused,
     /// Seconds since the lives left began to show.
     Lives(f32),
-    /// Seconds since the next level's number began to show.
-    Level(f32),
     /// Seconds since the game ended, and how far it has faded.
     Over(f32, f32),
 }

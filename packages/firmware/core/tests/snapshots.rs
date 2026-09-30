@@ -1170,21 +1170,25 @@ fn sugar_run() {
     run_timeline(
         "sugar-run",
         run,
-        &[11.2, 11.9, 12.0, 12.1, 12.3, 13.5, 15.0, 20.5, 27.0],
+        &[11.2, 11.9, 12.0, 12.1, 12.3, 13.5, 15.0, 16.3, 17.2, 23.0],
         vec![
             (9.0, Run::shake),
             (9.4, Run::throw_release),
             (12.6, |r| lean(r, 0.0, LEAN)),
             (14.0, |r| lean(r, -LEAN, 0.0)),
             (15.2, |r| lean(r, 0.0, 0.0)),
+            // A shake mid-run bursts sugar, spending the burst in hand.
+            (15.6, Run::shake),
+            (16.0, |r| world_of(r).end_shake(false)),
         ],
     );
 }
 
 #[test]
 fn sugar_run_over() {
-    // Four ants, and a runner held leaning one way: caught three times, the
-    // last life shrinks away, then the score and a nudge, which fade.
+    // Four ants, and a cube held leaning one way that finds no sugar, so
+    // only one ant hatches: caught three times, the last life dissolves,
+    // then the score and a nudge, which fade.
     let mut run = Run::with_world_and_modes().with_settings(|s| {
         s.play = smokebomb_core::menu::PlayMode::SugarRun;
         s.ants = 4;
@@ -1194,7 +1198,7 @@ fn sugar_run_over() {
     run_timeline(
         "sugar-run-over",
         run,
-        &[45.9, 46.6, 47.3, 48.0, 50.0, 62.6],
+        &[102.6, 103.2, 103.9, 104.6, 106.6, 119.5],
         vec![
             (9.0, Run::shake),
             (9.4, Run::throw_release),

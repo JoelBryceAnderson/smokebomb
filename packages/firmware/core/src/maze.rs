@@ -1,22 +1,30 @@
 //! Sugar Run: a maze over the whole cube.
 //!
 //! Every face is an 8×8 grid of cells, and the corridors carry on over the
-//! edges, so the maze has no border: it is the surface of the die. You chase
-//! sugar round it and ants chase you. Tilt the die to steer; the runner goes
-//! downhill, turning at the next opening like a joystick held over.
+//! edges, so the maze has no border: it is the surface of the die. You are a
+//! sugar cube hunting sugar crystals round it, and ants are after you. Tilt
+//! the die to steer; the cube goes downhill, turning at the next opening
+//! like a joystick held over.
 //!
-//! The runner always stays on the top screen. When it crosses an edge the
-//! map rolls a quarter turn over the die, bringing the face it ran onto up
+//! A few crystals lie about at a time; take one and another turns up
+//! somewhere else, usually on another face, so the side screens are where
+//! you look for the next. You leave a scent that fades, and an ant that
+//! crosses it follows it to you; close by, it rushes you. More ants hatch
+//! from the nest as the score climbs. A shake bursts sugar: ants near you
+//! are dazed for a moment. Bursts are earned by collecting crystals.
+//!
+//! The cube always stays on the top screen. When it crosses an edge the map
+//! rolls a quarter turn over the die, bringing the face it ran onto up
 //! ([`View`]). A cube's surface can only be turned onto itself in quarter
 //! turns, so the map rolls a face at a time rather than scrolling. The four
-//! side screens show the faces next to the runner's, so you see ants coming;
+//! side screens show the faces next to the cube's, so you see ants coming;
 //! the face underneath is the far side of the world.
 //!
 //! ```text
 //!   Ready ── shake ──▶ Playing ── caught, lives left ──▶ Caught ──▶ Playing
-//!                       │  ▲  └── every dot eaten ──▶ Cleared ──▶ Playing (next level)
-//!           set down ── │  └── tilt
-//!                       ▼                       caught, no lives ──▶ Over ── shake ──▶ Playing
+//!                       │  ▲
+//!           set down ── │  └── tilt          caught, no lives ──▶ Over ── shake ──▶ Playing
+//!                       ▼
 //!                     Paused
 //! ```
 //!
@@ -55,40 +63,34 @@ pub const MIN_ANTS: u8 = 1;
 pub const DEFAULT_ANTS: u8 = 3;
 pub const LIVES: u8 = 3;
 
-/// Runner and ant speeds, cells a second, at level 1 and the most they
-/// reach.
+/// Cube and ant speeds, cells a second. Ants get quicker with the score,
+/// up to the most they reach.
 const RUNNER_SPEED: f32 = 4.2;
-const RUNNER_MAX: f32 = 5.4;
-const ANT_SPEED: f32 = 3.3;
-const ANT_MAX: f32 = 5.0;
-/// A scared ant's speed, against its normal one.
-const SCARED_SLOW: f32 = 0.55;
-/// How long a sugar lump scares the ants, at level 1, and the least it does.
-const SCARE_MS: u64 = 6_500;
-const SCARE_MIN_MS: u64 = 2_500;
-/// The last part of a scare, when the ants flicker.
-pub const SCARE_WARN_MS: u64 = 1_800;
-/// Ants leave the nest one by one: the first this long after the start,
-/// the rest this far apart.
-const NEST_FIRST_MS: u64 = 1_500;
-const NEST_GAP_MS: u64 = 2_500;
-/// An eaten ant waits in the nest this long before it comes out again.
-const EATEN_WAIT_MS: u64 = 3_000;
-/// Ants wander toward their corners, then hunt, turn and turn about.
-const WANDER_MS: u64 = 6_000;
-const HUNT_MS: u64 = 20_000;
-/// How close (doubled units) an ant must come to catch the runner.
+const ANT_SPEED: f32 = 3.0;
+const ANT_SPEED_PER_CRYSTAL: f32 = 0.05;
+const ANT_MAX: f32 = 4.6;
+/// Crystals lying about at once.
+pub const CRYSTALS: usize = 6;
+/// The first ant hatches this long into a life, the next no sooner than
+/// this after the last; one more may be out for every few crystals.
+const HATCH_FIRST_MS: u64 = 2_000;
+const HATCH_GAP_MS: u64 = 3_000;
+const CRYSTALS_PER_ANT: u32 = 4;
+/// How long the cube's scent lasts, and how close (doubled units, squared)
+/// an ant must be to smell the cube itself and rush it.
+pub const SCENT_MS: u64 = 8_000;
+const RUSH: i32 = 6 * 6;
+/// Bursts: one to start, one more for every few crystals, up to a few. A
+/// burst dazes ants within this (doubled units, squared) for this long.
+const BURSTS_START: u8 = 1;
+pub const BURSTS_MAX: u8 = 3;
+const CRYSTALS_PER_BURST: u32 = 5;
+const BURST_REACH: f32 = 10.0 * 10.0;
+pub const DAZE_MS: u64 = 3_500;
+/// How close (doubled units) an ant must come to catch the cube.
 const CATCH: f32 = 1.2;
-/// How long the caught runner shrinks away, and a cleared maze flashes,
-/// before play goes on.
+/// How long the caught cube dissolves before play goes on.
 pub const CAUGHT_MS: u64 = 1_800;
-pub const CLEARED_MS: u64 = 2_600;
-
-/// Points for a crystal, a sugar lump and the first ant eaten on one lump
-/// (each more on the same lump doubles).
-pub const DOT_POINTS: u32 = 10;
-pub const LUMP_POINTS: u32 = 50;
-pub const ANT_POINTS: u32 = 200;
 
 type V3 = [i32; 3];
 
@@ -421,20 +423,19 @@ impl Walker {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AntState {
-    /// Waiting in the nest until then.
-    Nest {
+    /// In the nest, not hatched yet.
+    Nest,
+    Out,
+    /// Caught in a burst of sugar: stopped, and harmless, until then.
+    Dazed {
         until: u64,
     },
-    Out,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ant {
     pub w: Walker,
     pub state: AntState,
-    /// Running from the runner (it ate a sugar lump since this ant came
-    /// out).
-    pub scared: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -444,12 +445,8 @@ pub enum Phase {
     Playing,
     /// Set down: the maze waits, dimmed, until the die is tilted again.
     Paused,
-    /// An ant got the runner.
+    /// An ant got the cube.
     Caught {
-        since: u64,
-    },
-    /// Every crystal eaten.
-    Cleared {
         since: u64,
     },
     /// No lives left: the score shows until the next shake.
@@ -462,17 +459,17 @@ pub enum Phase {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunEvent {
     Started,
-    Dot,
-    Lump,
-    AteAnt,
+    Crystal,
+    /// A crystal that also earned a burst.
+    Earned,
+    Burst,
     Caught,
-    Cleared,
     GameOver,
 }
 
 pub type RunEvents = Vec<RunEvent, 8>;
 
-/// Where the runner starts, and where the ants' nest is: the far side.
+/// Where the cube starts, and where the ants' nest is: the far side.
 pub const START: Cell = Cell::new(Face::PosY, 3, 4);
 const NEST: [Cell; MAX_ANTS as usize] = [
     Cell::new(Face::NegY, 3, 3),
@@ -480,57 +477,53 @@ const NEST: [Cell; MAX_ANTS as usize] = [
     Cell::new(Face::NegY, 4, 3),
     Cell::new(Face::NegY, 3, 4),
 ];
-/// The corner each ant heads for while it wanders.
-const CORNERS: [V3; MAX_ANTS as usize] = [[9, 9, 9], [-9, -9, 9], [9, -9, -9], [-9, 9, -9]];
-/// Where the sugar lumps are, one per face.
-const LUMPS: [(usize, usize); FACE_COUNT] = [(0, 0), (7, 7), (0, 7), (7, 0), (7, 7), (0, 0)];
 
 pub struct Game {
     maze: Maze,
-    /// Crystals left, a bit per cell.
-    dots: [u8; CELLS / 8],
-    lumps: [u8; CELLS / 8],
-    dots_left: u16,
+    /// The crystals lying about.
+    crystals: Vec<Cell, CRYSTALS>,
+    /// When the cube last passed each cell (ms since the game began, plus
+    /// one; 0 for never): its scent.
+    scent: [u32; CELLS],
     pub runner: Walker,
     ants: [Ant; MAX_ANTS as usize],
     ant_count: u8,
     phase: Phase,
+    /// Crystals collected.
     score: u32,
     lives: u8,
-    level: u8,
-    /// When the round (this life) began: the ants' clock.
+    bursts: u8,
+    /// When this life began, and when an ant last hatched.
     round_start: u64,
-    scared_until: u64,
-    /// Ants eaten on the current lump.
-    chain: u8,
+    last_hatch: u64,
+    /// When the game began: scent is kept relative to it.
+    epoch: u64,
     rng: Rng,
-    /// Seconds the runner has been moving, for its chomp.
-    chomp: f32,
+    /// Seconds the cube has been moving, for its wobble.
+    rolled: f32,
 }
 
 impl Game {
     pub fn new(ants: u8) -> Self {
         Self {
             maze: Maze::new(),
-            dots: [0; CELLS / 8],
-            lumps: [0; CELLS / 8],
-            dots_left: 0,
+            crystals: Vec::new(),
+            scent: [0; CELLS],
             runner: Walker::at(START, Face::PosX),
             ants: [Ant {
                 w: Walker::at(NEST[0], Face::PosX),
-                state: AntState::Nest { until: 0 },
-                scared: false,
+                state: AntState::Nest,
             }; MAX_ANTS as usize],
             ant_count: ants.clamp(MIN_ANTS, MAX_ANTS),
             phase: Phase::Ready,
             score: 0,
             lives: LIVES,
-            level: 1,
+            bursts: BURSTS_START,
             round_start: 0,
-            scared_until: 0,
-            chain: 0,
+            last_hatch: 0,
+            epoch: 0,
             rng: Rng::new(1),
-            chomp: 0.0,
+            rolled: 0.0,
         }
     }
 
@@ -542,6 +535,7 @@ impl Game {
         &self.maze
     }
 
+    /// Crystals collected.
     pub fn score(&self) -> u32 {
         self.score
     }
@@ -550,15 +544,12 @@ impl Game {
         self.lives
     }
 
-    pub fn level(&self) -> u8 {
-        self.level
+    /// Bursts in hand.
+    pub fn bursts(&self) -> u8 {
+        self.bursts
     }
 
-    pub fn dots_left(&self) -> u16 {
-        self.dots_left
-    }
-
-    /// How many ants give chase.
+    /// The most ants that may be out.
     pub fn ant_count(&self) -> u8 {
         self.ant_count
     }
@@ -567,8 +558,28 @@ impl Game {
         &self.ants[..self.ant_count as usize]
     }
 
-    pub fn chomp(&self) -> f32 {
-        self.chomp
+    pub fn crystals(&self) -> &[Cell] {
+        &self.crystals
+    }
+
+    pub fn has_crystal(&self, c: Cell) -> bool {
+        self.crystals.contains(&c)
+    }
+
+    /// How fresh the cube's scent on `c` is at `now`: 1 just passed, 0 gone.
+    pub fn scent(&self, c: Cell, now: u64) -> f32 {
+        match self.scent[c.index()] {
+            0 => 0.0,
+            t => {
+                let age = now.saturating_sub(self.epoch + t as u64 - 1);
+                (1.0 - age as f32 / SCENT_MS as f32).max(0.0)
+            }
+        }
+    }
+
+    /// Seconds the cube has been moving, for its wobble.
+    pub fn rolled(&self) -> f32 {
+        self.rolled
     }
 
     /// A game is under way (not waiting to start, and not over).
@@ -578,24 +589,7 @@ impl Game {
 
     /// The maze is moving: nothing should interrupt it.
     pub fn running(&self) -> bool {
-        matches!(
-            self.phase,
-            Phase::Playing | Phase::Caught { .. } | Phase::Cleared { .. }
-        )
-    }
-
-    pub fn has_dot(&self, c: Cell) -> bool {
-        bit(&self.dots, c)
-    }
-
-    pub fn has_lump(&self, c: Cell) -> bool {
-        bit(&self.lumps, c)
-    }
-
-    /// How scared the ants are: 1 while fresh, flickering toward 0 at the
-    /// end, 0 once it's over.
-    pub fn scared_left_ms(&self, now: u64) -> u64 {
-        self.scared_until.saturating_sub(now)
+        matches!(self.phase, Phase::Playing | Phase::Caught { .. })
     }
 
     /// Start a game, or a new one once it's over (the firmware does this
@@ -606,9 +600,15 @@ impl Game {
             self.rng = Rng::new(seed);
             self.score = 0;
             self.lives = LIVES;
-            self.level = 1;
-            self.new_maze();
+            self.bursts = BURSTS_START;
+            self.epoch = now;
+            self.scent = [0; CELLS];
+            self.maze.generate(&mut self.rng);
             self.new_round(now);
+            self.crystals.clear();
+            while !self.crystals.is_full() {
+                self.drop_crystal();
+            }
             let _ = out.push(RunEvent::Started);
         }
         out
@@ -621,17 +621,16 @@ impl Game {
         }
     }
 
-    /// Picked up and tilted: carry on. The ants' timers don't count the
-    /// pause.
+    /// Picked up and tilted: carry on. The ants' and the scent's clocks
+    /// don't count the pause.
     pub fn resume(&mut self, paused_ms: u64) {
         if self.phase == Phase::Paused {
             self.phase = Phase::Playing;
             self.round_start += paused_ms;
-            if self.scared_until > 0 {
-                self.scared_until += paused_ms;
-            }
+            self.last_hatch += paused_ms;
+            self.epoch += paused_ms;
             for a in &mut self.ants {
-                if let AntState::Nest { until } = &mut a.state {
+                if let AntState::Dazed { until } = &mut a.state {
                     *until += paused_ms;
                 }
             }
@@ -643,28 +642,42 @@ impl Game {
         *self = Self::new(self.ant_count);
     }
 
-    fn new_maze(&mut self) {
-        self.maze.generate(&mut self.rng);
-        self.dots = [0xff; CELLS / 8];
-        self.lumps = [0; CELLS / 8];
-        clear_bit(&mut self.dots, START);
-        for c in NEST {
-            clear_bit(&mut self.dots, c);
+    /// A shake mid-run: burst sugar, if there's a burst in hand. Ants near
+    /// the cube are dazed.
+    pub fn burst(&mut self, now: u64) -> RunEvents {
+        let mut out = RunEvents::new();
+        if self.phase != Phase::Playing || self.bursts == 0 {
+            return out;
         }
-        for (face, (i, j)) in Face::ALL.into_iter().zip(LUMPS) {
-            let c = Cell::new(face, i, j);
-            clear_bit(&mut self.dots, c);
-            set_bit(&mut self.lumps, c);
+        self.bursts -= 1;
+        let p = self.runner.pos();
+        for a in &mut self.ants {
+            if matches!(a.state, AntState::Out | AntState::Dazed { .. }) && dist2(p, a.w.pos()) < BURST_REACH
+            {
+                a.state = AntState::Dazed { until: now + DAZE_MS };
+            }
         }
-        self.dots_left = self
-            .dots
-            .iter()
-            .chain(&self.lumps)
-            .map(|b| b.count_ones() as u16)
-            .sum();
+        let _ = out.push(RunEvent::Burst);
+        out
     }
 
-    /// Everyone back to the start for a new life or level.
+    /// Put a crystal down where there isn't one, away from the cube: on
+    /// another face if a few tries find one.
+    fn drop_crystal(&mut self) {
+        let here = self.runner.cell;
+        for tries in 0..16 {
+            let c = Cell(self.rng.below(CELLS as u32) as u16);
+            let taken = self.crystals.contains(&c) || c == here || NEST.contains(&c);
+            if taken || (tries < 8 && c.face() == here.face()) {
+                continue;
+            }
+            let _ = self.crystals.push(c);
+            return;
+        }
+    }
+
+    /// Everyone back to the start for a new life: the ants in the nest to
+    /// hatch again, the crystals where they were.
     fn new_round(&mut self, now: u64) {
         let start_dir = ways(START.face())
             .into_iter()
@@ -672,36 +685,21 @@ impl Game {
             .unwrap_or(Face::PosX);
         self.runner = Walker::at(START, start_dir);
         for (k, a) in self.ants.iter_mut().enumerate() {
-            let cell = NEST[k];
-            a.w = Walker::at(cell, ways(cell.face())[k % 4]);
-            a.state = AntState::Nest {
-                until: now + NEST_FIRST_MS + NEST_GAP_MS * k as u64,
-            };
-            a.scared = false;
+            a.w = Walker::at(NEST[k], ways(NEST[k].face())[k % 4]);
+            a.state = AntState::Nest;
         }
         self.round_start = now;
-        self.scared_until = 0;
-        self.chain = 0;
+        self.last_hatch = 0;
         self.phase = Phase::Playing;
     }
 
-    fn runner_speed(&self) -> f32 {
-        (RUNNER_SPEED + 0.2 * (self.level - 1) as f32).min(RUNNER_MAX)
-    }
-
     fn ant_speed(&self) -> f32 {
-        (ANT_SPEED + 0.25 * (self.level - 1) as f32).min(ANT_MAX)
-    }
-
-    fn scare_ms(&self) -> u64 {
-        SCARE_MS
-            .saturating_sub(700 * (self.level - 1) as u64)
-            .max(SCARE_MIN_MS)
+        (ANT_SPEED + ANT_SPEED_PER_CRYSTAL * self.score as f32).min(ANT_MAX)
     }
 
     /// Advance by `dt` seconds. `want` is the way the die is tipped, as a
-    /// way through the maze (it may not lie along the runner's face while
-    /// the map is still rolling round to it; then it waits).
+    /// way through the maze (it may not lie along the cube's face while the
+    /// map is still rolling round to it; then it waits).
     pub fn step(&mut self, now: u64, dt: f32, want: Option<Face>) -> RunEvents {
         let mut out = RunEvents::new();
         match self.phase {
@@ -715,36 +713,11 @@ impl Game {
                 }
                 return out;
             }
-            Phase::Cleared { since } if now.saturating_sub(since) >= CLEARED_MS => {
-                self.level = self.level.saturating_add(1);
-                self.new_maze();
-                self.new_round(now);
-                return out;
-            }
             _ => return out,
         }
         let dt = dt.clamp(0.0, 0.1);
-        self.move_runner(dt, want, &mut out);
-        if self.dots_left == 0 {
-            self.phase = Phase::Cleared { since: now };
-            let _ = out.push(RunEvent::Cleared);
-            return out;
-        }
-        if out.contains(&RunEvent::Lump) {
-            self.scared_until = now + self.scare_ms();
-            self.chain = 0;
-            for a in &mut self.ants {
-                if a.state == AntState::Out {
-                    a.scared = true;
-                    a.w.reverse();
-                }
-            }
-        }
-        if now >= self.scared_until {
-            for a in &mut self.ants {
-                a.scared = false;
-            }
-        }
+        self.move_runner(now, dt, want, &mut out);
+        self.hatch(now);
         for k in 0..self.ant_count as usize {
             self.move_ant(k, now, dt);
         }
@@ -752,8 +725,29 @@ impl Game {
         out
     }
 
-    fn move_runner(&mut self, dt: f32, want: Option<Face>, out: &mut RunEvents) {
-        let speed = self.runner_speed();
+    /// Let another ant out of the nest when it's due: the first a moment
+    /// into a life, then one more for every few crystals, spaced out.
+    fn hatch(&mut self, now: u64) {
+        let out = self.ants().iter().filter(|a| a.state != AntState::Nest).count() as u32;
+        let allowed = (1 + self.score / CRYSTALS_PER_ANT).min(self.ant_count as u32);
+        let due = if out == 0 {
+            now.saturating_sub(self.round_start) >= HATCH_FIRST_MS
+        } else {
+            now.saturating_sub(self.last_hatch) >= HATCH_GAP_MS
+        };
+        if out < allowed && due {
+            if let Some(a) = self.ants[..self.ant_count as usize]
+                .iter_mut()
+                .find(|a| a.state == AntState::Nest)
+            {
+                a.state = AntState::Out;
+                a.w.moving = true;
+                self.last_hatch = now;
+            }
+        }
+    }
+
+    fn move_runner(&mut self, now: u64, dt: f32, want: Option<Face>, out: &mut RunEvents) {
         let r = &mut self.runner;
         if let Some(w) = want {
             if r.moving && w == r.dir.opposite() {
@@ -771,22 +765,26 @@ impl Game {
                 return;
             }
         }
-        self.chomp += dt;
-        r.t += speed * dt;
+        self.rolled += dt;
+        r.t += RUNNER_SPEED * dt;
         while r.t >= 1.0 {
             let (next, arrive) = r.ahead();
+            self.scent[r.cell.index()] = now.saturating_sub(self.epoch) as u32 + 1;
             r.cell = next;
             r.dir = arrive;
             r.t -= 1.0;
-            if take_bit(&mut self.dots, next) {
-                self.dots_left -= 1;
-                self.score += DOT_POINTS;
-                let _ = out.push(RunEvent::Dot);
-            }
-            if take_bit(&mut self.lumps, next) {
-                self.dots_left -= 1;
-                self.score += LUMP_POINTS;
-                let _ = out.push(RunEvent::Lump);
+            if let Some(i) = self.crystals.iter().position(|c| *c == next) {
+                self.crystals.swap_remove(i);
+                self.score += 1;
+                let earned = self.score % CRYSTALS_PER_BURST == 0 && self.bursts < BURSTS_MAX;
+                if earned {
+                    self.bursts += 1;
+                }
+                let _ = out.push(if earned {
+                    RunEvent::Earned
+                } else {
+                    RunEvent::Crystal
+                });
             }
             if let Some(w) = want.filter(|w| self.maze.open(next, *w)) {
                 r.dir = w;
@@ -795,158 +793,98 @@ impl Game {
                 r.moving = false;
             }
         }
+        // Another crystal turns up for each one taken.
+        while !self.crystals.is_full() {
+            self.drop_crystal();
+        }
     }
 
     fn move_ant(&mut self, k: usize, now: u64, dt: f32) {
-        let hunting = (now.saturating_sub(self.round_start)) % (WANDER_MS + HUNT_MS) >= WANDER_MS;
-        let target = self.target(k, hunting);
-        let speed = self.ant_speed() * if self.ants[k].scared { SCARED_SLOW } else { 1.0 };
-        let a = &mut self.ants[k];
-        match a.state {
-            AntState::Nest { until } if now >= until => {
-                a.state = AntState::Out;
-                a.w.moving = true;
-            }
-            AntState::Nest { .. } => return,
+        let speed = self.ant_speed();
+        let runner = self.runner.cell.pos();
+        match self.ants[k].state {
+            AntState::Nest => return,
+            AntState::Dazed { until } if now < until => return,
+            AntState::Dazed { .. } => self.ants[k].state = AntState::Out,
             AntState::Out => {}
         }
-        a.w.t += speed * dt;
-        // Out of the nest the first time, or blocked: pick a way now.
-        if !self.maze.open(a.w.cell, a.w.dir) && a.w.t < 1.0 {
-            a.w.t = 0.0;
-            a.w.dir = choose(
-                &self.maze,
-                &mut self.rng,
-                a.w.cell,
-                a.w.dir,
-                target,
-                a.scared,
-                true,
-            );
-            return;
+        let mut w = self.ants[k].w;
+        w.t += speed * dt;
+        // Just hatched, or blocked: pick a way now.
+        if !self.maze.open(w.cell, w.dir) && w.t < 1.0 {
+            w.t = 0.0;
+            w.dir = self.choose(w.cell, w.dir, runner, now, true);
         }
-        while a.w.t >= 1.0 {
-            let (next, arrive) = a.w.ahead();
-            a.w.cell = next;
-            a.w.t -= 1.0;
-            a.w.dir = choose(&self.maze, &mut self.rng, next, arrive, target, a.scared, false);
+        while w.t >= 1.0 {
+            let (next, arrive) = w.ahead();
+            w.cell = next;
+            w.t -= 1.0;
+            w.dir = self.choose(next, arrive, runner, now, false);
         }
+        self.ants[k].w = w;
     }
 
-    /// Where ant `k` heads: its corner while wandering; while hunting the
-    /// first goes for the runner, the second for where it's heading, the
-    /// third for where it's heading from, and the fourth hunts only from
-    /// afar and wanders once it's close.
-    fn target(&self, k: usize, hunting: bool) -> V3 {
-        let runner = self.runner.cell.pos();
-        if !hunting {
-            return CORNERS[k];
-        }
-        let ahead = add(runner, scale(axis(self.runner.dir), 8));
-        match k {
-            0 => runner,
-            1 => ahead,
-            2 => add(runner, scale(axis(self.runner.dir), -6)),
-            _ => {
-                let d = add(self.ants[k].w.cell.pos(), scale(runner, -1));
-                if dot(d, d) > 12 * 12 {
-                    runner
-                } else {
-                    CORNERS[k]
-                }
+    /// An ant at a cell centre, arriving along `arrive`, picks its way:
+    /// never straight back unless it must (or `fresh`, just hatched). Close
+    /// to the cube it rushes it; on the cube's trail it follows the scent
+    /// the way it's fresher; otherwise it wanders.
+    fn choose(&mut self, cell: Cell, arrive: Face, runner: V3, now: u64, fresh: bool) -> Face {
+        let mut options: Vec<Face, 4> = Vec::new();
+        for d in ways(cell.face()) {
+            if self.maze.open(cell, d) && (fresh || d != arrive.opposite()) {
+                let _ = options.push(d);
             }
         }
+        if options.is_empty() {
+            return arrive.opposite();
+        }
+        let gap = add(cell.pos(), scale(runner, -1));
+        if dot(gap, gap) <= RUSH {
+            // Nearest by direction from the die's centre, which works over
+            // the edges too.
+            let toward = |d: &Face| {
+                let p = cell.step(*d).0.pos();
+                dot(p, runner) as f32 / libm::sqrtf(dot(p, p) as f32)
+            };
+            if let Some(d) = options
+                .iter()
+                .copied()
+                .max_by(|a, b| toward(a).total_cmp(&toward(b)))
+            {
+                return d;
+            }
+        }
+        let here = self.scent(cell, now);
+        let trail = options
+            .iter()
+            .copied()
+            .map(|d| (d, self.scent(cell.step(d).0, now)))
+            .filter(|(_, s)| *s > 0.0 && *s > here)
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((d, _)) = trail {
+            return d;
+        }
+        options[self.rng.below(options.len() as u32) as usize]
     }
 
-    /// Did the runner and an ant meet? A scared one is eaten; any other
-    /// catches the runner.
+    /// Did the cube meet an ant that's out (not dazed)? Then it's caught.
     fn meet(&mut self, now: u64, out: &mut RunEvents) {
         let p = self.runner.pos();
-        let n = self.ant_count as usize;
-        for (k, (a, home)) in self.ants[..n].iter_mut().zip(NEST).enumerate() {
-            if a.state != AntState::Out {
-                continue;
-            }
-            let q = a.w.pos();
-            let d2: f32 = (0..3).map(|i| (p[i] - q[i]) * (p[i] - q[i])).sum();
-            if d2 >= CATCH * CATCH {
-                continue;
-            }
-            if a.scared {
-                self.score += ANT_POINTS << self.chain.min(3);
-                self.chain += 1;
-                a.w = Walker::at(home, ways(home.face())[k % 4]);
-                a.state = AntState::Nest {
-                    until: now + EATEN_WAIT_MS,
-                };
-                a.scared = false;
-                let _ = out.push(RunEvent::AteAnt);
-            } else {
-                self.lives = self.lives.saturating_sub(1);
-                self.runner.moving = false;
-                self.phase = Phase::Caught { since: now };
-                let _ = out.push(RunEvent::Caught);
-                return;
-            }
+        let caught = self
+            .ants()
+            .iter()
+            .any(|a| a.state == AntState::Out && dist2(p, a.w.pos()) < CATCH * CATCH);
+        if caught {
+            self.lives = self.lives.saturating_sub(1);
+            self.runner.moving = false;
+            self.phase = Phase::Caught { since: now };
+            let _ = out.push(RunEvent::Caught);
         }
     }
 }
 
-/// An ant at a cell centre, arriving along `arrive`, picks its way: never
-/// straight back unless it must, and the way toward `target` (at random
-/// while scared). `fresh` lets it turn back (it has just come out).
-fn choose(
-    maze: &Maze,
-    rng: &mut Rng,
-    cell: Cell,
-    arrive: Face,
-    target: V3,
-    scared: bool,
-    fresh: bool,
-) -> Face {
-    let mut options: Vec<Face, 4> = Vec::new();
-    for d in ways(cell.face()) {
-        if maze.open(cell, d) && (fresh || d != arrive.opposite()) {
-            let _ = options.push(d);
-        }
-    }
-    if options.is_empty() {
-        return arrive.opposite();
-    }
-    if scared {
-        return options[rng.below(options.len() as u32) as usize];
-    }
-    // Nearest by direction from the die's centre, not in a straight line:
-    // straight through the die, the middle of the far face is nearest to
-    // everything on this one, and an ant there would never leave it.
-    let near = |d: &Face| {
-        let p = cell.step(*d).0.pos();
-        dot(p, target) as f32 / libm::sqrtf(dot(p, p) as f32)
-    };
-    options
-        .iter()
-        .copied()
-        .max_by(|a, b| near(a).total_cmp(&near(b)))
-        .unwrap_or(arrive)
-}
-
-fn bit(bits: &[u8; CELLS / 8], c: Cell) -> bool {
-    bits[c.index() / 8] & (1 << (c.index() % 8)) != 0
-}
-
-fn set_bit(bits: &mut [u8; CELLS / 8], c: Cell) {
-    bits[c.index() / 8] |= 1 << (c.index() % 8);
-}
-
-fn clear_bit(bits: &mut [u8; CELLS / 8], c: Cell) {
-    bits[c.index() / 8] &= !(1 << (c.index() % 8));
-}
-
-/// Clears the bit and says whether it was set.
-fn take_bit(bits: &mut [u8; CELLS / 8], c: Cell) -> bool {
-    let had = bit(bits, c);
-    clear_bit(bits, c);
-    had
+fn dist2(p: [f32; 3], q: [f32; 3]) -> f32 {
+    (0..3).map(|i| (p[i] - q[i]) * (p[i] - q[i])).sum()
 }
 
 // ---------- the map on the die ----------
@@ -1280,23 +1218,49 @@ mod tests {
         (g, 0)
     }
 
-    #[test]
-    fn a_shake_starts_and_the_runner_eats() {
-        let (mut g, mut now) = game();
-        assert_eq!(g.phase(), Phase::Playing);
-        let before = g.dots_left();
-        let mut dots = 0;
-        for _ in 0..60 {
-            now += 16;
-            dots += g
-                .step(now, 1.0 / 60.0, None)
-                .iter()
-                .filter(|e| **e == RunEvent::Dot)
-                .count();
+    /// Step the game `secs` at 60 Hz, collecting its events.
+    fn play(g: &mut Game, now: &mut u64, secs: f32, want: Option<Face>) -> std::vec::Vec<RunEvent> {
+        let mut out = std::vec::Vec::new();
+        for _ in 0..(secs * 60.0) as u32 {
+            *now += 16;
+            out.extend(g.step(*now, 1.0 / 60.0, want));
         }
-        assert!(dots > 0, "it ran into crystals");
-        assert_eq!(before - g.dots_left(), dots as u16);
-        assert_eq!(g.score(), DOT_POINTS * dots as u32);
+        out
+    }
+
+    #[test]
+    fn a_game_starts_with_crystals_lying_about() {
+        let (g, _) = game();
+        assert_eq!(g.phase(), Phase::Playing);
+        assert_eq!(g.crystals().len(), CRYSTALS);
+        assert!(!g.has_crystal(START));
+        assert_eq!((g.score(), g.lives(), g.bursts()), (0, LIVES, BURSTS_START));
+    }
+
+    #[test]
+    fn a_crystal_taken_turns_up_somewhere_else() {
+        let (mut g, mut now) = game();
+        // Put a crystal just ahead of the cube.
+        let r = g.runner;
+        let (next, _) = r.ahead();
+        g.crystals[0] = next;
+        let events = play(&mut g, &mut now, 0.5, None);
+        assert!(events.contains(&RunEvent::Crystal));
+        assert_eq!(g.score(), 1);
+        assert_eq!(g.crystals().len(), CRYSTALS, "another one turned up");
+        assert!(!g.has_crystal(next));
+    }
+
+    #[test]
+    fn every_few_crystals_earn_a_burst() {
+        let (mut g, _) = game();
+        g.score = CRYSTALS_PER_BURST - 1;
+        let (next, _) = g.runner.ahead();
+        g.crystals[0] = next;
+        let mut now = 0;
+        let events = play(&mut g, &mut now, 0.5, None);
+        assert!(events.contains(&RunEvent::Earned));
+        assert_eq!(g.bursts(), BURSTS_START + 1);
     }
 
     #[test]
@@ -1310,30 +1274,79 @@ mod tests {
     }
 
     #[test]
-    fn ants_leave_the_nest_one_by_one() {
-        let (mut g, mut now) = game();
-        let out = |g: &Game| g.ants().iter().filter(|a| a.state == AntState::Out).count();
-        while now < NEST_FIRST_MS + 100 {
-            now += 16;
-            g.step(now, 1.0 / 60.0, None);
-        }
-        assert_eq!(out(&g), 1);
-        while now < NEST_FIRST_MS + 2 * NEST_GAP_MS + 100 && g.phase() == Phase::Playing {
-            now += 16;
-            g.step(now, 1.0 / 60.0, None);
-        }
-        assert!(g.phase() != Phase::Playing || out(&g) == 3);
+    fn more_ants_hatch_as_the_score_climbs() {
+        let (mut g, _) = game();
+        let out = |g: &Game| g.ants().iter().filter(|a| a.state != AntState::Nest).count();
+        g.hatch(1_000);
+        assert_eq!(out(&g), 0);
+        g.hatch(HATCH_FIRST_MS);
+        assert_eq!(out(&g), 1, "the first a moment in");
+        let t = HATCH_FIRST_MS + 10 * HATCH_GAP_MS;
+        g.hatch(t);
+        assert_eq!(out(&g), 1, "no more until there's sugar");
+        g.score = 2 * CRYSTALS_PER_ANT;
+        g.hatch(t);
+        assert_eq!(out(&g), 2);
+        g.hatch(t + 100);
+        assert_eq!(out(&g), 2, "spaced out");
+        g.hatch(t + HATCH_GAP_MS);
+        assert_eq!(out(&g), 3);
+        g.score = 100;
+        g.hatch(t + 5 * HATCH_GAP_MS);
+        assert_eq!(out(&g), 3, "never more than the Ants setting");
     }
 
     #[test]
-    fn standing_still_the_runner_is_caught_and_the_game_ends() {
+    fn the_cube_leaves_a_scent_that_fades() {
+        let (mut g, mut now) = game();
+        let start = g.runner.cell;
+        play(&mut g, &mut now, 0.5, None);
+        assert_ne!(g.runner.cell, start);
+        let fresh = g.scent(start, now);
+        assert!(fresh > 0.8, "{fresh}");
+        assert_eq!(g.scent(start, now + SCENT_MS), 0.0);
+        assert_eq!(g.scent(Cell::new(Face::NegZ, 0, 0), now), 0.0, "never visited");
+    }
+
+    #[test]
+    fn an_ant_on_the_trail_follows_it() {
+        let (mut g, _) = game();
+        let now = 5_000;
+        let runner = g.runner.cell.pos();
+        // A cell on the far side, well away from the cube, with ways out.
+        let cell = (0..CELLS as u16)
+            .map(Cell)
+            .find(|c| c.face() == START.face().opposite() && g.maze.exits(*c) >= 3)
+            .expect("a junction");
+        let open: std::vec::Vec<Face> = ways(cell.face())
+            .into_iter()
+            .filter(|d| g.maze.open(cell, *d))
+            .collect();
+        // The cube passed here 3 s ago and went on along `ahead` a second
+        // later: the trail is fresher that way.
+        let ahead = open[1];
+        g.scent[cell.index()] = now as u32 - 3_000 + 1;
+        g.scent[cell.step(ahead).0.index()] = now as u32 - 2_000 + 1;
+        for _ in 0..20 {
+            assert_eq!(g.choose(cell, open[0], runner, now, true), ahead);
+        }
+        // With the trail gone cold, it wanders: sometimes another way.
+        let cold = now + SCENT_MS + 1;
+        let ways_taken: std::collections::BTreeSet<usize> = (0..40)
+            .map(|_| g.choose(cell, open[0], runner, cold, true).index())
+            .collect();
+        assert!(ways_taken.len() > 1);
+    }
+
+    #[test]
+    fn standing_still_the_cube_is_caught_and_the_game_ends() {
         let mut g = Game::new(4);
         g.start(0, 99);
+        g.score = 20; // every ant out
         let mut now = 0;
         let mut caught = 0;
         let mut over = false;
-        // Walk into the first wall and stay there.
-        while now < 600_000 && !over {
+        while now < 900_000 && !over {
             now += 16;
             for e in g.step(now, 1.0 / 60.0, None) {
                 caught += (e == RunEvent::Caught) as u32;
@@ -1349,34 +1362,24 @@ mod tests {
     }
 
     #[test]
-    fn a_lump_scares_the_ants_and_they_can_be_eaten() {
+    fn a_burst_dazes_nearby_ants_and_they_cant_catch() {
         let (mut g, mut now) = game();
-        while g.ants().iter().all(|a| a.state != AntState::Out) {
-            now += 16;
-            g.step(now, 1.0 / 60.0, None);
-        }
-        // Put the runner by a lump, then an ant right behind it.
-        let lump = Cell::new(Face::PosY, LUMPS[2].0, LUMPS[2].1);
-        let way = ways(lump.face())
-            .into_iter()
-            .find(|d| g.maze.open(lump, *d))
-            .unwrap();
-        let (from, arrive) = lump.step(way);
-        g.runner = Walker {
-            cell: from,
-            dir: arrive.opposite(),
-            t: 0.9,
-            moving: true,
-        };
-        let out = g.step(now + 16, 0.05, None);
-        assert!(out.contains(&RunEvent::Lump));
+        play(&mut g, &mut now, 2.1, None);
         let k = g.ants().iter().position(|a| a.state == AntState::Out).unwrap();
-        assert!(g.ants[k].scared);
+        // The ant right on the cube: a burst and it's harmless.
         g.ants[k].w = Walker::at(g.runner.cell, g.runner.dir);
-        let out = g.step(now + 32, 0.0, None);
-        assert!(out.contains(&RunEvent::AteAnt));
-        assert_eq!(g.phase(), Phase::Playing);
-        assert!(matches!(g.ants[k].state, AntState::Nest { .. }));
+        assert_eq!(g.burst(now).as_slice(), &[RunEvent::Burst]);
+        assert_eq!(g.bursts(), 0);
+        assert!(matches!(g.ants[k].state, AntState::Dazed { .. }));
+        let events = g.step(now + 16, 0.0, None);
+        assert!(!events.contains(&RunEvent::Caught));
+        // Out of bursts: a shake does nothing.
+        assert!(g.burst(now + 32).is_empty());
+        // Once the daze wears off it's back on its feet.
+        let far = Cell::new(START.face().opposite(), 0, 0);
+        g.ants[k].w = Walker::at(far, ways(far.face())[0]);
+        g.step(now + DAZE_MS + 16, 0.0, None);
+        assert_eq!(g.ants[k].state, AntState::Out);
     }
 
     #[test]
@@ -1389,6 +1392,5 @@ mod tests {
         assert_eq!(g.runner, r);
         g.resume(4_900);
         assert_eq!(g.phase(), Phase::Playing);
-        assert!(matches!(g.ants[0].state, AntState::Nest { until } if until > 5_000));
     }
 }

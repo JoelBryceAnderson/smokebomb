@@ -1108,27 +1108,29 @@ pub fn draw_run_paused<A: AssetStore>(c: &mut Ctx<A>, score: u32) {
     c.text("Tilt to play", 0.0, 50.0, 14, Style::new(FG, 0.7, 0.0));
 }
 
-/// Caught: the runners left, one fewer than a moment ago. `t` is seconds
+/// Caught: the sugar cubes (lives) left, one fewer than a moment ago. `t` is seconds
 /// since they began to show.
 pub fn draw_run_lives<A: AssetStore>(c: &mut Ctx<A>, lives: u8, t: f32) {
     let a = (t / 0.25).min(1.0);
     let n = lives.max(1) as f32;
     for i in 0..lives {
         let x = (i as f32 - (n - 1.0) / 2.0) * 40.0;
-        crate::mazefx::draw_runner_icon(c.painter, x, -6.0, 13.0, Style::new(FG, a, 8.0));
+        crate::mazefx::draw_cube_icon(c.painter, x, -6.0, 11.0, Style::new(FG, a, 8.0));
     }
     if lives == 0 {
         c.text("Caught!", 0.0, -6.0, 26, Style::new(FG, a, 10.0));
     }
 }
 
-/// Every crystal eaten: the next level's number grows in.
-pub fn draw_run_level<A: AssetStore>(c: &mut Ctx<A>, level: u8, t: f32) {
-    let a = (t / 0.3).min(1.0);
-    c.text("Level", 0.0, -24.0, 18, Style::new(FG, 0.8 * a, 0.0));
-    let mut n: String<4> = String::new();
-    let _ = write!(n, "{level}");
-    c.text(&n, 0.0, 16.0, 52, Style::new(FG, a, 16.0));
+/// Mid-run, along the foot of the cube's screen: a crystal for each burst
+/// in hand (a shake spends one), so you know whether you have one.
+pub fn draw_run_bursts<A: AssetStore>(c: &mut Ctx<A>, bursts: u8) {
+    for i in 0..crate::maze::BURSTS_MAX {
+        let x = (i as f32 - (crate::maze::BURSTS_MAX as f32 - 1.0) / 2.0) * 12.0;
+        let lit = i < bursts;
+        let style = Style::new(FG, if lit { 0.8 } else { 0.18 }, if lit { 5.0 } else { 0.0 });
+        crate::mazefx::draw_crystal_icon(c.painter, x, 74.0, 3.8, style);
+    }
 }
 
 /// The run is over: the score, and how to go again. `t` is seconds since

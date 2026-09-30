@@ -1,9 +1,10 @@
 //! Drawing Sugar Run: one face of the maze, laid onto one screen by the
 //! transform [`crate::maze::View::layers`] gives it.
 //!
-//! Walls are dim glowing lines, the crystals small dots, the sugar lumps
-//! pulse, the runner chomps, and the ants are three beads with legs. Each
-//! kind is one draw call, its shapes rasterized only where they are.
+//! Walls are dim glowing lines, the crystals small twinkling diamonds, the
+//! cube's scent a faint fading trail, the player a sugar cube that rocks as
+//! it rolls, and the ants three beads with legs. Each kind is one draw call,
+//! its shapes rasterized only where they are.
 
 use heapless::Vec;
 use libm::{cosf, fabsf, sinf, sqrtf};
@@ -17,9 +18,12 @@ const WALL_W: f32 = 3.4;
 /// Walls on a face's edge are drawn this far in, so the whole line shows
 /// on each of the two screens rather than half of it on each.
 const EDGE_IN: f32 = WALL_W / 2.0;
-const DOT_R: f32 = 2.2;
-const LUMP_R: f32 = 5.6;
-const RUNNER_R: f32 = 8.2;
+/// A crystal's half-diagonal, a scent speck's radius, and the sugar cube's
+/// half-side and corner radius.
+const CRYSTAL_R: f32 = 5.2;
+const SCENT_R: f32 = 1.6;
+const CUBE_H: f32 = 8.0;
+const CUBE_ROUND: f32 = 2.2;
 /// The ants' grey: dimmer than the runner, so they read apart on a grey
 /// panel.
 const ANT: u8 = 0xB4;
@@ -35,7 +39,7 @@ pub fn draw_face(p: &mut Painter, game: &Game, face: Face, now: u64, alpha: f32)
     walls(p, game.maze(), face, alpha);
     sugar(p, game, face, now, alpha);
     for (k, a) in game.ants().iter().enumerate() {
-        ant(p, game, k, a, face, now, alpha);
+        ant(p, k, a, face, now, alpha);
     }
     runner(p, game, face, now, alpha);
 }
@@ -80,20 +84,30 @@ fn walls(p: &mut Painter, m: &maze::Maze, face: Face, alpha: f32) {
 }
 
 fn sugar(p: &mut Painter, game: &Game, face: Face, now: u64, alpha: f32) {
-    p.begin();
-    for c in cells(face).filter(|c| game.has_dot(*c)) {
-        let (x, y) = c.canvas();
-        disc(p, x, y, DOT_R);
+    // The scent: faint specks where the cube has been, fading as it does.
+    // Ants follow it, so it's worth seeing.
+    for c in cells(face) {
+        let fresh = game.scent(c, now);
+        if fresh > 0.05 {
+            let (x, y) = c.canvas();
+            p.begin();
+            disc(p, x, y, SCENT_R);
+            p.finish(Style::new(FG, 0.28 * fresh * alpha, 0.0));
+        }
     }
-    p.finish(Style::new(FG, 0.7 * alpha, 0.0));
-    // The lumps breathe, so they stand out from the crystals.
-    let pulse = 0.5 + 0.5 * cosf(now as f32 / 1000.0 * core::f32::consts::TAU * 1.4);
-    p.begin();
-    for c in cells(face).filter(|c| game.has_lump(*c)) {
+    // Crystals: diamonds that twinkle, each in its own time.
+    for c in game.crystals().iter().filter(|c| c.face() == face) {
         let (x, y) = c.canvas();
-        disc(p, x, y, LUMP_R * (0.85 + 0.15 * pulse));
+        let phase = c.0 as f32 * 0.7 + now as f32 / 1000.0 * core::f32::consts::TAU * 0.8;
+        let twinkle = 0.5 + 0.5 * cosf(phase);
+        let r = CRYSTAL_R * (0.85 + 0.15 * twinkle);
+        p.begin();
+        p.add_shape((x - r, y - r, x + r, y + r), |px, py| {
+            (fabsf(px - x) + fabsf(py - y)) * core::f32::consts::FRAC_1_SQRT_2
+                - r * core::f32::consts::FRAC_1_SQRT_2
+        });
+        p.finish(Style::new(FG, (0.65 + 0.35 * twinkle) * alpha, 8.0));
     }
-    p.finish(Style::new(FG, (0.7 + 0.3 * pulse) * alpha, 9.0));
 }
 
 fn cells(face: Face) -> impl Iterator<Item = Cell> {
@@ -106,55 +120,86 @@ fn disc(p: &mut Painter, x: f32, y: f32, r: f32) {
     });
 }
 
-/// The runner: a disc with a chomping mouth the way it's going. Caught, the
-/// mouth opens all the way round and it's gone.
+/// Signed distance to a rounded square of half-side `h` and corner radius
+/// `round`, turned by `(cos, sin)`, from its centre to `(dx, dy)`.
+fn cube_sdf(dx: f32, dy: f32, h: f32, round: f32, (c, s): (f32, f32)) -> f32 {
+    let (lx, ly) = (dx * c + dy * s, -dx * s + dy * c);
+    let (qx, qy) = (fabsf(lx) - (h - round), fabsf(ly) - (h - round));
+    let outside = sqrtf(qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0));
+    outside + qx.max(qy).min(0.0) - round
+}
+
+/// The player: a sugar cube seen from above, a bright rim round a dimmer
+/// top with a glint, rocking a little as it rolls. Caught, it dissolves:
+/// it shrinks and fades as the sugar bursts off it.
 fn runner(p: &mut Painter, game: &Game, face: Face, now: u64, alpha: f32) {
-    let Some((x, y, (ux, uy))) = game.runner.on(face) else {
+    let Some((x, y, _)) = game.runner.on(face) else {
         return;
     };
-    let caught = match game.phase() {
-        Phase::Caught { since } => Some((now.saturating_sub(since) as f32 / 1000.0 / 1.2).min(1.0)),
-        Phase::Over { .. } => Some(1.0),
-        _ => None,
+    let gone = match game.phase() {
+        Phase::Caught { since } => (now.saturating_sub(since) as f32 / 1000.0 / 1.2).min(1.0),
+        Phase::Over { .. } => 1.0,
+        _ => 0.0,
     };
-    let half = match caught {
-        Some(u) => 0.35 + (core::f32::consts::PI - 0.35) * u,
-        None if game.runner.moving => 0.08 + 0.62 * fabsf(sinf(game.chomp() * core::f32::consts::TAU * 2.6)),
-        None => 0.45,
-    };
-    if half >= core::f32::consts::PI - 0.01 {
+    if gone >= 1.0 {
         return;
     }
-    let (s, c) = (sinf(half), cosf(half));
-    let r = RUNNER_R;
-    p.begin();
-    p.add_shape((x - r, y - r, x + r, y + r), |px, py| {
-        let (dx, dy) = (px - x, py - y);
-        let round = sqrtf(dx * dx + dy * dy) - r;
-        let along = dx * ux + dy * uy;
-        let across = fabsf(-dx * uy + dy * ux);
-        // Negative inside the mouth's wedge.
-        let mouth = across * c - along * s;
-        round.max(-mouth)
-    });
-    p.finish(Style::new(FG, alpha, 7.0));
+    let rock = if game.runner.moving {
+        0.22 * sinf(game.rolled() * core::f32::consts::TAU * 1.8)
+    } else {
+        0.0
+    };
+    draw_cube(p, x, y, CUBE_H * (1.0 - 0.7 * gone), rock, alpha * (1.0 - gone));
+}
+
+fn draw_cube(p: &mut Painter, x: f32, y: f32, h: f32, turn: f32, alpha: f32) {
+    let (c, s) = (cosf(turn), sinf(turn));
+    let e = h * 1.5;
+    p.shape(
+        (x - e, y - e, x + e, y + e),
+        Style::new(FG, alpha, 7.0),
+        |px, py| cube_sdf(px - x, py - y, h, CUBE_ROUND, (c, s)),
+    );
+    let inner = h * 0.62;
+    p.shape(
+        (x - e, y - e, x + e, y + e),
+        Style::new(0x70, alpha, 0.0),
+        |px, py| cube_sdf(px - x, py - y, inner, CUBE_ROUND * 0.6, (c, s)),
+    );
+    // The glint, up and to the left on the top.
+    let (gx, gy) = (
+        x + (-inner * 0.45) * c - (-inner * 0.45) * s,
+        y + (-inner * 0.45) * s + (-inner * 0.45) * c,
+    );
+    let g = h * 0.2;
+    p.shape(
+        (gx - g, gy - g, gx + g, gy + g),
+        Style::new(FG, alpha, 0.0),
+        |px, py| sqrtf((px - gx) * (px - gx) + (py - gy) * (py - gy)) - g,
+    );
 }
 
 /// An ant: head, thorax and abdomen along the way it's going, three legs a
-/// side that scurry as it walks, and feelers. Scared, it goes faint, and
-/// flickers as the scare runs out.
-fn ant(p: &mut Painter, game: &Game, k: usize, a: &maze::Ant, face: Face, now: u64, alpha: f32) {
+/// side that scurry as it walks, and feelers. In the nest it's dim; dazed by
+/// a burst it's faint and wobbles, with sugar sparks circling its head.
+fn ant(p: &mut Painter, k: usize, a: &maze::Ant, face: Face, now: u64, alpha: f32) {
     let w: &Walker = &a.w;
     let Some((x, y, (ux, uy))) = w.on(face) else {
         return;
     };
-    let left = game.scared_left_ms(now);
-    let flicker = left < maze::SCARE_WARN_MS && (now / 140) % 2 == 0;
-    let (value, a_mul) = match (a.scared, flicker) {
-        (true, false) => (FG, 0.35),
-        (true, true) => (FG, 0.8),
-        _ if matches!(a.state, AntState::Nest { .. }) => (ANT, 0.55),
-        _ => (ANT, 1.0),
+    let dazed = matches!(a.state, AntState::Dazed { .. });
+    let a_mul = match a.state {
+        AntState::Nest => 0.55,
+        AntState::Dazed { .. } => 0.45,
+        AntState::Out => 1.0,
+    };
+    let value = ANT;
+    let (ux, uy) = if dazed {
+        // A wobble about where it stands.
+        let t = sinf(now as f32 / 1000.0 * core::f32::consts::TAU * 3.0) * 0.35;
+        (ux * cosf(t) - uy * sinf(t), ux * sinf(t) + uy * cosf(t))
+    } else {
+        (ux, uy)
     };
     let (vx, vy) = (-uy, ux);
     let at = |f: f32, s: f32| (x + ux * f + vx * s, y + uy * f + vy * s);
@@ -189,15 +234,26 @@ fn ant(p: &mut Painter, game: &Game, k: usize, a: &maze::Ant, face: Face, now: u
         p.add_shape(bounds, |px, py| segment_distance(px, py, a0, b0) - h);
     }
     p.finish(Style::new(value, a_mul * alpha, 0.0));
+    if dazed {
+        let (hx, hy) = at(5.6, 0.0);
+        p.begin();
+        for i in 0..3 {
+            let t = now as f32 / 1000.0 * core::f32::consts::TAU * 1.2 + i as f32 * 2.09;
+            disc(p, hx + 6.0 * cosf(t), hy + 6.0 * sinf(t), 1.3);
+        }
+        p.finish(Style::new(FG, 0.9 * alpha, 3.0));
+    }
 }
 
-/// The runner as an icon: for the lives left, and the setup label.
-pub fn draw_runner_icon(p: &mut Painter, x: f32, y: f32, r: f32, style: Style) {
-    let (s, c) = (sinf(0.6), cosf(0.6));
+/// The sugar cube as an icon: for the lives left, and the setup label. `r`
+/// is its half-side.
+pub fn draw_cube_icon(p: &mut Painter, x: f32, y: f32, r: f32, style: Style) {
+    draw_cube(p, x, y, r, 0.0, style.alpha);
+}
+
+/// A crystal as an icon, `r` its half-diagonal.
+pub fn draw_crystal_icon(p: &mut Painter, x: f32, y: f32, r: f32, style: Style) {
     p.shape((x - r, y - r, x + r, y + r), style, |px, py| {
-        let (dx, dy) = (px - x, py - y);
-        let round = sqrtf(dx * dx + dy * dy) - r;
-        let mouth = fabsf(dy) * c - dx * s;
-        round.max(-mouth)
+        (fabsf(px - x) + fabsf(py - y) - r) * core::f32::consts::FRAC_1_SQRT_2
     });
 }
