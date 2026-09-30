@@ -555,6 +555,10 @@ and iOS arm64 plus the arm64 simulator.
   `SimulatorLink` is a third implementation that reaches the desktop
   simulator's `/phone` WebSocket with Ktor, and `DieLinks` switches the app
   between it and Bluetooth (see [STORE.md](STORE.md#simulator-link)).
+- `history/RollHistory`: every roll the app has seen, newest first. It
+  syncs the die's kept rolls on each connect and adds live ones, keeping each
+  roll once (by die and signature). In memory only for now; server history
+  isn't merged in yet.
 - `iosApp/`: a SwiftUI host that embeds `MainViewController()`. The Xcode
   project is generated from `project.yml` with XcodeGen, so no `.pbxproj` is
   kept in git.

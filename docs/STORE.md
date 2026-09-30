@@ -142,7 +142,9 @@ To try all this without hardware, the simulator server accepts the same
 message per frame, serde's default shape) and feeds them to the firmware
 between ticks, as the die drains BLE writes (`simulator/server/src/phone.rs`).
 It greets a new phone with `Hello` and `Inventory`, answers every setup
-change with `Inventory`, and pushes `Roll` and `Inventory` as they happen. It
+change with `Inventory`, and pushes `Roll` and `Inventory` as they happen.
+It keeps its last 500 rolls and answers `SyncHistory` with them, as the die
+will from flash. It
 trusts `InstallLicense` without checking the signature.
 
 In the app, `SimulatorLink` is a `BleManager` that connects there by

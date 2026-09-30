@@ -12,6 +12,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.smokebomb.app.ble.DieLinks
+import com.smokebomb.app.history.RollHistory
 import com.smokebomb.app.network.ApiClient
 import com.smokebomb.app.screens.DieScreen
 import com.smokebomb.app.screens.RollHistoryScreen
@@ -31,7 +32,7 @@ enum class Destination(val label: String, val glyph: String) {
  * theme detail, DFU progress) will move this to navigation-compose.
  */
 @Composable
-fun AppShell(links: DieLinks, api: ApiClient) {
+fun AppShell(links: DieLinks, history: RollHistory, api: ApiClient) {
     var current by rememberSaveable { mutableStateOf(Destination.Die) }
 
     Scaffold(
@@ -51,7 +52,7 @@ fun AppShell(links: DieLinks, api: ApiClient) {
         val modifier = Modifier.padding(padding)
         when (current) {
             Destination.Die -> DieScreen(links, modifier)
-            Destination.History -> RollHistoryScreen(api, modifier)
+            Destination.History -> RollHistoryScreen(history, modifier)
             Destination.Store -> ThemeStoreScreen(api, modifier)
             Destination.Settings -> SettingsScreen(modifier)
         }

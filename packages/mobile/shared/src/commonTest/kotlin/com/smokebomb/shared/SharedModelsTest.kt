@@ -43,4 +43,17 @@ class SharedModelsTest {
         assertEquals(setOf(ModeId.HOT_POTATO, ModeId.DICE), inv.request(setOf(ModeId.HOT_POTATO, ModeId.PIG_TOSS)))
         assertEquals(setOf(ModeId.DICE), inv.request(emptySet()))
     }
+
+    @Test
+    fun mergingRollsKeepsEachOnceNewestFirst() {
+        fun roll(counter: Long, sig: String = "s$counter") =
+            SignedRoll("aa", null, counter, counter * 100, "d6", listOf(1), "00", sig)
+        val live = listOf(roll(3))
+        val synced = listOf(roll(1), roll(2), roll(3))
+        val merged = mergeRolls(live, synced)
+        assertEquals(listOf(3L, 2L, 1L), merged.map { it.counter })
+        assertEquals(merged, mergeRolls(merged, synced), "nothing new")
+        // A restarted simulator counts from 0 again: a different roll, kept.
+        assertEquals(4, mergeRolls(merged, listOf(roll(1, sig = "other"))).size)
+    }
 }
