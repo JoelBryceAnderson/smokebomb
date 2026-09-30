@@ -511,6 +511,120 @@ fn result_screen() {
     );
 }
 
+/// A random word that lands the pigs on `pose`.
+fn pose_word(pose: smokebomb_core::pigs::Pose) -> u32 {
+    use smokebomb_core::pigs::{Pose, WEIGHT_TOTAL};
+    let start: u32 = Pose::ALL[..pose.index()].iter().map(|p| p.weight() as u32).sum();
+    let mid = start * 2 + pose.weight() as u32; // twice the bucket's midpoint
+    ((mid as u64 * (u32::MAX as u64 + 1)) / (2 * WEIGHT_TOTAL as u64)) as u32
+}
+
+impl Run {
+    /// A throw scripted to land +Z up with the two pigs in these poses.
+    fn throw_pigs(&mut self, poses: [smokebomb_core::pigs::Pose; 2]) {
+        self.throw_pigs_touching(poses, false);
+    }
+
+    /// The same, with the pigs landing touching if `touching`.
+    fn throw_pigs_touching(&mut self, poses: [smokebomb_core::pigs::Pose; 2], touching: bool) {
+        let mut s = self.sim.lock();
+        s.imu_script.extend(imu_script::throw());
+        s.imu_resting = imu_script::resting(Face::PosZ);
+        for p in poses {
+            s.rng_script.push_back(pose_word(p));
+        }
+        // The third word decides whether the pigs touch.
+        s.rng_script.push_back(if touching { 0 } else { u32::MAX });
+    }
+}
+
+fn pigs_scenario(name: &str, throw: Input) {
+    let run = Run::new().with_settings(|s| {
+        s.modes = true;
+        s.play = smokebomb_core::menu::PlayMode::PigToss;
+    });
+    run_timeline(
+        name,
+        run,
+        &[10.7, 11.5, 12.2, 12.7, 13.1, 13.6, 14.3, 15.6, 17.0],
+        vec![(THROW_AT, throw)],
+    );
+}
+
+#[test]
+fn pigs_score() {
+    use smokebomb_core::pigs::Pose::*;
+    pigs_scenario("pigs-score", |r| r.throw_pigs([Back, Feet]));
+}
+
+#[test]
+fn pigs_bust() {
+    use smokebomb_core::pigs::Pose::*;
+    pigs_scenario("pigs-bust", |r| r.throw_pigs([SideDot, SidePlain]));
+}
+
+#[test]
+fn pigs_smooch() {
+    use smokebomb_core::pigs::Pose::*;
+    pigs_scenario("pigs-smooch", |r| r.throw_pigs_touching([Feet, Back], true));
+}
+
+/// A tap on the top screen banks the turn: the padlock snaps shut and the
+/// score counts up.
+#[test]
+fn pigs_lock_in() {
+    use smokebomb_core::pigs::Pose::*;
+    let run = Run::new().with_settings(|s| {
+        s.modes = true;
+        s.play = smokebomb_core::menu::PlayMode::PigToss;
+    });
+    run_timeline(
+        "pigs-lock-in",
+        run,
+        &[15.5, 15.75, 16.0, 16.3, 16.7, 17.3, 18.3, 20.0],
+        vec![(THROW_AT, |r| r.throw_pigs([Nose, Back])), (15.6, Run::tap)],
+    );
+}
+
+/// A smooch wipes the whole banked score: the number counts down to nothing.
+#[test]
+fn pigs_smooch_wipes_the_score() {
+    use smokebomb_core::pigs::Pose::*;
+    let run = Run::new().with_settings(|s| {
+        s.modes = true;
+        s.play = smokebomb_core::menu::PlayMode::PigToss;
+    });
+    run_timeline(
+        "pigs-smooch-wipe",
+        run,
+        &[30.9, 31.15, 31.4, 31.65, 31.95, 33.5],
+        vec![
+            // Player 1 banks 20, player 2 banks 10, then player 1 smooches.
+            (THROW_AT, |r| r.throw_pigs([Back, Back])),
+            (15.6, Run::tap),
+            (19.0, |r| r.throw_pigs([Back, Feet])),
+            (24.6, Run::tap),
+            (28.0, |r| r.throw_pigs_touching([Feet, Feet], true)),
+        ],
+    );
+}
+
+/// Between turns the label shows a little pig and whose go it is.
+#[test]
+fn pigs_wake_label() {
+    let run = Run::new().with_settings(|s| {
+        s.modes = true;
+        s.play = smokebomb_core::menu::PlayMode::PigToss;
+    });
+    run_timeline("pigs-wake", run, &[7.0, 7.5], vec![(6.6, Run::tap)]);
+}
+
+#[test]
+fn pigs_rare() {
+    use smokebomb_core::pigs::Pose::*;
+    pigs_scenario("pigs-rare", |r| r.throw_pigs([Nose, Ear]));
+}
+
 #[test]
 fn quick_throw_smoke() {
     // A quick press throws with almost no shake: the throw fills the cloud.

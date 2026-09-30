@@ -358,6 +358,16 @@ impl Ui {
         fade_in * dimming
     }
 
+    /// The result's dimming alone (1 while lit, falling to 0 as it dims),
+    /// for art that does its own fade-in.
+    pub fn result_dim(&self, now: u64) -> f32 {
+        match self.result {
+            Some((_, dim)) if now >= dim => (1.0 - (now - dim) as f32 / RESULT_DIM_FADE_MS).max(0.0),
+            Some(_) => 1.0,
+            None => 0.0,
+        }
+    }
+
     fn wake_alpha(&self, now: u64) -> f32 {
         match self.wake {
             Some((start, until)) if now < until => {

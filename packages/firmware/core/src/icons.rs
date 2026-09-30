@@ -32,6 +32,9 @@ pub fn draw_setup_icon<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, cx: f32, cy:
     let style = Style::new(FG, alpha, GLOW);
     match setup {
         Setup::HotPotato => bomb(c, cx, cy, r, alpha),
+        Setup::Pigs(_) => {
+            crate::pigfx::draw_icon(c.painter, cx, cy, r, alpha);
+        }
         Setup::Roll(DieKind::PassThePot, _) => banknote(c, cx, cy, r, style),
         Setup::Roll(die, _) => die_solid(c, die, cx, cy, r, style),
     }
