@@ -7,6 +7,7 @@ use core::fmt::Write as _;
 use heapless::{String, Vec};
 use libm::{cosf, floorf, powf, roundf, sinf, sqrtf};
 use smokebomb_hal::AssetStore;
+use smokebomb_shared::types::MAX_POT_DICE;
 use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
 use crate::display::{DUD, FG};
@@ -195,6 +196,10 @@ pub fn setup_label(die: DieKind, count: u8) -> String<24> {
 /// The wake/setup label: the setup's icon (a die's solid, a bomb, a banknote)
 /// above its name, at `alpha` (already including the 85%).
 pub fn draw_wake_label<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, label: &str, alpha: f32) {
+    if let Setup::Roll(DieKind::PassThePot, n) = setup {
+        draw_bills_in_hand(c, n, alpha);
+        return;
+    }
     crate::icons::draw_setup_icon(c, setup, 0.0, -21.0, 36.0, alpha);
     c.text(
         label,
@@ -203,6 +208,20 @@ pub fn draw_wake_label<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, label: &str,
         fit_px(label, 28, 150.0),
         Style::new(FG, alpha, 8.0),
     );
+}
+
+/// Pass the Pot between rolls: three bills with the ones you roll lit, how
+/// many that is, and that a tap changes it (C2).
+fn draw_bills_in_hand<A: AssetStore>(c: &mut Ctx<A>, n: u8, alpha: f32) {
+    for i in 0..MAX_POT_DICE {
+        let x = (i as f32 - (MAX_POT_DICE as f32 - 1.0) / 2.0) * 46.0;
+        let a = if i < n as usize { alpha } else { alpha * 0.2 };
+        crate::icons::draw_banknote(c, x, -18.0, 18.0, a);
+    }
+    let mut label: String<16> = String::new();
+    let _ = write!(label, "{n} bill{}", if n == 1 { "" } else { "s" });
+    c.text(&label, 0.0, 34.0, 26, Style::new(FG, alpha, 8.0));
+    c.text("tap to change", 0.0, 60.0, 14, Style::new(FG, alpha * 0.6, 0.0));
 }
 
 // ---------- results (C6) ----------
@@ -231,13 +250,15 @@ pub fn draw_result<A: AssetStore>(c: &mut Ctx<A>, record: &RollRecord, special: 
     let value = if special == Some(Special::Dud) { DUD } else { FG };
     if !record.die.is_numeric() {
         draw_pot_tokens(c, &record.values, value, alpha);
-        c.text(
-            &label,
-            0.0,
-            54.0,
-            fit_px(&label, 22, 150.0),
-            Style::new(value, alpha, 8.0),
-        );
+        let style = Style::new(value, alpha, 8.0);
+        match pot_summary_lines(&record.values) {
+            (one, None) => c.text(&one, 0.0, 54.0, fit_px(&one, 22, 150.0), style),
+            (top, Some(bottom)) => {
+                let px = fit_px(&top, 22, 150.0).min(fit_px(&bottom, 22, 150.0));
+                c.text(&top, 0.0, 44.0, px, style);
+                c.text(&bottom, 0.0, 44.0 + px as f32 * 1.1, px, style);
+            }
+        }
         return;
     }
 
@@ -272,6 +293,62 @@ pub fn draw_result<A: AssetStore>(c: &mut Ctx<A>, record: &RollRecord, special: 
         let px = if parts.len() > 10 { 14 } else { 17 };
         c.text(&parts, 0.0, -60.0, px, Style::new(value, alpha * 0.7, 8.0));
     }
+}
+
+/// What a Pass the Pot throw asks for, in words: `1 left · 1 pot`, or
+/// `keep` / `keep all` when every bill stays.
+pub fn pot_summary(values: &[u8]) -> String<32> {
+    let parts = pot_parts(values);
+    join(&parts)
+}
+
+/// [`pot_summary`] on one line, or split over two when one line would have
+/// to shrink below [`POT_LABEL_MIN_PX`]: `1 left · 1 right` over `1 pot`.
+pub fn pot_summary_lines(values: &[u8]) -> (String<32>, Option<String<32>>) {
+    let parts = pot_parts(values);
+    let one = join(&parts);
+    if parts.len() < 2 || fit_px(&one, 22, 150.0) >= POT_LABEL_MIN_PX {
+        return (one, None);
+    }
+    let split = parts.len().div_ceil(2);
+    (join(&parts[..split]), Some(join(&parts[split..])))
+}
+
+/// The smallest the result label gets on one line before it wraps.
+const POT_LABEL_MIN_PX: u16 = 20;
+
+fn pot_parts(values: &[u8]) -> Vec<String<12>, 3> {
+    let (mut left, mut right, mut pot) = (0, 0, 0);
+    for &v in values {
+        match PotFace::from_raw(v) {
+            PotFace::Left => left += 1,
+            PotFace::Right => right += 1,
+            PotFace::Pot => pot += 1,
+            PotFace::Keep => {}
+        }
+    }
+    let mut parts = Vec::new();
+    for (n, word) in [(left, "left"), (right, "right"), (pot, "pot")] {
+        if n > 0 {
+            let mut s = String::new();
+            let _ = write!(s, "{n} {word}");
+            let _ = parts.push(s);
+        }
+    }
+    if parts.is_empty() {
+        let mut s = String::new();
+        let _ = write!(s, "{}", if values.len() > 1 { "keep all" } else { "keep" });
+        let _ = parts.push(s);
+    }
+    parts
+}
+
+fn join(parts: &[String<12>]) -> String<32> {
+    let mut s = String::new();
+    for (i, p) in parts.iter().enumerate() {
+        let _ = write!(s, "{}{p}", if i > 0 { " · " } else { "" });
+    }
+    s
 }
 
 /// Pass the Pot glyphs in a row: arrows pass left or right, the pot glyph
@@ -1081,6 +1158,33 @@ pub fn draw_bolt<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pot_results_say_what_to_do() {
+        // Raw d6 values: 1 ←, 2 P, 3 →, 4–6 •.
+        assert_eq!(pot_summary(&[1, 2, 5]).as_str(), "1 left · 1 pot");
+        assert_eq!(pot_summary(&[3, 3, 1]).as_str(), "1 left · 2 right");
+        assert_eq!(pot_summary(&[2]).as_str(), "1 pot");
+        assert_eq!(pot_summary(&[4, 6]).as_str(), "keep all");
+        assert_eq!(pot_summary(&[5]).as_str(), "keep");
+    }
+
+    #[test]
+    fn long_pot_results_wrap() {
+        let (top, bottom) = pot_summary_lines(&[1, 3, 2]);
+        assert_eq!(top.as_str(), "1 left · 1 right");
+        assert_eq!(bottom.as_deref(), Some("1 pot"));
+        let (top, bottom) = pot_summary_lines(&[1, 3]);
+        assert_eq!(top.as_str(), "1 left");
+        assert_eq!(bottom.as_deref(), Some("1 right"));
+        let (top, bottom) = pot_summary_lines(&[2, 5, 6]);
+        assert_eq!(top.as_str(), "1 pot");
+        assert!(bottom.is_none());
+        assert!(
+            fit_px("1 left · 1 right", 22, 150.0) >= 16,
+            "wrapped lines stay readable"
+        );
+    }
 
     #[test]
     fn setup_labels_match_the_mockup() {

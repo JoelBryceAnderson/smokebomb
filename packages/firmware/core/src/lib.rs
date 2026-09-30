@@ -36,6 +36,7 @@ use smokebomb_hal::{
     Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Magnetometer, Peripherals, Platform,
     Power, Rng, SecureElement, Touch, FRAME_BYTES,
 };
+use smokebomb_shared::types::MAX_POT_DICE;
 use smokebomb_shared::{DieKind, SignedRoll};
 
 use display::Framebuffer;
@@ -261,6 +262,7 @@ impl<P: Platform> Firmware<P> {
             } else {
                 self.settings.smoke_amount()
             });
+        self.smoke.set_money(self.settings.play() == PlayMode::PassThePot);
         self.sm.set_rolls(self.settings.play().rolls());
         self.potato = Potato::new();
         // Saving the menu keeps a game going unless the table changed size.
@@ -404,6 +406,13 @@ impl<P: Platform> Firmware<P> {
                     self.run_potato(cmd)?;
                 }
             }
+            if event == Event::Tap
+                && self.settings.play() == PlayMode::PassThePot
+                && self.tap_deliberate
+                && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. })
+            {
+                self.tap_bills(now)?;
+            }
             if event == Event::Tap {
                 self.ui.tap(now, self.sm.mode());
             }
@@ -509,6 +518,23 @@ impl<P: Platform> Firmware<P> {
                 pigs::Outcome::Score(_) => smokebomb_hal::HapticEffect::Tick,
             };
             self.hw.haptics.play(effect)?;
+        }
+        Ok(())
+    }
+
+    /// A tap in Pass the Pot between rolls. The first puts the last result
+    /// away and shows the bills screen; a tap while that's up changes how
+    /// many bills the next roll uses, 3 → 2 → 1 → 3. Only deliberate taps
+    /// count, so picking the die up doesn't change it.
+    fn tap_bills(&mut self, now: u64) -> HalResult<()> {
+        if self.ui.label_up(now) {
+            let n = self.settings.pot_count;
+            self.settings.pot_count = if n <= 1 { MAX_POT_DICE as u8 } else { n - 1 };
+            if self.settings.haptics_on() {
+                self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
+            }
+        } else {
+            self.ui.dismiss_result();
         }
         Ok(())
     }

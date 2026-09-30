@@ -37,6 +37,22 @@ const GOLD: usize = 120;
 const GOLD_REDUCED: usize = 40;
 const FIZZLE: usize = 36;
 const FIZZLE_REDUCED: usize = 12;
+/// Coins rained per hundred puffs of smoke.
+const COINS_PER_PUFF_PCT: usize = 25;
+/// A coin's radius as a fraction of its particle's size.
+const COIN_RADIUS: f32 = 0.5;
+/// How fast coins spin (rad/s), the slowest and the spread above it.
+const COIN_SPIN: f32 = 7.0;
+const COIN_SPIN_SPREAD: f32 = 5.0;
+/// A coin's face, rim and engraved ring, as 0–255 levels. Coins are drawn
+/// solid, over what is behind them.
+const COIN_FACE: f32 = 215.0;
+const COIN_RIM: f32 = 120.0;
+const COIN_ENGRAVE: f32 = 95.0;
+/// A coin's life and landing linger, against smoke's.
+const COIN_LIFE: f32 = 0.55;
+/// Coins fall faster than smoke drifts.
+const COIN_BUOY: f32 = -2.4;
 /// Held smoke added per frame while shaking, at most.
 const SHAKE_SPAWN_PER_FRAME: usize = 14;
 /// Timing slack at a boundary frame (s): well under a frame, well over f32
@@ -164,6 +180,8 @@ pub struct Smoke {
     up: [f32; 3],
     reduced: bool,
     amount: Amount,
+    /// Pass the Pot: the smoke is banknotes raining down instead.
+    money: bool,
     /// The smoke's own clock (s): the sum of its steps, like the mockup's
     /// `now`, so lingering and the curl noise run on the same time base.
     time: f32,
@@ -201,6 +219,7 @@ impl Smoke {
             up: [0.0, 1.0, 0.0],
             reduced: false,
             amount: Amount::Full,
+            money: false,
             time: 0.0,
         }
     }
@@ -222,6 +241,12 @@ impl Smoke {
             self.particles
                 .retain(|q| !matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember));
         }
+    }
+
+    /// Rain spinning coins instead of smoke (Pass the Pot). Coins already in
+    /// the air finish falling as they are.
+    pub fn set_money(&mut self, on: bool) {
+        self.money = on;
     }
 
     /// Smaller clouds: reduced motion, or the Light amount.
@@ -263,11 +288,22 @@ impl Smoke {
         }
     }
 
-    fn full(&self) -> usize {
-        if self.lean() {
-            FULL_REDUCED
+    /// Coins drop through, so they are gone sooner than smoke.
+    fn life_scale(&self) -> f32 {
+        if self.money {
+            COIN_LIFE
         } else {
-            FULL
+            1.0
+        }
+    }
+
+    fn full(&self) -> usize {
+        let puffs = if self.lean() { FULL_REDUCED } else { FULL };
+        // A coin is solid where a puff is faint: fewer of them.
+        if self.money {
+            puffs * COINS_PER_PUFF_PCT / 100
+        } else {
+            puffs
         }
     }
 
@@ -323,21 +359,22 @@ impl Smoke {
     /// with a top-up and a scatter of embers.
     pub fn land(&mut self) {
         let now = self.time;
+        let linger = self.life_scale();
         for i in 0..self.particles.len() {
             if self.particles[i].hold {
-                let max = 2.0 + self.rng.r() * 1.4;
+                let max = (2.0 + self.rng.r() * 1.4) * self.life_scale();
                 let q = &mut self.particles[i];
                 q.hold = false;
                 q.life = 0.0;
                 q.max = max;
-                q.linger = now + 0.6;
+                q.linger = now + 0.6 * linger;
             }
         }
         let before = self.particles.len();
         let top_up = libm::roundf(self.full() as f32 * (1.0 - 0.8 * self.charge)) as usize;
         self.spawn(SpriteKind::Smoke, top_up, Where::All);
         for q in &mut self.particles[before..] {
-            q.linger = now + 0.6;
+            q.linger = now + 0.6 * linger;
         }
         let embers = if self.lean() { EMBERS_REDUCED } else { EMBERS };
         self.spawn(SpriteKind::Ember, embers, Where::All);
@@ -468,6 +505,7 @@ impl Smoke {
                 match q.kind {
                     SpriteKind::Fizzle | SpriteKind::Gold => 0.0,
                     SpriteKind::Ember => -0.8,
+                    SpriteKind::Smoke if self.money => COIN_BUOY,
                     SpriteKind::Smoke => -1.3,
                 }
             };
@@ -475,7 +513,9 @@ impl Smoke {
                 // Banked over the centre of each screen, where the number
                 // will appear.
                 let t = tangential(q.p, n);
-                q.v = add(q.v, scale(t, -2.4 * dt));
+                // Coins bank more loosely than smoke, or they pile up in a heap.
+                let pull = if self.money { 0.8 } else { 2.4 };
+                q.v = add(q.v, scale(t, -pull * dt));
             }
             if q.hold && agitate > 0.0 {
                 for c in 0..3 {
@@ -526,7 +566,10 @@ impl Smoke {
 
     // ---------- spawning (SIM_SPEC D3) ----------
 
-    fn push(&mut self, q: Particle) {
+    fn push(&mut self, mut q: Particle) {
+        if self.money && q.kind == SpriteKind::Smoke {
+            q.max *= COIN_LIFE;
+        }
         if self.amount == Amount::Off && matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember) {
             return;
         }
@@ -646,7 +689,12 @@ impl Smoke {
     /// Stamp every particle onto the faces, over whatever they show.
     pub fn draw(&self, frames: &mut [Framebuffer; 6]) {
         for q in &self.particles {
+            let coin = self.money && q.kind == SpriteKind::Smoke;
             let Some(sprite) = &self.sprites[q.kind as usize] else {
+                if !coin {
+                    continue;
+                }
+                self.draw_coin(frames, q);
                 continue;
             };
             let life_t = q.life / q.max;
@@ -660,6 +708,10 @@ impl Smoke {
                 SpriteKind::Fizzle => 0.3,
                 _ => 0.9,
             };
+            if coin {
+                self.draw_coin(frames, q);
+                continue;
+            }
             let grows = matches!(q.kind, SpriteKind::Smoke | SpriteKind::Fizzle);
             let size = q.size * (1.0 + if grows { life_t * 1.4 } else { 0.0 });
             stamp(&mut frames[q.face.index()], sprite, q.face, q.p, size, alpha);
@@ -679,6 +731,40 @@ impl Smoke {
                     t[ga] = gs;
                     stamp(&mut frames[g.index()], sprite, g, t, size, alpha);
                 }
+            }
+        }
+    }
+}
+
+impl Smoke {
+    /// One coin: a disc spinning about an axis in its face, so it squashes
+    /// to its edge and opens again, flashing as it turns face-on. It wraps
+    /// round an edge like the smoke does.
+    fn draw_coin(&self, frames: &mut [Framebuffer; 6], q: &Particle) {
+        let life_t = q.life / q.max;
+        let fade_in = (q.life / 0.08).min(1.0);
+        let alpha = fade_in * powf((1.0 - life_t).max(0.0), 0.4);
+        let coin = Coin {
+            radius: q.size * COIN_RADIUS,
+            // The spin axis drifts slowly; the spin itself is fast.
+            axis: q.seed + q.life * 0.6,
+            spin: q.seed * 2.0 + q.life * (COIN_SPIN + (q.seed % 1.0) * COIN_SPIN_SPREAD),
+            alpha,
+        };
+        stamp_coin(&mut frames[q.face.index()], q.face, q.p, &coin);
+        let (own_axis, own_sign) = axis_sign(q.face);
+        let ru = coin.radius / 128.0;
+        for g in Face::ALL {
+            let (ga, gs) = axis_sign(g);
+            if ga == own_axis {
+                continue;
+            }
+            let d = 1.0 - gs * q.p[ga];
+            if d < ru {
+                let mut t = q.p;
+                t[own_axis] = own_sign * (1.0 + d);
+                t[ga] = gs;
+                stamp_coin(&mut frames[g.index()], g, t, &coin);
             }
         }
     }
@@ -751,6 +837,67 @@ fn stamp(fb: &mut Framebuffer, sprite: &Sprite, face: Face, p: [f32; 3], radius:
             if v >= 0.5 {
                 fb.add_pixel(x, y, (v + 0.5) as u8);
             }
+        }
+    }
+}
+
+/// A coin to stamp: `radius` canvas units, spinning by `spin` (rad) about
+/// an axis in its face at `axis` (rad), drawn at `alpha`.
+struct Coin {
+    radius: f32,
+    axis: f32,
+    spin: f32,
+    alpha: f32,
+}
+
+/// Stamp a coin centred on `p` (cube coordinates) on `face`: a solid disc
+/// foreshortened by its spin, with a rim, an engraved ring, light from the
+/// upper left, and a glint that sweeps across it as it turns face-on.
+fn stamp_coin(fb: &mut Framebuffer, face: Face, p: [f32; 3], coin: &Coin) {
+    if coin.alpha < 0.02 || coin.radius <= 0.0 {
+        return;
+    }
+    let b = &BASES[face.index()];
+    let (cx, cy) = (dot(p, b.x) * 128.0, -dot(p, b.y) * 128.0);
+    let (px, py) = (CENTER + cx * K, CENTER + cy * K);
+    let r = coin.radius * K;
+    let open = cosf(coin.spin);
+    // Edge-on it is still a thin bar: the coin has some thickness.
+    let squash = libm::fabsf(open).max(1.2 / r).max(0.1);
+    let (ca, sa) = (cosf(coin.axis), sinf(coin.axis));
+    // Brighter face-on; the glint sweeps across as it opens.
+    let lit = 0.55 + 0.45 * libm::fabsf(open);
+    let glint_at = sinf(coin.spin) * 1.3;
+    let glint = libm::fabsf(open) > 0.6;
+    let rim = (1.3 / r).max(0.14);
+    let y0 = libm::floorf(py - r).max(0.0) as usize;
+    let y1 = (libm::ceilf(py + r).max(0.0) as usize).min(PANEL_HEIGHT);
+    let x0 = libm::floorf(px - r).max(0.0) as usize;
+    let x1 = (libm::ceilf(px + r).max(0.0) as usize).min(PANEL_WIDTH);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
+            // Along the spin axis (full size) and across it (squashed).
+            let (u, v) = ((dx * ca + dy * sa) / r, (-dx * sa + dy * ca) / (r * squash));
+            let d = sqrtf(u * u + v * v);
+            if d > 1.0 {
+                continue;
+            }
+            let level = if d > 1.0 - rim / squash.max(0.35) {
+                COIN_RIM
+            } else if (0.58..0.58 + rim).contains(&d) {
+                COIN_ENGRAVE
+            } else {
+                // Light from the upper left of the panel.
+                let light = 1.0 - 0.18 * ((dx + dy) / r);
+                let face = (COIN_FACE * light).min(255.0);
+                if glint && libm::fabsf(u - glint_at) < 0.22 {
+                    255.0
+                } else {
+                    face
+                }
+            } * lit;
+            fb.blend(x, y, level.min(255.0), coin.alpha);
         }
     }
 }
@@ -858,10 +1005,49 @@ mod tests {
             up: [0.0, 1.0, 0.0],
             reduced: false,
             amount: Amount::Full,
+            money: false,
             time: 0.0,
         };
         s.set_up([0.0, 1000.0, 0.0]);
         s
+    }
+
+    #[test]
+    fn money_rains_fewer_coins_than_smoke_puffs() {
+        let mut s = smoke();
+        s.set_money(true);
+        s.shake_start();
+        for _ in 0..120 {
+            s.step(1.0 / 60.0);
+        }
+        s.throw();
+        assert_eq!(s.particles.len(), s.full());
+        assert_eq!(s.full(), 95);
+        let mut frames = [Framebuffer::new(); 6];
+        s.draw(&mut frames);
+        assert!(
+            frames.iter().any(|f| f.pixels().iter().any(|&p| p > 0)),
+            "coins are drawn without a sprite pack"
+        );
+    }
+
+    #[test]
+    fn coins_clear_sooner_than_smoke() {
+        let clear_time = |money: bool| {
+            let mut s = smoke();
+            s.set_money(money);
+            s.throw();
+            s.land();
+            let mut t = 0.0;
+            while s.has_smoke() && t < 10.0 {
+                s.step(1.0 / 60.0);
+                t += 1.0 / 60.0;
+            }
+            t
+        };
+        let (smoke_t, coins_t) = (clear_time(false), clear_time(true));
+        assert!(coins_t < smoke_t * 0.7, "{coins_t} vs {smoke_t}");
+        assert!(coins_t < 2.5, "{coins_t}");
     }
 
     #[test]

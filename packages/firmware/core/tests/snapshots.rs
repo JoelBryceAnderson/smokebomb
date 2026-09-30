@@ -671,6 +671,48 @@ fn throw_smoke() {
 /// The Smoke setting is the third Settings item: Off, Light, Full.
 const SMOKE_ITEM: usize = 2;
 
+/// Pass the Pot between rolls: a tap shows the bills in hand, and each tap
+/// while they're up takes one away, wrapping from 1 back to 3.
+#[test]
+fn pot_bills() {
+    let run = Run::new().with_settings(|s| {
+        s.modes = true;
+        s.play = smokebomb_core::menu::PlayMode::PassThePot;
+    });
+    run_timeline(
+        "pot-bills",
+        run,
+        &[9.5, 10.3, 11.1, 11.9],
+        vec![
+            (9.0, Run::tap),
+            (9.8, Run::tap),
+            (10.6, Run::tap),
+            (11.4, Run::tap),
+        ],
+    );
+}
+
+/// A throw that moves every bill: ← → P. Its label is too long for one
+/// line, so it wraps.
+#[test]
+fn throw_pot_wrap() {
+    let run =
+        Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::PassThePot);
+    // Raw d6 values 1, 3, 2 (x % 6 + 1); the scenario's own 11 goes unused.
+    run.sim.lock().rng_script.extend([0, 2, 1]);
+    throw_smoke_scenario("throw-pot-wrap", run);
+}
+
+#[test]
+fn throw_money() {
+    let run =
+        Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::PassThePot);
+    // The scenario scripts the first roll; script the other bills too, or
+    // their glyphs come from OS entropy.
+    run.sim.lock().rng_script.extend([11, 11]);
+    throw_smoke_scenario("throw-money", run);
+}
+
 #[test]
 fn throw_smoke_light() {
     let run = Run::with_world().with_settings(|s| s.choices[SMOKE_ITEM] = 1);

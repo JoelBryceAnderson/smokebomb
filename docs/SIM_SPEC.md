@@ -214,6 +214,7 @@ The boot is interrupted by a throw or by opening the menu.
   - Fades in over 0.35 s and out over 0.6 s, at 85% alpha.
   - Font 700, size `fitPx(label, 28)` at y = +44: at most 28 canvas, shrinking so the label fits 150 canvas (87 px) wide.
   - An **icon** sits above the name, centred at y = −21 with radius 36 canvas, in line art (2.6 canvas stroke, same glow and alpha as the text): a wireframe of the die's solid (tetrahedron d4, cube d6, octahedron d8, d10 kite, dodecahedron d12, icosahedron d20, a d10 kite with a % on its front for d100), a banknote for Pass the Pot, a bomb for Hot Potato. The count (`3d6`, `×2`) is only in the name. Drawn in `icons.rs`; the `setup-icons` snapshot shows all of them.
+- **Pass the Pot's bills screen.** In Pass the Pot the wake label is the bills in hand instead of the icon and name: three banknotes in a row (radius 18, 46 canvas apart, centred at y −18) with the ones rolled lit and the rest at 20% alpha, `3 bills` (26) at y +34, and `tap to change` (14, 60% alpha) at y +60. A deliberate tap (short, on a resting die, as Pig Toss banks) between rolls puts the last result away and shows this screen; a deliberate tap while it's up takes a bill away, wrapping from 1 back to 3, with a tick haptic. The count is the same `pot_count` the Bills in hand menu page sets. Picking the die up doesn't change it.
 - **Setup changes, the end of boot, and closing the menu** (saved *or* discarded): the wake label shows for **2.2 s**.
 - **Default setup** at power-on: a single d20 (`d20`).
 - **Label formats:**
@@ -391,7 +392,7 @@ Mockup input: a swipe of more than 36 px (by dominant direction), or the arrow k
     - Without parts: at y −12 (px 41.1).
   - **Parts line** (pools only, when "a+b+c" is ≤18 characters): 600, 17 (9.8 px), or 14 (8.1 px) if longer than 10 characters; 70% alpha; at y −60 (px 13.3).
   - **Label:** 600, `fitPx(label, 22)` ≤12.7 px, at y +56 with parts or +54 without (px 80.4 / 79.2). The text is the setup label, e.g. `2d20`.
-- **Pass the Pot layout:** glyphs in a row at y −12.
+- **Pass the Pot layout:** glyphs in a row at y −12. The label under them says what to do, not the setup: `1 left · 1 pot`, counting left, right and pot in that order and leaving out the keeps, or `keep` (one bill) / `keep all` when nothing moves. When one line would be under 20 px it wraps, splitting the parts evenly at the same size on both lines (`1 left` over `1 right`; `1 left · 1 right` over `1 pot`), from y +44 with a line gap of 1.1 × the size.
   - Size per glyph: 64 for 1 die, 50 for 2, 40 for 3 (37 / 29 / 23 px); gap = 1.15 × size.
 
   | Glyph | Drawing |
@@ -528,6 +529,8 @@ The mockup also has "side-face" variants for smoke (life 2.2–3.5, size 20–38
 - **all:** a random face other than the face down; position bunched toward the center (a sum of 3 uniforms, ±0.85); small random velocity (±0.25).
 - **top:** on the up face, bunched within ±0.95, with an outward velocity of 0.15–0.6 (embers 0.6–1.4).
 - **ring:** on side faces, near mid-height (±0.175), with the gold orbit velocity.
+
+**Pass the Pot rains coins.** In Pass the Pot the smoke is spinning coins instead: the same particles, but 25% as many as puffs (95 for a full cloud, 37 reduced), falling faster (buoyancy −2.4) and gone sooner (55% of a puff's life and landing linger, so they clear in about 2 s). A coin is a solid disc of radius 0.5 × the particle size with a rim and an engraved ring, lit from the upper left. It spins at 7–12 rad/s about an axis in its face that drifts slowly, so it squashes to a thin edge and opens again, and a glint sweeps across it as it turns face-on. Coins bank more loosely than smoke. The Smoke setting still applies. Set by `Smoke::set_money`.
 
 **Boot burst:** 170 smoke particles on the top face.
 - Positions: radius 0.03–0.38 from center.
