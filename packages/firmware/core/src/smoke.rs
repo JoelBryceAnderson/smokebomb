@@ -51,6 +51,21 @@ const COIN_ENGRAVE: f32 = 95.0;
 const COIN_LIFE: f32 = 0.55;
 /// Coins fall faster than smoke drifts.
 const COIN_BUOY: f32 = -2.4;
+/// A sugar crystal's half-size as a fraction of its particle's size.
+const CRYSTAL_SIZE: f32 = 0.1;
+/// How fast crystals tumble (rad/s), the slowest and the spread above it.
+const CRYSTAL_SPIN: f32 = 2.0;
+const CRYSTAL_SPIN_SPREAD: f32 = 4.0;
+/// A crystal's lit and shaded facets, as 0–255 levels. Crystals are drawn
+/// solid, over what is behind them.
+const CRYSTAL_LIT: f32 = 235.0;
+const CRYSTAL_SHADE: f32 = 150.0;
+/// A crystal's life and landing linger, against smoke's: it drops off the
+/// faces rather than fading in place.
+const CRYSTAL_LIFE: f32 = 0.65;
+/// Crystals fall faster than smoke drifts, and wander less on the way.
+const CRYSTAL_BUOY: f32 = -3.2;
+const CRYSTAL_CURL: f32 = 0.35;
 /// Held smoke added per frame while shaking, at most.
 const SHAKE_SPAWN_PER_FRAME: usize = 14;
 /// Timing slack at a boundary frame (s): well under a frame, well over f32
@@ -286,12 +301,12 @@ impl Smoke {
         }
     }
 
-    /// Coins drop through, so they are gone sooner than smoke.
+    /// Coins and crystals drop through, so they are gone sooner than smoke.
     fn life_scale(&self) -> f32 {
         if self.money {
             COIN_LIFE
         } else {
-            1.0
+            CRYSTAL_LIFE
         }
     }
 
@@ -469,15 +484,16 @@ impl Smoke {
                     SpriteKind::Fizzle | SpriteKind::Gold => 0.0,
                     SpriteKind::Ember => -0.8,
                     SpriteKind::Smoke if self.money => COIN_BUOY,
-                    SpriteKind::Smoke => -1.3,
+                    SpriteKind::Smoke => CRYSTAL_BUOY,
                 }
             };
             if (q.hold || lingering) && q.kind == SpriteKind::Smoke {
                 // Banked over the centre of each screen, where the number
                 // will appear.
                 let t = tangential(q.p, n);
-                // Coins bank more loosely than smoke, or they pile up in a heap.
-                let pull = if self.money { 0.8 } else { 2.4 };
+                // Coins and crystals bank more loosely than smoke did, or
+                // they pile up in a heap.
+                let pull = if self.money { 0.8 } else { 1.4 };
                 q.v = add(q.v, scale(t, -pull * dt));
             }
             if q.hold && agitate > 0.0 {
@@ -502,9 +518,14 @@ impl Smoke {
                 q.v = add(q.v, scale(sub(target, q.v), k));
             } else {
                 let (s, t) = (q.seed, now);
-                q.v[0] += sinf(3.3 * q.p[1] + 1.7 * t + s) * 0.9 * dt;
-                q.v[1] += sinf(3.1 * q.p[2] + 1.9 * t + s * 1.3) * 0.9 * dt;
-                q.v[2] += sinf(2.9 * q.p[0] + 1.5 * t + s * 0.7) * 0.9 * dt;
+                let curl = if q.kind == SpriteKind::Smoke && !self.money {
+                    CRYSTAL_CURL
+                } else {
+                    0.9
+                };
+                q.v[0] += sinf(3.3 * q.p[1] + 1.7 * t + s) * curl * dt;
+                q.v[1] += sinf(3.1 * q.p[2] + 1.9 * t + s * 1.3) * curl * dt;
+                q.v[2] += sinf(2.9 * q.p[0] + 1.5 * t + s * 0.7) * curl * dt;
                 let damp = if q.kind == SpriteKind::Fizzle {
                     3.0
                 } else if q.hold {
@@ -530,8 +551,8 @@ impl Smoke {
     // ---------- spawning (SIM_SPEC D3) ----------
 
     fn push(&mut self, mut q: Particle) {
-        if self.money && q.kind == SpriteKind::Smoke {
-            q.max *= COIN_LIFE;
+        if q.kind == SpriteKind::Smoke {
+            q.max *= self.life_scale();
         }
         if self.amount == Amount::Off && matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember) {
             return;
@@ -649,15 +670,20 @@ impl Smoke {
 
     // ---------- drawing (SIM_SPEC D1) ----------
 
-    /// Stamp every particle onto the faces, over whatever they show.
+    /// Stamp every particle onto the faces, over whatever they show. The
+    /// main cloud is sugar crystals (coins in Pass the Pot), drawn without
+    /// a sprite; embers, gold and fizzle stamp the pack's sprites.
     pub fn draw(&self, frames: &mut [Framebuffer; 6]) {
         for q in &self.particles {
-            let coin = self.money && q.kind == SpriteKind::Smoke;
-            let Some(sprite) = &self.sprites[q.kind as usize] else {
-                if !coin {
-                    continue;
+            if q.kind == SpriteKind::Smoke {
+                if self.money {
+                    self.draw_coin(frames, q);
+                } else {
+                    self.draw_crystal(frames, q);
                 }
-                self.draw_coin(frames, q);
+                continue;
+            }
+            let Some(sprite) = &self.sprites[q.kind as usize] else {
                 continue;
             };
             let life_t = q.life / q.max;
@@ -667,42 +693,19 @@ impl Smoke {
             } else {
                 fade_in * powf((1.0 - life_t).max(0.0), 0.8)
             } * match q.kind {
-                SpriteKind::Smoke => 0.55,
                 SpriteKind::Fizzle => 0.3,
                 _ => 0.9,
             };
-            if coin {
-                self.draw_coin(frames, q);
-                continue;
-            }
-            let grows = matches!(q.kind, SpriteKind::Smoke | SpriteKind::Fizzle);
+            let grows = q.kind == SpriteKind::Fizzle;
             let size = q.size * (1.0 + if grows { life_t * 1.4 } else { 0.0 });
-            stamp(&mut frames[q.face.index()], sprite, q.face, q.p, size, alpha);
-            // Near an edge, also on the neighbouring face, as if the cube
-            // were unfolded there.
-            let (own_axis, own_sign) = axis_sign(q.face);
-            let ru = size / 128.0;
-            for g in Face::ALL {
-                let (ga, gs) = axis_sign(g);
-                if ga == own_axis {
-                    continue;
-                }
-                let d = 1.0 - gs * q.p[ga];
-                if d < ru {
-                    let mut t = q.p;
-                    t[own_axis] = own_sign * (1.0 + d);
-                    t[ga] = gs;
-                    stamp(&mut frames[g.index()], sprite, g, t, size, alpha);
-                }
-            }
+            wrapped(q.face, q.p, size, |face, p| {
+                stamp(&mut frames[face.index()], sprite, face, p, size, alpha)
+            });
         }
     }
-}
 
-impl Smoke {
     /// One coin: a disc spinning about an axis in its face, so it squashes
-    /// to its edge and opens again, flashing as it turns face-on. It wraps
-    /// round an edge like the smoke does.
+    /// to its edge and opens again, flashing as it turns face-on.
     fn draw_coin(&self, frames: &mut [Framebuffer; 6], q: &Particle) {
         let life_t = q.life / q.max;
         let fade_in = (q.life / 0.08).min(1.0);
@@ -714,21 +717,54 @@ impl Smoke {
             spin: q.seed * 2.0 + q.life * (COIN_SPIN + (q.seed % 1.0) * COIN_SPIN_SPREAD),
             alpha,
         };
-        stamp_coin(&mut frames[q.face.index()], q.face, q.p, &coin);
-        let (own_axis, own_sign) = axis_sign(q.face);
-        let ru = coin.radius / 128.0;
-        for g in Face::ALL {
-            let (ga, gs) = axis_sign(g);
-            if ga == own_axis {
-                continue;
-            }
-            let d = 1.0 - gs * q.p[ga];
-            if d < ru {
-                let mut t = q.p;
-                t[own_axis] = own_sign * (1.0 + d);
-                t[ga] = gs;
-                stamp_coin(&mut frames[g.index()], g, t, &coin);
-            }
+        wrapped(q.face, q.p, coin.radius, |face, p| {
+            stamp_coin(&mut frames[face.index()], face, p, &coin)
+        });
+    }
+
+    /// One sugar crystal: a tiny rounded cube tumbling as it falls, its lit
+    /// and shaded facets trading places as it turns, now and then catching
+    /// the light.
+    fn draw_crystal(&self, frames: &mut [Framebuffer; 6], q: &Particle) {
+        let life_t = q.life / q.max;
+        let fade_in = (q.life / 0.08).min(1.0);
+        let alpha = fade_in * powf((1.0 - life_t).max(0.0), 0.5);
+        let rate = CRYSTAL_SPIN + (q.seed % 1.0) * CRYSTAL_SPIN_SPREAD;
+        // A sharp flash for a moment of each turn, at a different moment
+        // for every crystal.
+        let glint = powf(0.5 + 0.5 * sinf(self.time * 5.0 + q.seed * 7.0), 12.0);
+        let crystal = Crystal {
+            half: q.size * CRYSTAL_SIZE,
+            angle: q.seed + q.life * rate,
+            // Tumbling out of the face: it foreshortens and opens again.
+            open: 0.65 + 0.35 * libm::fabsf(cosf(q.seed * 3.0 + q.life * rate * 0.7)),
+            glint,
+            alpha,
+        };
+        wrapped(q.face, q.p, crystal.half * 1.5, |face, p| {
+            stamp_crystal(&mut frames[face.index()], face, p, &crystal)
+        });
+    }
+}
+
+/// Call `stamp` for a particle on its own face and, near an edge, on the
+/// neighbouring face too, as if the cube were unfolded there, so particles
+/// wrap round the die. `reach` is its radius in canvas units.
+fn wrapped(face: Face, p: [f32; 3], reach: f32, mut stamp: impl FnMut(Face, [f32; 3])) {
+    stamp(face, p);
+    let (own_axis, own_sign) = axis_sign(face);
+    let ru = reach / 128.0;
+    for g in Face::ALL {
+        let (ga, gs) = axis_sign(g);
+        if ga == own_axis {
+            continue;
+        }
+        let d = 1.0 - gs * p[ga];
+        if d < ru {
+            let mut t = p;
+            t[own_axis] = own_sign * (1.0 + d);
+            t[ga] = gs;
+            stamp(g, t);
         }
     }
 }
@@ -865,6 +901,59 @@ fn stamp_coin(fb: &mut Framebuffer, face: Face, p: [f32; 3], coin: &Coin) {
     }
 }
 
+/// A sugar crystal to stamp: half-size `half` canvas units, turned by
+/// `angle` (rad) in its face and foreshortened to `open` (0–1) across it,
+/// flashing by `glint` (0–1), drawn at `alpha`.
+struct Crystal {
+    half: f32,
+    angle: f32,
+    open: f32,
+    glint: f32,
+    alpha: f32,
+}
+
+/// Stamp a crystal centred on `p` (cube coordinates) on `face`: a rounded
+/// square split into a lit and a shaded facet along its diagonal.
+fn stamp_crystal(fb: &mut Framebuffer, face: Face, p: [f32; 3], c: &Crystal) {
+    if c.alpha < 0.02 || c.half <= 0.0 {
+        return;
+    }
+    let b = &BASES[face.index()];
+    let (cx, cy) = (dot(p, b.x) * 128.0, -dot(p, b.y) * 128.0);
+    let (px, py) = (CENTER + cx * K, CENTER + cy * K);
+    // At least a pixel across, so the smallest still read as grains.
+    let h = (c.half * K).max(0.7);
+    let (hu, hv) = (h, (h * c.open).max(0.6));
+    let round = h * 0.3;
+    let (ca, sa) = (cosf(c.angle), sinf(c.angle));
+    let reach = h * 1.5 + 1.0;
+    let y0 = libm::floorf(py - reach).max(0.0) as usize;
+    let y1 = (libm::ceilf(py + reach).max(0.0) as usize).min(PANEL_HEIGHT);
+    let x0 = libm::floorf(px - reach).max(0.0) as usize;
+    let x1 = (libm::ceilf(px + reach).max(0.0) as usize).min(PANEL_WIDTH);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
+            let (u, v) = (dx * ca + dy * sa, -dx * sa + dy * ca);
+            // Rounded box, in pixels; antialiased over one pixel.
+            let (qx, qy) = (libm::fabsf(u) - hu + round, libm::fabsf(v) - hv + round);
+            let out = sqrtf(qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0));
+            let d = out + qx.max(qy).min(0.0) - round;
+            let cover = (0.5 - d).clamp(0.0, 1.0);
+            if cover <= 0.0 {
+                continue;
+            }
+            let facet = if u / hu + v / hv < 0.0 {
+                CRYSTAL_LIT
+            } else {
+                CRYSTAL_SHADE
+            };
+            let level = facet + (255.0 - facet) * c.glint;
+            fb.blend(x, y, level, c.alpha * cover);
+        }
+    }
+}
+
 // ---------- cube geometry ----------
 
 fn axis_sign(face: Face) -> (usize, f32) {
@@ -976,7 +1065,7 @@ mod tests {
     }
 
     #[test]
-    fn money_rains_fewer_coins_than_smoke_puffs() {
+    fn money_rains_fewer_coins_than_sugar_crystals() {
         let mut s = smoke();
         s.set_money(true);
         s.shake_start();
@@ -995,7 +1084,20 @@ mod tests {
     }
 
     #[test]
-    fn coins_clear_sooner_than_smoke() {
+    fn crystals_are_drawn_without_a_sprite_pack() {
+        let mut s = smoke();
+        s.throw();
+        assert_eq!(s.particles.len(), s.full());
+        for _ in 0..10 {
+            s.step(1.0 / 60.0);
+        }
+        let mut frames = [Framebuffer::new(); 6];
+        s.draw(&mut frames);
+        assert!(frames.iter().any(|f| f.pixels().iter().any(|&p| p > 0)));
+    }
+
+    #[test]
+    fn coins_clear_sooner_than_crystals() {
         let clear_time = |money: bool| {
             let mut s = smoke();
             s.set_money(money);
@@ -1008,9 +1110,11 @@ mod tests {
             }
             t
         };
-        let (smoke_t, coins_t) = (clear_time(false), clear_time(true));
-        assert!(coins_t < smoke_t * 0.7, "{coins_t} vs {smoke_t}");
+        let (crystals_t, coins_t) = (clear_time(false), clear_time(true));
+        assert!(coins_t < crystals_t, "{coins_t} vs {crystals_t}");
         assert!(coins_t < 2.5, "{coins_t}");
+        // Crystals drop off the faces rather than hanging like smoke did.
+        assert!(crystals_t < 2.5, "{crystals_t}");
     }
 
     #[test]
