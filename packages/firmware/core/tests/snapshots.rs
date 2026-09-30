@@ -561,6 +561,9 @@ const SMOKE_ITEM: usize = 2;
 fn throw_money() {
     let run =
         Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::PassThePot);
+    // The scenario scripts the first roll; script the other bills too, or
+    // their glyphs come from OS entropy.
+    run.sim.lock().rng_script.extend([11, 11]);
     throw_smoke_scenario("throw-money", run);
 }
 
