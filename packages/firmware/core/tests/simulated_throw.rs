@@ -154,6 +154,8 @@ fn pig_toss_throws_two_pigs_and_a_tap_banks() {
         s.imu_resting = imu_script::resting(Face::PosY);
         s.rng_script.push_back(word(Pose::Nose));
         s.rng_script.push_back(word(Pose::Nose));
+        // The pigs land apart.
+        s.rng_script.push_back(u32::MAX);
     }
     let mut t = 0u64;
     let mut run = |fw: &mut Firmware<_>, ticks: u64| {
@@ -187,4 +189,100 @@ fn pig_toss_throws_two_pigs_and_a_tap_banks() {
     assert_eq!(fw.pigs().scores(), &[40, 0, 0]);
     assert_eq!(fw.pigs().current(), 1);
     assert_eq!(fw.pigs().turn(), 0);
+}
+
+/// Pig Toss, with the die resting after a scored throw and its top screen
+/// facing +Y.
+fn pig_toss_after_a_throw() -> (
+    smokebomb_hal_simulator::SimHandle,
+    Firmware<smokebomb_hal_simulator::SimPlatform>,
+) {
+    use smokebomb_core::menu::{PlayMode, Settings};
+    use smokebomb_core::pigs::Pose;
+
+    let sim = SimHandle::new();
+    sim.lock().manual_time_ms = Some(0);
+    let mut fw = Firmware::new(sim.peripherals()).unwrap();
+    fw.set_settings(Settings {
+        play: PlayMode::PigToss,
+        ..Settings::default()
+    });
+    let word = |pose: Pose| {
+        let start: u32 = Pose::ALL[..pose.index()].iter().map(|p| p.weight() as u32).sum();
+        (((start as u64 * 2 + pose.weight() as u64) << 32) / 20_000) as u32
+    };
+    {
+        let mut s = sim.lock();
+        s.imu_script.extend(imu_script::throw());
+        s.imu_resting = imu_script::resting(Face::PosY);
+        s.rng_script.push_back(word(Pose::Back));
+        s.rng_script.push_back(word(Pose::Back));
+        // The pigs land apart.
+        s.rng_script.push_back(u32::MAX);
+    }
+    for t in 0..150u64 {
+        sim.lock().manual_time_ms = Some(t * 33);
+        fw.tick().unwrap();
+    }
+    assert_eq!(fw.pigs().turn(), 20, "a twin belly up");
+    (sim, fw)
+}
+
+/// Run `ticks` ticks from `*t`.
+fn run_ticks(
+    sim: &smokebomb_hal_simulator::SimHandle,
+    fw: &mut Firmware<smokebomb_hal_simulator::SimPlatform>,
+    t: &mut u64,
+    ticks: u64,
+) {
+    for _ in 0..ticks {
+        sim.lock().manual_time_ms = Some(*t * 33);
+        fw.tick().unwrap();
+        *t += 1;
+    }
+}
+
+#[test]
+fn picking_the_die_up_does_not_bank() {
+    let (sim, mut fw) = pig_toss_after_a_throw();
+    let mut t = 150;
+    // A finger lands on the top screen, then the die is lifted with it.
+    sim.lock().touch_mask = 1 << Face::PosY.index();
+    run_ticks(&sim, &mut fw, &mut t, 3);
+    sim.lock().imu_script.extend(imu_script::pick_up());
+    run_ticks(&sim, &mut fw, &mut t, 40);
+    sim.lock().touch_mask = 0;
+    run_ticks(&sim, &mut fw, &mut t, 3);
+    assert_eq!(fw.pigs().turn(), 20, "the turn wasn't banked");
+    assert_eq!(fw.pigs().scores()[0], 0);
+    assert_eq!(fw.pigs().current(), 0);
+}
+
+#[test]
+fn a_long_press_does_not_bank_either() {
+    let (sim, mut fw) = pig_toss_after_a_throw();
+    let mut t = 150;
+    // 0.7 s on the screen: more than a tap, less than the menu's hold.
+    sim.lock().touch_mask = 1 << Face::PosY.index();
+    run_ticks(&sim, &mut fw, &mut t, 21);
+    sim.lock().touch_mask = 0;
+    run_ticks(&sim, &mut fw, &mut t, 3);
+    assert_eq!(fw.pigs().turn(), 20);
+    assert_eq!(fw.pigs().current(), 0);
+}
+
+#[test]
+fn a_quick_tap_on_a_resting_die_banks_and_locks_it_in() {
+    let (sim, mut fw) = pig_toss_after_a_throw();
+    let mut t = 150;
+    sim.lock().touch_mask = 1 << Face::PosY.index();
+    run_ticks(&sim, &mut fw, &mut t, 3);
+    sim.lock().touch_mask = 0;
+    run_ticks(&sim, &mut fw, &mut t, 3);
+    assert_eq!(fw.pigs().scores()[0], 20);
+    assert_eq!(fw.pigs().current(), 1);
+    assert!(sim
+        .lock()
+        .haptics
+        .contains(&smokebomb_hal::HapticEffect::LandingThud));
 }

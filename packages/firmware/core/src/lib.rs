@@ -74,6 +74,12 @@ const IMU_SAMPLE_S: f32 = 1.0 / TICK_HZ as f32;
 
 /// How long a screen must be held to open the menu (SIM_SPEC C3).
 pub const MENU_HOLD_MS: u64 = 800;
+/// A tap that banks in Pig Toss must be short, and land on a die that has
+/// been resting: picking the die up puts a finger on the top screen too.
+pub const TAP_MAX_MS: u64 = 500;
+pub const TAP_REST_MS: u64 = 400;
+/// How long the lock-in stays up before the screens go quiet.
+pub const LOCKED_MS: u64 = 12_000;
 /// The hold ring appears once a touch is clearly a hold, not a tap.
 pub const HOLD_RING_AFTER_MS: u64 = 220;
 /// The menu closes without saving after this long without a tip.
@@ -132,6 +138,16 @@ pub struct Firmware<P: Platform> {
     orientation: TextOrientation,
     gravity: orientation::Gravity,
     touch_since: Option<u64>,
+    /// The die moved while a finger was on it: a grab, not a tap.
+    touch_disturbed: bool,
+    /// How long the die had been resting when the touch began.
+    touch_rested_ms: u64,
+    /// Since when the die has been resting, if it is.
+    still_since: Option<u64>,
+    /// The last tap was short, on a resting die, and the die stayed put.
+    tap_deliberate: bool,
+    /// A bank that just locked in, and when.
+    locked: Option<(pigs::Locked, u64)>,
     /// The face a touch started on (the lowest one, if several).
     touch_face: Face,
     menu_hold_fired: bool,
@@ -187,6 +203,11 @@ impl<P: Platform> Firmware<P> {
             orientation: TextOrientation::new(),
             gravity: orientation::Gravity::new(),
             touch_since: None,
+            touch_disturbed: false,
+            touch_rested_ms: 0,
+            still_since: None,
+            tap_deliberate: false,
+            locked: None,
             touch_face: Face::PosZ,
             menu_hold_fired: false,
             menu: None,
@@ -243,6 +264,7 @@ impl<P: Platform> Firmware<P> {
         self.sm.set_rolls(self.settings.play().rolls());
         self.potato = Potato::new();
         // Saving the menu keeps a game going unless the table changed size.
+        self.locked = None;
         if self.pigs.players() != self.settings.players {
             self.pigs = Pigs::new(self.settings.players);
         }
@@ -328,6 +350,11 @@ impl<P: Platform> Firmware<P> {
             }
         }
 
+        if self.motion.is_still() {
+            self.still_since.get_or_insert(now);
+        } else {
+            self.still_since = None;
+        }
         if self.poll_touch(now, &mut events)? {
             self.ui.touch(now);
         }
@@ -360,16 +387,19 @@ impl<P: Platform> Firmware<P> {
                     _ => {}
                 }
             }
-            // Only a tap on the top screen banks, so a hand resting on the
-            // die can't pass the turn by accident.
+            // Only a deliberate tap on the top screen banks: short, on a die
+            // that was resting and stays put. Picking the die up to throw
+            // it puts a finger on that screen too, and mustn't pass the turn.
             if event == Event::Tap
                 && self.settings.play() == PlayMode::PigToss
                 && self.touch_face == self.up_face
+                && self.tap_deliberate
                 && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. })
             {
-                self.bank_pigs()?;
+                self.bank_pigs(now)?;
             }
             if event == Event::Docked(true) {
+                self.locked = None;
                 for cmd in self.potato.reset() {
                     self.run_potato(cmd)?;
                 }
@@ -467,13 +497,16 @@ impl<P: Platform> Firmware<P> {
             pigs::Pose::from_random(self.hw.rng.next_u32()?),
             pigs::Pose::from_random(self.hw.rng.next_u32()?),
         ];
-        let throw = self.pigs.throw(poses);
+        // A third word decides whether the pigs landed touching.
+        let touching = pigs::smooch_from_random(self.hw.rng.next_u32()?);
+        let throw = self.pigs.throw(poses, touching);
+        self.locked = None;
         self.pending_special = None;
         if self.settings.haptics_on() {
-            let effect = if throw.outcome == pigs::Outcome::Bust {
-                smokebomb_hal::HapticEffect::Buzz
-            } else {
-                smokebomb_hal::HapticEffect::Tick
+            let effect = match throw.outcome {
+                pigs::Outcome::Smooch => smokebomb_hal::HapticEffect::Dud,
+                pigs::Outcome::Bust => smokebomb_hal::HapticEffect::Buzz,
+                pigs::Outcome::Score(_) => smokebomb_hal::HapticEffect::Tick,
             };
             self.hw.haptics.play(effect)?;
         }
@@ -481,10 +514,46 @@ impl<P: Platform> Firmware<P> {
     }
 
     /// A tap in Pig Toss: bank the turn and pass the die.
-    fn bank_pigs(&mut self) -> HalResult<()> {
-        let banked = self.pigs.bank();
-        if banked != pigs::Banked::Nothing && self.settings.haptics_on() {
-            self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
+    fn bank_pigs(&mut self, now: u64) -> HalResult<()> {
+        let players = self.pigs.players();
+        let locked = match self.pigs.bank() {
+            pigs::Banked::Passed {
+                player,
+                points,
+                total,
+            } => Some(pigs::Locked {
+                player,
+                points,
+                before: total - points,
+                after: total,
+                next: (player + 1) % players,
+                won: false,
+            }),
+            pigs::Banked::Won {
+                player,
+                points,
+                total,
+            } => Some(pigs::Locked {
+                player,
+                points,
+                before: total - points,
+                after: total,
+                next: player,
+                won: true,
+            }),
+            pigs::Banked::Nothing | pigs::Banked::NewGame => None,
+        };
+        self.locked = locked.map(|l| (l, now));
+        if let Some(l) = locked {
+            if self.settings.haptics_on() {
+                // A thunk as it locks; a celebration for a win.
+                let effect = if l.won {
+                    smokebomb_hal::HapticEffect::MaxCelebration
+                } else {
+                    smokebomb_hal::HapticEffect::LandingThud
+                };
+                self.hw.haptics.play(effect)?;
+            }
         }
         Ok(())
     }
@@ -696,10 +765,16 @@ impl<P: Platform> Firmware<P> {
                 Some(m) => m.turning.is_none(),
                 None => self.motion.is_still(),
             };
+        // A finger on a die that starts to move is a grab.
+        if mask != 0 && !self.motion.is_still() {
+            self.touch_disturbed = true;
+        }
         let mut started = false;
         match (usable, self.touch_since) {
             (true, None) => {
                 self.touch_since = Some(now);
+                self.touch_disturbed = false;
+                self.touch_rested_ms = self.still_since.map_or(0, |s| now.saturating_sub(s));
                 self.nest.touch(now);
                 self.touch_face = Face::ALL[mask.trailing_zeros() as usize % Face::ALL.len()];
                 self.menu_hold_fired = false;
@@ -711,7 +786,10 @@ impl<P: Platform> Firmware<P> {
                 self.menu_hold_fired = true;
                 let _ = events.push(Event::LongPress);
             }
-            (false, Some(_)) => {
+            (false, Some(since)) => {
+                self.tap_deliberate = !self.touch_disturbed
+                    && now.saturating_sub(since) <= TAP_MAX_MS
+                    && self.touch_rested_ms >= TAP_REST_MS;
                 // Letting go after a hold that saved the menu shows the
                 // setup like a tap does (the mockup's pointer-up); letting go
                 // after the hold that opened it doesn't. A tap inside the
@@ -775,6 +853,7 @@ impl<P: Platform> Firmware<P> {
             }
             Command::MenuOpen => {
                 self.potato = Potato::new();
+                self.locked = None;
                 let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
                 self.menu = Some(MenuSession {
                     draft: Draft::new(&self.settings),
@@ -921,6 +1000,7 @@ impl<P: Platform> Firmware<P> {
                         (since_landing - screens::pig_score::SHRINK_AT) / screens::pig_score::SHRINK_S,
                     ),
                     poses: t.poses,
+                    touching: t.touching,
                 })
         };
         let pig_alpha = if matches!(mode, Mode::Shaking | Mode::Airborne | Mode::Settling) {
@@ -928,6 +1008,12 @@ impl<P: Platform> Firmware<P> {
         } else {
             self.ui.result_dim(now)
         };
+        // A bank locking in: a padlock snaps shut and the score counts up.
+        let locked = self
+            .locked
+            .filter(|_| pigs_on && pig_scene.is_none() && matches!(mode, Mode::Idle | Mode::Reveal { .. }))
+            .filter(|(_, at)| now.saturating_sub(*at) < LOCKED_MS)
+            .map(|(l, at)| (l, now.saturating_sub(at) as f32 / 1000.0));
         let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
         let asleep = self.asleep;
         let nest_faces = self.nest_faces(now, &mode, battery);
@@ -967,7 +1053,7 @@ impl<P: Platform> Firmware<P> {
             // A round of Hot Potato takes the faces, except the one facing
             // down (H2).
             let potato_face = potato_view.filter(|_| face != up.opposite());
-            let content = if potato_face.is_some() {
+            let content = if potato_face.is_some() || locked.is_some() {
                 FaceContent::Blank
             } else {
                 content
@@ -1011,9 +1097,8 @@ impl<P: Platform> Firmware<P> {
                 FaceContent::Wake { alpha } => screens::draw_wake_label(&mut c, setup, &label, alpha),
                 FaceContent::Result { alpha } => {
                     if let Some(t) = pigs_throw {
-                        let banked = pigs.scores()[t.player as usize];
                         let next = (t.player + 1) % players;
-                        screens::draw_pig_score(&mut c, &t, since_landing, banked, next, alpha);
+                        screens::draw_pig_score(&mut c, &t, since_landing, next, alpha);
                     } else if let Some(r) = record {
                         screens::draw_result(&mut c, r, ui.special(), alpha);
                     }
@@ -1042,6 +1127,16 @@ impl<P: Platform> Firmware<P> {
                     }
                 }
                 FaceContent::LowBattery { alpha } => screens::draw_bolt(&mut c, alpha),
+            }
+            if let Some((l, t)) = locked {
+                if face != up.opposite() {
+                    screens::draw_locked(
+                        &mut c,
+                        &l,
+                        t,
+                        (LOCKED_MS as f32 / 1000.0 - t).clamp(0.0, 1.5) / 1.5,
+                    );
+                }
             }
             if let Some(scene) = pig_scene {
                 // In the air every face shows the pigs: which one faces down

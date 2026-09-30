@@ -25,7 +25,14 @@ use crate::pigs::Pose;
 pub const SETTLE_S: f32 = 0.9;
 
 /// Canvas units per world unit.
-const SCALE: f32 = 36.0;
+const SCALE: f32 = 33.0;
+/// How far from the middle of the table each pig rests. Apart they leave a
+/// clear gap, whatever pose they're in.
+const APART_X: f32 = 1.3;
+/// How much further apart apart-landed pigs draw once they shrink.
+const SPREAD: f32 = 0.45;
+/// How far touching pigs press into each other, world units.
+const TOUCH_PRESS: f32 = 0.05;
 /// Camera elevation above the table, radians.
 const ELEVATION: f32 = 0.9;
 /// Where the table's centre sits on the face.
@@ -201,16 +208,32 @@ fn depth_below_centre(q: Quat) -> f32 {
 /// How far a part reaches from its centre along world up, when the pig is
 /// turned by `q`.
 fn support(q: Quat, p: &Part) -> f32 {
-    // World up in the pig's frame is the conjugate rotation of (0, 1, 0).
-    let up = Quat {
+    support_along(q, p, [0.0, 1.0, 0.0])
+}
+
+/// How far a part reaches from its centre along the world direction `dir`
+/// (a unit vector), when the pig is turned by `q`.
+fn support_along(q: Quat, p: &Part, dir: [f32; 3]) -> f32 {
+    // The direction in the pig's own frame is the conjugate rotation of it.
+    let d = Quat {
         w: q.w,
         x: -q.x,
         y: -q.y,
         z: -q.z,
     }
-    .rotate([0.0, 1.0, 0.0]);
-    let (x, y, z) = (p.radii[0] * up[0], p.radii[1] * up[1], p.radii[2] * up[2]);
+    .rotate(dir);
+    let (x, y, z) = (p.radii[0] * d[0], p.radii[1] * d[1], p.radii[2] * d[2]);
     sqrtf(x * x + y * y + z * z)
+}
+
+/// How far a pig turned by `q` reaches along world +X (`sign` 1) or −X
+/// (`sign` −1) from its centre.
+fn reach_x(q: Quat, sign: f32) -> f32 {
+    PARTS
+        .iter()
+        .filter(|p| p.solid)
+        .map(|p| sign * q.rotate(p.centre)[0] + support_along(q, p, [1.0, 0.0, 0.0]))
+        .fold(f32::MIN, f32::max)
 }
 
 /// Which side of the table pig `i` lives on.
@@ -239,7 +262,7 @@ pub fn tumble(i: usize, t: f32) -> PigState {
 
 /// The pose's rotation of the standing pig, then turned a little about the
 /// vertical so the two pigs don't line up.
-fn pose_rotation(pose: Pose, i: usize) -> Quat {
+fn pose_rotation(pose: Pose, i: usize, touching: bool) -> Quat {
     let x = [1.0, 0.0, 0.0];
     let z = [0.0, 0.0, 1.0];
     let q = match pose {
@@ -253,7 +276,13 @@ fn pose_rotation(pose: Pose, i: usize) -> Quat {
         // Leaning over on an ear as well.
         Pose::Ear => Quat::axis_angle(x, 0.55).mul(Quat::axis_angle(z, -0.95)),
     };
-    let yaw = if i == 0 { 0.35 } else { -0.45 };
+    // Apart, they sit a little crooked. Touching, they face each other.
+    let yaw = match (touching, i) {
+        (true, 0) => 0.0,
+        (true, _) => PI,
+        (false, 0) => 0.35,
+        (false, _) => -0.45,
+    };
     Quat::axis_angle([0.0, 1.0, 0.0], yaw).mul(q)
 }
 
@@ -262,14 +291,43 @@ fn ease_out(u: f32) -> f32 {
     1.0 - k * k * k
 }
 
-/// A pig `u` (0–1) of the way from `from` to resting in `pose`. It rocks
-/// down onto the table with a couple of shrinking bounces, and at `u` = 1 it
-/// is exactly in the pose.
-pub fn settle(i: usize, from: PigState, pose: Pose, u: f32) -> PigState {
+/// Where and how a pig ends up.
+#[derive(Clone, Copy, Debug)]
+pub struct Landing {
+    pose: Pose,
+    touching: bool,
+    /// Where it rests along the table.
+    x: f32,
+}
+
+/// Where the two pigs land. Normally they rest a clear gap apart, whatever
+/// their poses. When they touch they face each other, close enough that
+/// their nearest parts meet, however far each pose reaches.
+pub fn landings(poses: [Pose; 2], touching: bool) -> [Landing; 2] {
+    let x = if touching {
+        let right = reach_x(pose_rotation(poses[0], 0, true), 1.0);
+        let left = reach_x(pose_rotation(poses[1], 1, true), -1.0);
+        // Overlap a hair, so they read as pressed together.
+        let half = (right + left - TOUCH_PRESS) / 2.0;
+        [-half, half]
+    } else {
+        [-APART_X, APART_X]
+    };
+    [0, 1].map(|i| Landing {
+        pose: poses[i],
+        touching,
+        x: x[i],
+    })
+}
+
+/// A pig `u` (0–1) of the way from `from` to resting as `to`. It rocks down
+/// onto the table with a couple of shrinking bounces, and at `u` = 1 it is
+/// exactly in the pose.
+pub fn settle(i: usize, from: PigState, to: Landing, u: f32) -> PigState {
     let u = u.clamp(0.0, 1.0);
     let e = ease_out(u);
-    let q = from.q.slerp(pose_rotation(pose, i), e);
-    let rest = [side(i) * 0.85, 0.0, 0.0];
+    let q = from.q.slerp(pose_rotation(to.pose, i, to.touching), e);
+    let rest = [to.x, 0.0, 0.0];
     let bounce = if u >= 1.0 {
         0.0
     } else {
@@ -289,8 +347,8 @@ pub fn settle(i: usize, from: PigState, pose: Pose, u: f32) -> PigState {
 }
 
 /// Where a pig ends up.
-pub fn rest(i: usize, pose: Pose) -> PigState {
-    settle(i, tumble(i, 0.0), pose, 1.0)
+pub fn rest(i: usize, poses: [Pose; 2], touching: bool) -> PigState {
+    settle(i, tumble(i, 0.0), landings(poses, touching)[i], 1.0)
 }
 
 /// What the faces show of the pigs.
@@ -308,6 +366,8 @@ pub enum Scene {
         u: f32,
         shrink: f32,
         poses: [Pose; 2],
+        /// Landed nose to nose, touching: the one bad case.
+        touching: bool,
     },
 }
 
@@ -374,26 +434,85 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// show a different moment of the same throw. `alpha` dims them. They are
 /// drawn straight into the face's pixels, over whatever is there.
 pub fn draw(p: &mut Painter, z: &mut DepthBuffer, scene: Scene, phase: f32, alpha: f32) {
-    let states = match scene {
+    let mut states = match scene {
         Scene::Tumbling(t) => [tumble(0, t + phase), tumble(1, t + phase)],
-        Scene::Settling { land, u, poses, .. } => [
-            settle(0, tumble(0, land + phase), poses[0], u),
-            settle(1, tumble(1, land + phase), poses[1], u),
-        ],
+        Scene::Settling {
+            land,
+            u,
+            poses,
+            touching,
+            ..
+        } => {
+            let to = landings(poses, touching);
+            [
+                settle(0, tumble(0, land + phase), to[0], u),
+                settle(1, tumble(1, land + phase), to[1], u),
+            ]
+        }
     };
     let shrink = match scene {
         Scene::Settling { shrink, .. } => shrink,
         Scene::Tumbling(_) => 0.0,
     };
+    // Small at the top of the face, pigs that landed apart draw further
+    // apart, so that they plainly aren't touching. Touching ones stay put.
+    if let Scene::Settling { touching: false, .. } = scene {
+        for (i, st) in states.iter_mut().enumerate() {
+            st.pos[0] += side(i) * SPREAD * shrink;
+        }
+    }
     let scale = SCALE * (1.0 - 0.45 * shrink);
     let lift = 66.0 * shrink;
-    let (ce, se) = (cosf(ELEVATION), sinf(ELEVATION));
+    let view = View {
+        elevation: ELEVATION,
+        scale,
+        origin: (CENTRE.0, CENTRE.1 + 10.0 - lift),
+    };
+    render(p, &mut z.0, Region::FACE, &states, view, alpha);
+}
+
+/// The block of the face a depth buffer covers.
+#[derive(Clone, Copy)]
+struct Region {
+    x0: usize,
+    y0: usize,
+    w: usize,
+    h: usize,
+}
+
+impl Region {
+    const FACE: Region = Region {
+        x0: 0,
+        y0: 0,
+        w: 96,
+        h: 96,
+    };
+}
+
+/// How the table is seen: tipped up by `elevation`, `scale` canvas units
+/// per world unit, with the table's centre at `origin` on the canvas.
+#[derive(Clone, Copy)]
+struct View {
+    elevation: f32,
+    scale: f32,
+    origin: (f32, f32),
+}
+
+/// Ray-cast pigs into the face's pixels, with `zbuf` as the depth buffer for
+/// `region`, which must hold everything drawn.
+fn render(p: &mut Painter, zbuf: &mut [u16], region: Region, states: &[PigState], v: View, alpha: f32) {
+    let View {
+        elevation,
+        scale,
+        origin,
+    } = v;
+    let (ce, se) = (cosf(elevation), sinf(elevation));
     // World to view: tip the table toward the viewer.
     let view: Mat = [[1.0, 0.0, 0.0], [0.0, ce, -se], [0.0, se, ce]];
     let xf = p.xf;
     let ppu = xf.px_per_unit();
     let to_px = ppu * scale;
-    z.0.fill(0);
+    zbuf.fill(0);
 
     // Every part of both pigs, far to near.
     let mut casts: [Option<Cast>; 2 * PARTS.len()] = core::array::from_fn(|_| None);
@@ -446,26 +565,26 @@ pub fn draw(p: &mut Painter, z: &mut DepthBuffer, scene: Scene, phase: f32, alph
         let rmax = cast.radii[0].max(cast.radii[1]).max(cast.radii[2]);
         // Canvas position of the centre, and its pixel bounds.
         let (cx, cy) = (
-            CENTRE.0 + cast.centre[0] * scale,
-            CENTRE.1 + 10.0 - lift - cast.centre[1] * scale,
+            origin.0 + cast.centre[0] * scale,
+            origin.1 - cast.centre[1] * scale,
         );
         let (px, py) = xf.forward(cx, cy);
         let reach = rmax * to_px + 1.5;
         let (x0, x1) = (
-            libm::floorf(px - reach).max(0.0) as usize,
-            (libm::ceilf(px + reach) as usize).min(96),
+            (libm::floorf(px - reach).max(0.0) as usize).max(region.x0),
+            (libm::ceilf(px + reach) as usize).min(region.x0 + region.w),
         );
         let (y0, y1) = (
-            libm::floorf(py - reach).max(0.0) as usize,
-            (libm::ceilf(py + reach) as usize).min(96),
+            (libm::floorf(py - reach).max(0.0) as usize).max(region.y0),
+            (libm::ceilf(py + reach) as usize).min(region.y0 + region.h),
         );
         // Pixels per unit of the ellipsoid's unit space, for edge softness.
         let rp = (cast.radii[0] + cast.radii[1] + cast.radii[2]) / 3.0 * to_px;
         for y in y0..y1 {
             for x in x0..x1 {
                 let (ux, uy) = xf.inverse(x as f32 + 0.5, y as f32 + 0.5);
-                let dx = (ux - CENTRE.0) / scale - cast.centre[0];
-                let dy = -((uy - (CENTRE.1 + 10.0 - lift)) / scale) - cast.centre[1];
+                let dx = (ux - origin.0) / scale - cast.centre[0];
+                let dy = -((uy - origin.1) / scale) - cast.centre[1];
                 let av = [
                     dx * cast.bx[0] + dy * cast.by[0],
                     dx * cast.bx[1] + dy * cast.by[1],
@@ -483,8 +602,8 @@ pub fn draw(p: &mut Painter, z: &mut DepthBuffer, scene: Scene, phase: f32, alph
                 let t = (-b + sqrtf(disc.max(0.0))) / cast.a;
                 let depth = cast.centre[2] + t;
                 let zq = ((depth + 4.0) * 8192.0).clamp(1.0, 65535.0) as u16;
-                let slot = y * 96 + x;
-                if zq < z.0[slot] {
+                let slot = (y - region.y0) * region.w + (x - region.x0);
+                if zq < zbuf[slot] {
                     continue;
                 }
                 // The surface normal, in view space.
@@ -508,11 +627,36 @@ pub fn draw(p: &mut Painter, z: &mut DepthBuffer, scene: Scene, phase: f32, alph
                 let under = fb.pixel(x, y) as f32;
                 fb.set_pixel(x, y, (under + (lit - under) * cover).clamp(0.0, 255.0) as u8);
                 if cover > 0.5 {
-                    z.0[slot] = zq;
+                    zbuf[slot] = zq;
                 }
             }
         }
     }
+}
+
+/// A single pig for a label: standing, turned three-quarters toward the
+/// viewer, centred on `(cx, cy)` and about `r` canvas units across each way.
+/// Drawn with its own small depth buffer, so it can go on any screen.
+pub fn draw_icon(p: &mut Painter, cx: f32, cy: f32, r: f32, alpha: f32) {
+    const SIDE: usize = 48;
+    let (px, py) = p.xf.forward(cx, cy);
+    let region = Region {
+        x0: (libm::floorf(px) as i32 - SIDE as i32 / 2).clamp(0, 96 - SIDE as i32) as usize,
+        y0: (libm::floorf(py) as i32 - SIDE as i32 / 2).clamp(0, 96 - SIDE as i32) as usize,
+        w: SIDE,
+        h: SIDE,
+    };
+    let mut zbuf = [0u16; SIDE * SIDE];
+    let pig = PigState {
+        q: Quat::axis_angle([0.0, 1.0, 0.0], -0.95),
+        pos: [0.0, 0.0, 0.0],
+    };
+    let view = View {
+        elevation: 0.32,
+        scale: r / 1.05,
+        origin: (cx + 0.06 * r, cy + 0.06 * r),
+    };
+    render(p, &mut zbuf, region, &[pig], view, alpha);
 }
 
 /// How near the viewer a part's centre is, for drawing far to near.
@@ -538,8 +682,9 @@ mod tests {
         for pose in Pose::ALL {
             for i in 0..2 {
                 let start = tumble(i, 1.234);
-                let end = settle(i, start, pose, 1.0);
-                let want = rest(i, pose);
+                let poses = [pose, Pose::Feet];
+                let end = settle(i, start, landings(poses, false)[i], 1.0);
+                let want = rest(i, poses, false);
                 assert!(end.q.dot(want.q).abs() > 0.9999, "{pose:?}");
                 assert!((end.pos[1] - want.pos[1]).abs() < 1e-4);
             }
@@ -549,7 +694,7 @@ mod tests {
     #[test]
     fn a_pig_rests_on_the_table_in_every_pose() {
         for pose in Pose::ALL {
-            let low = lowest(&rest(0, pose));
+            let low = lowest(&rest(0, [pose, pose], false));
             assert!(low.abs() < 1e-3, "{pose:?} floats or sinks by {low}");
         }
     }
@@ -569,7 +714,7 @@ mod tests {
     #[test]
     fn the_dot_side_is_up_for_a_dot_side_pose() {
         let up = |pose| {
-            let st = rest(0, pose);
+            let st = rest(0, [pose, pose], false);
             // The dot's centre, turned into the world.
             st.q.rotate(PARTS[17].centre)[1]
         };
@@ -601,6 +746,46 @@ mod tests {
         // The corners stay dark.
         assert_eq!(fb.pixel(0, 0), 0);
         assert_eq!(fb.pixel(95, 95), 0);
+    }
+
+    #[test]
+    fn the_icon_is_a_pig_inside_its_box() {
+        use crate::display::Framebuffer;
+        use crate::gfx::{Layer, Painter, Transform};
+        let mut fb = Framebuffer::new();
+        let mut layer = Layer::new();
+        let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
+        draw_icon(&mut p, 0.0, -21.0, 36.0, 0.85);
+        let lit = fb.pixels().iter().filter(|&&v| v > 40).count();
+        assert!(lit > 300, "a pig, not a speck: {lit}");
+        // Nothing beyond the icon's box: the label's text lives below it.
+        for y in 60..96 {
+            for x in 0..96 {
+                assert_eq!(fb.pixel(x, y), 0, "({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn normal_pigs_always_land_clear_of_each_other() {
+        for a in Pose::ALL {
+            for b in Pose::ALL {
+                let [l, r] = [rest(0, [a, b], false), rest(1, [a, b], false)];
+                let gap = (r.pos[0] - reach_x(r.q, -1.0)) - (l.pos[0] + reach_x(l.q, 1.0));
+                assert!(gap > 0.25, "{a:?} and {b:?} come within {gap}");
+            }
+        }
+    }
+
+    #[test]
+    fn touching_pigs_really_touch_in_every_pose() {
+        for a in Pose::ALL {
+            for b in Pose::ALL {
+                let [l, r] = [rest(0, [a, b], true), rest(1, [a, b], true)];
+                let gap = (r.pos[0] - reach_x(r.q, -1.0)) - (l.pos[0] + reach_x(l.q, 1.0));
+                assert!(gap < 0.0 && gap > -0.1, "{a:?} and {b:?}: {gap}");
+            }
+        }
     }
 
     #[test]

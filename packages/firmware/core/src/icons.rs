@@ -32,36 +32,9 @@ pub fn draw_setup_icon<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, cx: f32, cy:
     let style = Style::new(FG, alpha, GLOW);
     match setup {
         Setup::HotPotato => bomb(c, cx, cy, r, alpha),
-        Setup::Pigs(_) => pig(c, cx, cy, r, style),
+        Setup::Pigs(_) => crate::pigfx::draw_icon(c.painter, cx, cy, r, alpha),
         Setup::Roll(DieKind::PassThePot, _) => banknote(c, cx, cy, r, style),
         Setup::Roll(die, _) => die_solid(c, die, cx, cy, r, style),
-    }
-}
-
-/// A pig's face: round head, two ears, a snout with nostrils and eyes.
-fn pig<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Style) {
-    let m = |p: P| at(cx, cy, r, p);
-    let head = m((0.0, 0.08));
-    c.painter
-        .stroke_arc(head.0, head.1, r * 0.78, 0.0, TAU, LINE, style);
-    // Ears.
-    for s in [-1.0, 1.0] {
-        strokes(
-            c,
-            &[&[m((s * 0.62, -0.42)), m((s * 0.78, -0.95)), m((s * 0.22, -0.66))]],
-            style,
-        );
-    }
-    // Snout.
-    let snout = m((0.0, 0.3));
-    c.painter
-        .stroke_arc(snout.0, snout.1, r * 0.3, 0.0, TAU, LINE, style);
-    let dot = Style::new(FG, style.alpha, 0.0);
-    for s in [-1.0, 1.0] {
-        let n = m((s * 0.1, 0.3));
-        c.painter.fill_circle(n.0, n.1, r * 0.05, dot);
-        let e = m((s * 0.36, -0.14));
-        c.painter.fill_circle(e.0, e.1, r * 0.07, dot);
     }
 }
 
