@@ -93,6 +93,12 @@ const ETCH_TEXT = {
   left: "REGULATORY INFO IN SETTINGS",
 };
 
+/** Half-size of the glass window the border surrounds (24 mm square). */
+const WINDOW_HALF_MM = 12;
+/** The wordmark's size, and its ink's clearance from the window. */
+const WORDMARK_MM = 0.95;
+const WORDMARK_CLEAR_MM = 0.8;
+
 function drawEtching(c: HTMLCanvasElement, serial: string) {
   const C = c.width;
   const PXMM = C / 29;
@@ -103,16 +109,22 @@ function drawEtching(c: HTMLCanvasElement, serial: string) {
   x.textBaseline = "middle";
   const band = C / 2 - 13.25 * PXMM; // centre line of the 2.5 mm border
   const font = (mm: number) => `600 ${mm * PXMM}px "Space Grotesk", Arial, sans-serif`;
-  const script = (mm: number) => `400 ${mm * PXMM}px "Pacifico", cursive`;
-  const side = (rot: number, text: string, mm: number, face = font) => {
+  const side = (rot: number, text: string, mm: number) => {
     x.save();
     x.translate(C / 2, C / 2);
     x.rotate(rot);
-    x.font = face(mm);
+    x.font = font(mm);
     x.fillText(text, 0, -(C / 2 - band));
     x.restore();
   };
-  side(0, ETCH_TEXT.top, 1.3, script);
+  // Top: the script wordmark. Its tails hang well below the caps' box, so
+  // place it by its ink, with the lowest tail WORDMARK_CLEAR_MM off the window.
+  x.save();
+  x.translate(C / 2, C / 2);
+  x.font = `400 ${WORDMARK_MM * PXMM}px "Pacifico", cursive`;
+  const ink = x.measureText(ETCH_TEXT.top);
+  x.fillText(ETCH_TEXT.top, 0, -(WINDOW_HALF_MM + WORDMARK_CLEAR_MM) * PXMM - ink.actualBoundingBoxDescent);
+  x.restore();
   side(Math.PI / 2, `SC-1  ·  S/N ${serial}`, 0.7);
   side(Math.PI, ETCH_TEXT.bottom, 0.62); // room is left here for a "Made in …" line later
   // Left: CE, a crossed-out wheelie bin, and where the rest lives.
