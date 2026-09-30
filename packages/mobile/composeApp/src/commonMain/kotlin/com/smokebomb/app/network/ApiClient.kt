@@ -5,7 +5,7 @@ import com.smokebomb.shared.SignedRoll
 import com.smokebomb.shared.VerifyResult
 
 /**
- * Smokebomb REST API (`docs/API.md`). Stubbed with canned data until the
+ * Sugarcube REST API (`docs/API.md`). Stubbed with canned data until the
  * HTTP client (Ktor) is added.
  */
 interface ApiClient {

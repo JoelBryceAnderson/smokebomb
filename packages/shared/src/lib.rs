@@ -1,4 +1,4 @@
-//! Types shared by every Rust component of Smokebomb.
+//! Types shared by every Rust component of Sugarcube.
 //!
 //! This crate is `no_std` and allocation-free so the firmware can use it
 //! directly; the server and simulator use the same definitions, which keeps

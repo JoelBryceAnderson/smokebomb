@@ -221,8 +221,11 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     die.add(etching.mesh);
     let serial = "000042";
     etching.update(serial);
-    // The etching font loads late; redraw once it is there.
-    document.fonts?.load('600 20px "Space Grotesk"').then(() => etching.redraw());
+    // The etching fonts load late; redraw once they are there.
+    Promise.all([
+      document.fonts?.load('600 20px "Space Grotesk"'),
+      document.fonts?.load('400 20px "Pacifico"'),
+    ]).then(() => etching.redraw());
     let glassOn = false;
     let isNight = false;
     const applyGlass = () => {

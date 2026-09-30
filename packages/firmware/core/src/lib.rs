@@ -1,4 +1,4 @@
-//! Smokebomb firmware core.
+//! Sugarcube firmware core.
 //!
 //! Pure `no_std` logic with no knowledge of the chip it runs on. Everything
 //! hardware-facing goes through [`smokebomb_hal`] traits, so this crate runs
@@ -656,7 +656,7 @@ impl<P: Platform> Firmware<P> {
     }
 
     /// Drive the smoke through the throw, in the mockup's frame order:
-    /// throw and landing first, then a step, then the boot burst.
+    /// throw and landing first, then a step.
     fn update_smoke(&mut self, now: u64, before: &Mode, after: &Mode) {
         let entered = |m: fn(&Mode) -> bool| !m(before) && m(after);
         if entered(|m| matches!(m, Mode::Shaking)) {
@@ -683,9 +683,6 @@ impl<P: Platform> Firmware<P> {
         let dt = self.frame_dt(now);
         self.step_pigs(dt, before, after, now);
         self.smoke.step(dt);
-        if let Some(face) = self.ui.take_boot_burst(now) {
-            self.smoke.burst(face);
-        }
         // A max or dud shows once the smoke has cleared from the result.
         if let Some(special) = self.pending_special {
             if self.ui.showing_result(now) && !self.smoke.has_smoke() && !self.smoke.tumbling() {

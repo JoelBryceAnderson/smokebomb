@@ -30,7 +30,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
             Modifier.fillMaxSize().padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
         ) {
-            Text("Smokebomb", style = MaterialTheme.typography.displaySmall)
+            Text("Sugarcube", style = MaterialTheme.typography.displaySmall)
             Text("Name your die. It shows on the faces and on verified rolls.")
             OutlinedTextField(
                 value = name,

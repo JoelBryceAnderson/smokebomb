@@ -23,7 +23,7 @@ use crate::orientation::BASES;
 use crate::pack::PackIndex;
 
 /// Room for a full shake (380), the landing top-up (76) and embers (36),
-/// with some to spare for a boot burst still draining.
+/// with some to spare.
 pub const MAX_PARTICLES: usize = 640;
 
 /// Held smoke at full charge, and the landing counts (SIM_SPEC D3).
@@ -31,8 +31,6 @@ const FULL: usize = 380;
 const FULL_REDUCED: usize = 150;
 const EMBERS: usize = 36;
 const EMBERS_REDUCED: usize = 10;
-const BURST: usize = 170;
-const BURST_REDUCED: usize = 60;
 const GOLD: usize = 120;
 const GOLD_REDUCED: usize = 40;
 const FIZZLE: usize = 36;
@@ -380,41 +378,6 @@ impl Smoke {
         self.spawn(SpriteKind::Ember, embers, Where::All);
         self.charge = 0.0;
         self.phase = Phase::Calm;
-    }
-
-    /// The top face's boot burst: a thick cloud that hangs over the middle
-    /// of the screen for a moment, then rolls off the edges (SIM_SPEC C1).
-    pub fn burst(&mut self, face: Face) {
-        let now = self.time;
-        let (axis, sign) = axis_sign(face);
-        let (a1, a2) = ((axis + 1) % 3, (axis + 2) % 3);
-        let n = if self.lean() { BURST_REDUCED } else { BURST };
-        for _ in 0..n {
-            let th = self.rng.r() * core::f32::consts::TAU;
-            let mut dir = [0.0; 3];
-            dir[a1] = cosf(th);
-            dir[a2] = sinf(th);
-            let mut p = [0.0; 3];
-            p[axis] = sign;
-            let r = 0.03 + self.rng.r() * 0.35;
-            let p = add(p, scale(dir, r));
-            let v = scale(dir, 0.3 + self.rng.r() * 0.6);
-            let max = 1.9 + self.rng.r() * 0.9;
-            let size = 22.0 + self.rng.r() * 18.0;
-            let seed = self.rng.r() * 10.0;
-            self.push(Particle {
-                p,
-                v,
-                face,
-                kind: SpriteKind::Smoke,
-                life: 0.0,
-                max,
-                size,
-                seed,
-                hold: false,
-                linger: now + 0.75,
-            });
-        }
     }
 
     /// A special result's effect, once the smoke has cleared.
@@ -1051,9 +1014,15 @@ mod tests {
     }
 
     #[test]
-    fn particles_stay_on_the_cube_and_fall() {
+    fn particles_stay_on_the_cube() {
         let mut s = smoke();
-        s.burst(Face::PosY);
+        s.shake_start();
+        for _ in 0..60 {
+            s.step(1.0 / 60.0);
+        }
+        s.throw();
+        s.land();
+        assert!(!s.particles.is_empty());
         for _ in 0..120 {
             s.step(1.0 / 60.0);
         }
@@ -1063,13 +1032,6 @@ mod tests {
             assert_eq!(q.face, face_of(q.p));
             assert!(dot(q.v, normal(q.face)).abs() < 1e-4, "moves along its face");
         }
-        // Two seconds in, most of the burst has rolled off the top face.
-        let on_top = s.particles.iter().filter(|q| q.face == Face::PosY).count();
-        assert!(
-            on_top < s.particles.len() / 2,
-            "{on_top} of {}",
-            s.particles.len()
-        );
     }
 
     #[test]

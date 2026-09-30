@@ -1,4 +1,4 @@
-//! Smokebomb simulator.
+//! Sugarcube simulator.
 //!
 //! Boots the firmware core on the simulator HAL, ticks it at the firmware
 //! rate, and bridges it to the browser over a WebSocket:
@@ -1029,7 +1029,7 @@ mod tests {
         rig.tip(TipDir::Down); // About
         let draft = rig.fw.menu_draft().unwrap();
         assert_eq!(draft.setting().0, "About");
-        assert!(draft.setting_value().ends_with(&format!("SB-{id:04X}")));
+        assert!(draft.setting_value().ends_with(&format!("SC-{id:04X}")));
     }
 
     #[test]

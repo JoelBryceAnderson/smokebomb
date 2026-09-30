@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// Number of OLED faces on the die.
 pub const FACE_COUNT: usize = 6;
 
-/// Most dice a single Smokebomb can roll at once (set from the on-die menu).
+/// Most dice a single Sugarcube can roll at once (set from the on-die menu).
 pub const MAX_DICE: usize = 10;
 
 /// Pass the Pot uses at most three dice, like the table game.
@@ -57,7 +57,7 @@ impl Face {
     }
 }
 
-/// Which die the Smokebomb is emulating.
+/// Which die the Sugarcube is emulating.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum DieKind {

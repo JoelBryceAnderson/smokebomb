@@ -1,4 +1,4 @@
-//! Hardware abstraction layer for the Smokebomb die.
+//! Hardware abstraction layer for the Sugarcube die.
 //!
 //! The firmware core only talks to hardware through these traits. Two
 //! implementations exist:
@@ -92,7 +92,7 @@ pub trait Touch {
 /// BLE peripheral link to the phone app. Framing is handled above this trait.
 pub trait Ble {
     fn is_connected(&self) -> bool;
-    /// Queue a notification on the Smokebomb characteristic.
+    /// Queue a notification on the Sugarcube characteristic.
     fn send(&mut self, payload: &[u8]) -> HalResult<()>;
     /// Copy the next received write into `buf`, returning its length.
     fn receive(&mut self, buf: &mut [u8]) -> HalResult<Option<usize>>;

@@ -6,6 +6,8 @@
 //! - rasterizes Space Grotesk at every canvas size the screens use, with pair
 //!   kerning measured by shaping each pair with HarfBuzz (rustybuzz), as the
 //!   browser does for canvas text;
+//! - rasterizes Pacifico, the Sugarcube wordmark's retro script, at the few
+//!   sizes the wordmark is drawn at;
 //! - bakes the smoke sprites the particle system stamps (SIM_SPEC D1, D3);
 //! - lays both out as an SMKB v3 pack.
 
@@ -17,12 +19,19 @@ use smokebomb_shared::assets::*;
 pub const SPACE_GROTESK_BOLD_WOFF: &[u8] =
     include_bytes!("../../assets/fonts/space-grotesk-latin-700-normal.woff");
 
+/// Pacifico, the retro script the Sugarcube wordmark is set in (fontsource
+/// build, SIL Open Font License, see `assets/fonts/OFL-Pacifico.txt`).
+pub const PACIFICO_WOFF: &[u8] = include_bytes!("../../assets/fonts/pacifico-latin-400-normal.woff");
+
 /// Panel pixels per mockup canvas pixel.
 pub const K: f32 = 96.0 / 166.0;
 
 /// Every canvas size a screen may ask for: `fitPx` can produce any integer
 /// up to its maximum, and the largest fixed size is the 94 px result number.
 pub const CANVAS_SIZES: std::ops::RangeInclusive<u16> = 8..=94;
+
+/// Canvas sizes of the script face: the wordmark on the boot screen.
+pub const SCRIPT_SIZES: std::ops::RangeInclusive<u16> = 30..=36;
 
 /// Characters the screens draw. ▲ ▼ ← → • are drawn as shapes (Space
 /// Grotesk has no ▲ ▼; the mockup falls back to a system font for them).
@@ -122,7 +131,7 @@ fn kerning_pairs(sfnt: &[u8], chars: &[char]) -> Vec<(char, char, i32)> {
 }
 
 /// One font section per canvas size: header, glyph table, kerning, bitmaps.
-pub fn font_sections(sfnt: &[u8], weight: u16) -> Vec<(u16, Vec<u8>)> {
+pub fn font_sections(sfnt: &[u8], weight: u16, sizes: std::ops::RangeInclusive<u16>) -> Vec<(u16, Vec<u8>)> {
     let font = fontdue::Font::from_bytes(sfnt, fontdue::FontSettings::default()).expect("font parses");
     let units_per_em = font.units_per_em();
     let mut chars: Vec<char> = charset()
@@ -132,7 +141,7 @@ pub fn font_sections(sfnt: &[u8], weight: u16) -> Vec<(u16, Vec<u8>)> {
     chars.sort();
     let kerns = kerning_pairs(sfnt, &chars);
 
-    CANVAS_SIZES
+    sizes
         .map(|canvas_px| {
             let px = canvas_px as f32 * K;
             let q6 = |v: f32| (v * Q6).round() as i32;
@@ -282,13 +291,16 @@ pub fn build_pack(sections: Vec<Section>) -> Vec<u8> {
     out
 }
 
-/// The standard pack: Space Grotesk Bold at every size, plus the smoke sprites.
+/// The standard pack: Space Grotesk Bold at every size, the wordmark
+/// script, plus the smoke sprites.
 pub fn standard_pack() -> Vec<u8> {
     let sfnt = woff_to_sfnt(SPACE_GROTESK_BOLD_WOFF).expect("bundled font converts");
+    let script = woff_to_sfnt(PACIFICO_WOFF).expect("bundled script converts");
     let mut sections = vec![Section::Sprites(sprites())];
     sections.extend(
-        font_sections(&sfnt, 700)
+        font_sections(&sfnt, 700, CANVAS_SIZES)
             .into_iter()
+            .chain(font_sections(&script, SCRIPT_WEIGHT, SCRIPT_SIZES))
             .map(|(px, bytes)| Section::Font(px, bytes)),
     );
     build_pack(sections)
@@ -304,7 +316,10 @@ mod tests {
         let header = PackHeader::decode(pack[..HEADER_LEN].try_into().unwrap()).unwrap();
         assert_eq!(header.version, PACK_VERSION);
         assert_eq!(header.total_len as usize, pack.len());
-        assert_eq!(header.section_count as usize, 1 + CANVAS_SIZES.count());
+        assert_eq!(
+            header.section_count as usize,
+            1 + CANVAS_SIZES.count() + SCRIPT_SIZES.count()
+        );
         assert!(pack.len() < QSPI_CAPACITY as usize);
     }
 
