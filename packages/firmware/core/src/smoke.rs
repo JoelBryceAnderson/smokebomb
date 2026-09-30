@@ -43,11 +43,10 @@ const BILLS_PER_PUFF_PCT: usize = 30;
 /// half-width as a fraction of its length.
 const BILL_LEN: f32 = 0.62;
 const BILL_ASPECT: f32 = 0.5;
-/// Peak brightness of a bill's edge and body (0–255).
-const BILL_EDGE: f32 = 230.0;
-const BILL_BODY: f32 = 45.0;
-/// The inner frame and the seal, between the body and the edge.
-const BILL_INK: f32 = 150.0;
+/// A bill's paper (front, lit face-on) and ink, as 0–255 levels. Bills are
+/// drawn solid, over what is behind them, and shaded as they turn.
+const BILL_PAPER: f32 = 250.0;
+const BILL_INK: f32 = 60.0;
 /// Held smoke added per frame while shaking, at most.
 const SHAKE_SPAWN_PER_FRAME: usize = 14;
 /// Timing slack at a boundary frame (s): well under a frame, well over f32
@@ -726,12 +725,15 @@ impl Smoke {
         let alpha = fade_in * powf((1.0 - life_t).max(0.0), 0.5) * 0.9;
         let len = q.size * BILL_LEN;
         let angle = q.seed + q.life * (0.8 + q.seed % 1.0);
-        // Flutter: the bill turns over as it falls, so its width breathes.
-        let flip = 0.3 + 0.7 * libm::fabsf(cosf(q.seed * 3.0 + q.life * (2.5 + q.seed % 1.5)));
+        // Tumbling in 3D: it turns about its length (`turn`, negative when
+        // the back faces us) and pitches end over end, so it foreshortens
+        // both ways.
+        let turn = cosf(q.seed * 3.0 + q.life * (2.5 + q.seed % 1.5));
+        let pitch = 0.7 + 0.3 * libm::fabsf(cosf(q.seed * 5.0 + q.life * 1.7));
         let bill = Bill {
-            len,
+            len: len * pitch,
             angle,
-            flip,
+            turn,
             alpha,
         };
         stamp_bill(&mut frames[q.face.index()], q.face, q.p, &bill);
@@ -825,30 +827,35 @@ fn stamp(fb: &mut Framebuffer, sprite: &Sprite, face: Face, p: [f32; 3], radius:
 }
 
 /// A banknote to stamp: `len` canvas units from the centre to an end, turned
-/// by `angle`, its width scaled by `flip` (0–1), drawn at `alpha`.
+/// by `angle` in the plane and by `turn` (−1 to 1, the cosine of its roll)
+/// about its length, drawn at `alpha`.
 struct Bill {
     len: f32,
     angle: f32,
-    flip: f32,
+    turn: f32,
     alpha: f32,
 }
 
-/// Stamp a banknote centred on `p` (cube coordinates) on `face`, additively:
-/// a bright edge, an inner frame and a seal on a dim body, like the icon.
+/// Stamp a banknote centred on `p` (cube coordinates) on `face`: solid
+/// paper with dark ink for a frame and a seal, curled a little across its
+/// width and shaded by how squarely it faces us (dimmer edge-on and on its
+/// back), so it reads as a bill in the air rather than a drawing of one.
 fn stamp_bill(fb: &mut Framebuffer, face: Face, p: [f32; 3], bill: &Bill) {
-    if bill.alpha * BILL_EDGE < 0.5 || bill.len <= 0.0 {
+    if bill.alpha < 0.02 || bill.len <= 0.0 {
         return;
     }
     let b = &BASES[face.index()];
     let (cx, cy) = (dot(p, b.x) * 128.0, -dot(p, b.y) * 128.0);
     let (px, py) = (CENTER + cx * K, CENTER + cy * K);
-    let (l, w) = (bill.len * K, bill.len * K * BILL_ASPECT * bill.flip);
+    let squareness = libm::fabsf(bill.turn).max(0.12);
+    let (l, w) = (bill.len * K, bill.len * K * BILL_ASPECT * squareness);
     let (ca, sa) = (cosf(bill.angle), sinf(bill.angle));
+    // Face-on is bright, edge-on dim, and the back is darker than the front.
+    let shade = (0.55 + 0.45 * squareness) * if bill.turn < 0.0 { 0.62 } else { 1.0 };
     let y0 = libm::floorf(py - l).max(0.0) as usize;
     let y1 = (libm::ceilf(py + l).max(0.0) as usize).min(PANEL_HEIGHT);
     let x0 = libm::floorf(px - l).max(0.0) as usize;
     let x1 = (libm::ceilf(px + l).max(0.0) as usize).min(PANEL_WIDTH);
-    // Line widths in pixels, as fractions of each half-size.
     let edge_u = (1.0 / l).max(0.08);
     let edge_v = (1.0 / w.max(1.0)).max(0.08);
     for y in y0..y1 {
@@ -859,20 +866,15 @@ fn stamp_bill(fb: &mut Framebuffer, face: Face, p: [f32; 3], bill: &Bill) {
             if au > 1.0 || av > 1.0 {
                 continue;
             }
-            // The seal: a ring in the middle, a dot inside it.
+            // Curl: the bill bows along its length, brighter on the crest.
+            let curl = 1.0 - 0.35 * v * v + 0.15 * u;
             let r = sqrtf(u * u * 0.35 + v * v);
-            let seal = (0.42..0.55).contains(&r) || r < 0.14;
+            let seal = (0.36..0.55).contains(&r) || r < 0.18;
             let frame = (au > 0.78 && au < 0.78 + edge_u) || (av > 0.72 && av < 0.72 + edge_v);
-            let value = if au > 1.0 - edge_u || av > 1.0 - edge_v {
-                BILL_EDGE
-            } else if (frame && au < 0.78 + edge_u && av < 0.72 + edge_v) || (seal && av < 0.72) {
-                BILL_INK
-            } else {
-                BILL_BODY
-            } * bill.alpha;
-            if value >= 0.5 {
-                fb.add_pixel(x, y, (value + 0.5) as u8);
-            }
+            let border = au > 1.0 - edge_u || av > 1.0 - edge_v;
+            let inked = border || (frame && au < 0.78 + edge_u && av < 0.72 + edge_v) || (seal && av < 0.72);
+            let level = if inked { BILL_INK } else { BILL_PAPER * curl } * shade;
+            fb.blend(x, y, level, bill.alpha);
         }
     }
 }
