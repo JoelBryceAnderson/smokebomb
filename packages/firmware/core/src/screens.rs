@@ -5,14 +5,14 @@
 use core::fmt::Write as _;
 
 use heapless::{String, Vec};
-use libm::{cosf, floorf, powf, roundf, sinf, sqrtf};
+use libm::{cosf, fabsf, floorf, powf, roundf, sinf, sqrtf};
 use smokebomb_hal::AssetStore;
 use smokebomb_shared::types::MAX_POT_DICE;
 use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
 use crate::display::{DUD, FG};
 use crate::font::{fit_px, Align, Fonts, SCRIPT};
-use crate::gfx::{Painter, Style};
+use crate::gfx::{segment_distance, triangle_distance, Painter, Style};
 use crate::menu::{Draft, Page, Setup};
 use crate::nest::{ChargeView, ClockView, Label, NestFace, Screen};
 use crate::pigs::{throw_label, Locked, Outcome, Throw, TARGET};
@@ -481,24 +481,83 @@ fn draw_pot_tokens<A: AssetStore>(c: &mut Ctx<A>, values: &[u8], value: u8, alph
         let x = (i as f32 - (n as f32 - 1.0) / 2.0) * gap;
         match PotFace::from_raw(v) {
             PotFace::Keep => c.painter.fill_circle(x, y, sz * 0.13, style),
-            PotFace::Pot => {
-                let w = sz * 0.8;
-                let rim = y - sz * 0.05;
-                c.painter
-                    .stroke_polyline(&[(x - w * 0.55, rim), (x + w * 0.55, rim)], sz * 0.09, style);
-                c.painter
-                    .stroke_arc(x, rim, w * 0.45, 0.0, core::f32::consts::PI, sz * 0.09, style);
-                c.painter.fill_circle(x, y - sz * 0.32, sz * 0.11, style);
-            }
+            PotFace::Pot => draw_pot(c, x, y, sz, style),
             dir @ (PotFace::Left | PotFace::Right) => {
                 let d = if dir == PotFace::Right { 1.0 } else { -1.0 };
-                let (l, h) = (sz * 0.36, sz * 0.2);
-                let shaft = [(x - d * l, y), (x + d * l, y)];
-                let head = [(x + d * (l - h), y - h), (x + d * l, y), (x + d * (l - h), y + h)];
-                c.painter.stroke_paths(&[&shaft, &head], sz * 0.1, style);
+                draw_pass_arrow(c, x, y, sz, d, style);
             }
         }
     }
+}
+
+/// A bold arrow for passing a bill: a round-capped shaft into a solid,
+/// slightly rounded head, drawn as one shape so it glows and fades as one.
+fn draw_pass_arrow<A: AssetStore>(c: &mut Ctx<A>, x: f32, y: f32, sz: f32, d: f32, style: Style) {
+    let (l, hl, hw) = (sz * 0.44, sz * 0.36, sz * 0.27);
+    let (shaft_w, round) = (sz * 0.13, sz * 0.035);
+    let tip = x + d * (l - round);
+    let base = x + d * (l - hl);
+    let head = [(tip, y), (base, y - hw), (base, y + hw)];
+    let (a, b) = ((x - d * l + d * shaft_w / 2.0, y), (base + d * sz * 0.05, y));
+    let e = l + shaft_w;
+    c.painter
+        .shape((x - e, y - hw - round, x + e, y + hw + round), style, |px, py| {
+            let shaft = segment_distance(px, py, a, b) - shaft_w / 2.0;
+            shaft.min(triangle_distance(px, py, head) - round)
+        });
+}
+
+/// The pot: a round-bellied cauldron with handles and feet, and a coin
+/// dropping in.
+fn draw_pot<A: AssetStore>(c: &mut Ctx<A>, x: f32, y: f32, sz: f32, style: Style) {
+    const N: usize = 14;
+    const EXP: f32 = 0.8;
+    let (bw, bh) = (sz * 0.38, sz * 0.42);
+    let rim = y - sz * 0.02;
+    let line = sz * 0.08;
+    // The belly: a round-bottomed half-superellipse hanging from the rim.
+    let mut belly = [(0.0, 0.0); N + 1];
+    for (k, p) in belly.iter_mut().enumerate() {
+        let t = core::f32::consts::PI * k as f32 / N as f32;
+        let (cx, sy) = (cosf(t), sinf(t));
+        let fx = if cx < 0.0 { -powf(-cx, EXP) } else { powf(cx, EXP) };
+        *p = (x + bw * fx, rim + bh * powf(sy, EXP));
+    }
+    // Dim inside, like the bomb's.
+    let n = 2.0 / EXP;
+    let inner = Style::new(style.value, style.alpha * 0.22, 0.0);
+    c.painter.shape((x - bw, rim, x + bw, rim + bh), inner, |px, py| {
+        let (u, v) = (fabsf(px - x) / bw, ((py - rim) / bh).max(0.0));
+        let f = powf(powf(u, n) + powf(v, n), 1.0 / n) - 1.0;
+        (f * bw).max(rim - py)
+    });
+    let lip = bw + sz * 0.08;
+    let rim_line = [(x - lip, rim), (x + lip, rim)];
+    let ear = |s: f32| {
+        [
+            (x + s * bw * 0.98, rim + sz * 0.1),
+            (x + s * (bw + sz * 0.12), rim + sz * 0.13),
+            (x + s * (bw + sz * 0.12), rim + sz * 0.22),
+            (x + s * bw * 0.93, rim + sz * 0.25),
+        ]
+    };
+    let (ear_l, ear_r) = (ear(-1.0), ear(1.0));
+    // Feet splay out from the belly's underside.
+    let under = rim + bh * powf(1.0 - powf(0.5, n), 1.0 / n);
+    let foot = |s: f32| {
+        [
+            (x + s * bw * 0.5, under - line * 0.3),
+            (x + s * bw * 0.66, under + sz * 0.1),
+        ]
+    };
+    let (foot_l, foot_r) = (foot(-1.0), foot(1.0));
+    c.painter.stroke_paths(
+        &[&belly, &rim_line, &ear_l, &ear_r, &foot_l, &foot_r],
+        line,
+        style,
+    );
+    // The coin, on its way in.
+    c.painter.fill_circle(x, rim - sz * 0.3, sz * 0.13, style);
 }
 
 // ---------- Pig Toss ----------

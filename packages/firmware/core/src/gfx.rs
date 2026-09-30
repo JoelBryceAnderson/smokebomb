@@ -388,20 +388,7 @@ impl<'a> Painter<'a> {
             x1 = x1.max(x);
             y1 = y1.max(y);
         }
-        self.shape((x0, y0, x1, y1), style, |x, y| {
-            let mut d = f32::MAX;
-            for i in 0..3 {
-                d = d.min(segment_distance(x, y, p[i], p[(i + 1) % 3]));
-            }
-            let side = |a: (f32, f32), b: (f32, f32)| (b.0 - a.0) * (y - a.1) - (b.1 - a.1) * (x - a.0);
-            let s = [side(p[0], p[1]), side(p[1], p[2]), side(p[2], p[0])];
-            let inside = s.iter().all(|&v| v >= 0.0) || s.iter().all(|&v| v <= 0.0);
-            if inside {
-                -d
-            } else {
-                d
-            }
-        });
+        self.shape((x0, y0, x1, y1), style, |x, y| triangle_distance(x, y, p));
     }
 
     /// Rectangle outline centred on the edge, like canvas `strokeRect`.
@@ -413,11 +400,28 @@ impl<'a> Painter<'a> {
     }
 }
 
+/// Signed distance to a triangle (negative inside).
+pub fn triangle_distance(x: f32, y: f32, p: [(f32, f32); 3]) -> f32 {
+    let mut d = f32::MAX;
+    for i in 0..3 {
+        d = d.min(segment_distance(x, y, p[i], p[(i + 1) % 3]));
+    }
+    let side = |a: (f32, f32), b: (f32, f32)| (b.0 - a.0) * (y - a.1) - (b.1 - a.1) * (x - a.0);
+    let s = [side(p[0], p[1]), side(p[1], p[2]), side(p[2], p[0])];
+    let inside = s.iter().all(|&v| v >= 0.0) || s.iter().all(|&v| v <= 0.0);
+    if inside {
+        -d
+    } else {
+        d
+    }
+}
+
 fn sq(v: f32) -> f32 {
     v * v
 }
 
-fn segment_distance(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
+/// Distance from `(x, y)` to the segment `a`–`b`.
+pub fn segment_distance(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
     let (vx, vy) = (b.0 - a.0, b.1 - a.1);
     let len2 = vx * vx + vy * vy;
     let t = if len2 > 0.0 {
