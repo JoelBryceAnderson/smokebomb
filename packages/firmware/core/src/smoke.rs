@@ -10,6 +10,9 @@
 //! This began as a statement-for-statement port of the mockup, and a scenario
 //! started from the same generator state plays out the same way.
 
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
+
 use heapless::Vec;
 use libm::{cosf, powf, sinf, sqrtf};
 use smokebomb_hal::{AssetStore, Face, PANEL_HEIGHT, PANEL_WIDTH};
@@ -201,39 +204,75 @@ pub struct Smoke {
 }
 
 impl Smoke {
-    /// Load the sprites from the pack. Without them the die simulates smoke
-    /// but draws none.
-    pub fn load<A: AssetStore>(assets: &mut A, pack: &PackIndex, seed: u32) -> Self {
-        let mut sprites = [None; 4];
-        if let Some(section) = pack.sections(SectionKind::Sprites).next() {
-            let mut hdr = [0u8; SPRITES_HEADER_LEN];
-            if assets.read(section.offset, &mut hdr).is_ok() {
-                let count = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
-                for i in 0..count {
-                    let mut e = [0u8; SPRITE_ENTRY_LEN];
-                    let off = section.offset + (SPRITES_HEADER_LEN + i * SPRITE_ENTRY_LEN) as u32;
-                    if assets.read(off, &mut e).is_err() {
-                        break;
-                    }
-                    let entry = SpriteEntry::decode(&e);
-                    if let Some(slot) = sprites.get_mut(entry.kind as usize) {
-                        *slot = Some(Sprite::new(entry.value, entry.profile));
-                    }
-                }
-            }
+    /// Load the sprites from the pack into `slot`. Without them the die
+    /// simulates smoke but draws none.
+    ///
+    /// Writes in place: the particle store is ~30 KB, too big to build on a
+    /// small stack and move.
+    pub fn init<'a, A: AssetStore>(
+        slot: &'a mut MaybeUninit<Self>,
+        assets: &mut A,
+        pack: &PackIndex,
+        seed: u32,
+    ) -> &'a mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: every field is written once through a raw pointer and none
+        // is read before, so nothing uninitialised is referenced. The pattern
+        // in `_fields` fails to compile if a field is added and not listed.
+        unsafe {
+            addr_of_mut!((*p).particles).write(Vec::new());
+            addr_of_mut!((*p).sprites).write([None; 4]);
+            addr_of_mut!((*p).rng).write(SmokeRng::new(seed));
+            addr_of_mut!((*p).phase).write(Phase::Calm);
+            addr_of_mut!((*p).charge).write(0.0);
+            addr_of_mut!((*p).charge_cap).write(1.0);
+            addr_of_mut!((*p).up).write([0.0, 1.0, 0.0]);
+            addr_of_mut!((*p).reduced).write(false);
+            addr_of_mut!((*p).amount).write(Amount::Full);
+            addr_of_mut!((*p).money).write(false);
+            addr_of_mut!((*p).time).write(0.0);
         }
-        Self {
-            particles: Vec::new(),
-            sprites,
-            rng: SmokeRng::new(seed),
-            phase: Phase::Calm,
-            charge: 0.0,
-            charge_cap: 1.0,
-            up: [0.0, 1.0, 0.0],
-            reduced: false,
-            amount: Amount::Full,
-            money: false,
-            time: 0.0,
+        #[allow(unused_variables)]
+        fn _fields(s: Smoke) {
+            let Smoke {
+                particles,
+                sprites,
+                rng,
+                phase,
+                charge,
+                charge_cap,
+                up,
+                reduced,
+                amount,
+                money,
+                time,
+            } = s;
+        }
+        // SAFETY: all fields were written above.
+        let smoke = unsafe { slot.assume_init_mut() };
+        smoke.load_sprites(assets, pack);
+        smoke
+    }
+
+    fn load_sprites<A: AssetStore>(&mut self, assets: &mut A, pack: &PackIndex) {
+        let Some(section) = pack.sections(SectionKind::Sprites).next() else {
+            return;
+        };
+        let mut hdr = [0u8; SPRITES_HEADER_LEN];
+        if assets.read(section.offset, &mut hdr).is_err() {
+            return;
+        }
+        let count = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
+        for i in 0..count {
+            let mut e = [0u8; SPRITE_ENTRY_LEN];
+            let off = section.offset + (SPRITES_HEADER_LEN + i * SPRITE_ENTRY_LEN) as u32;
+            if assets.read(off, &mut e).is_err() {
+                break;
+            }
+            let entry = SpriteEntry::decode(&e);
+            if let Some(slot) = self.sprites.get_mut(entry.kind as usize) {
+                *slot = Some(Sprite::new(entry.value, entry.profile));
+            }
         }
     }
 
