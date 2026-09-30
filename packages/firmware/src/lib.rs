@@ -38,15 +38,33 @@ pub mod board {
 
     pub type Firmware = smokebomb_core::Firmware<Board>;
 
-    pub fn boot() -> smokebomb_hal::HalResult<Firmware> {
-        Firmware::new(smokebomb_hal_nrf54l15::peripherals())
+    use core::mem::MaybeUninit;
+    use core::ptr::addr_of_mut;
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    /// Where the firmware lives. It is ~165 KB and the main thread's stack
+    /// is 8 KB (`CONFIG_MAIN_STACK_SIZE`), so it can't be a local: it sits
+    /// in `.bss` and [`Firmware::init`] builds it in place.
+    static mut FIRMWARE: MaybeUninit<Firmware> = MaybeUninit::uninit();
+    static BOOTED: AtomicBool = AtomicBool::new(false);
+
+    /// Boots the firmware into its static slot. Only the first call gets it;
+    /// later calls fail with [`HalError::NotReady`](smokebomb_hal::HalError).
+    pub fn boot() -> smokebomb_hal::HalResult<&'static mut Firmware> {
+        if BOOTED.swap(true, Ordering::AcqRel) {
+            return Err(smokebomb_hal::HalError::NotReady);
+        }
+        // SAFETY: `BOOTED` lets only one caller past, once, so this is the
+        // only reference to `FIRMWARE` there will ever be.
+        let slot = unsafe { &mut *addr_of_mut!(FIRMWARE) };
+        Firmware::init(slot, smokebomb_hal_nrf54l15::peripherals())
     }
 
     /// Entry point exported to the Zephyr C application. Returns only if boot
     /// fails, with a negative error code.
     #[no_mangle]
     pub extern "C" fn smokebomb_main() -> i32 {
-        let Ok(mut fw) = boot() else {
+        let Ok(fw) = boot() else {
             return -1;
         };
         loop {

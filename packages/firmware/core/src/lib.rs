@@ -31,10 +31,13 @@ pub mod state;
 pub mod tips;
 pub mod ui;
 
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
+
 use heapless::Vec;
 use smokebomb_hal::{
     Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Magnetometer, Peripherals, Platform,
-    Power, Rng, SecureElement, Touch, FRAME_BYTES,
+    Power, Rng, SecureElement, Touch,
 };
 use smokebomb_shared::types::MAX_POT_DICE;
 use smokebomb_shared::{DieKind, SignedRoll};
@@ -170,57 +173,126 @@ pub struct Firmware<P: Platform> {
 }
 
 impl<P: Platform> Firmware<P> {
-    pub fn new(mut hw: Peripherals<P>) -> HalResult<Self> {
+    /// Boots the firmware and returns it by value. At ~150 KB that suits the
+    /// simulator and tests; on the board use [`Firmware::init`].
+    pub fn new(hw: Peripherals<P>) -> HalResult<Self> {
+        let mut slot = MaybeUninit::uninit();
+        Self::init(&mut slot, hw)?;
+        // SAFETY: `init` returned Ok, so it wrote every field.
+        Ok(unsafe { slot.assume_init() })
+    }
+
+    /// Boots the firmware into `slot`, building it in place. On the board
+    /// `slot` is a static: the frame buffers, smoke and fonts are far bigger
+    /// than the main thread's stack, so nothing big is built on the stack
+    /// and moved.
+    ///
+    /// On error `slot` is left uninitialised (nothing in it needs dropping).
+    pub fn init(slot: &mut MaybeUninit<Self>, mut hw: Peripherals<P>) -> HalResult<&mut Self> {
+        let p = slot.as_mut_ptr();
         let pack = PackIndex::load(&mut hw.assets);
-        let smoke = Smoke::load(&mut hw.assets, &pack, hw.rng.next_u32()?);
-        let fonts = Fonts::load(&mut hw.assets, &pack);
+        let seed = hw.rng.next_u32()?;
+        // SAFETY: each field below is written once through a raw pointer and
+        // none is read before `assume_init_mut`, so nothing uninitialised is
+        // referenced. The pattern in `_fields` fails to compile if a field is
+        // added and not listed there; add its write here too.
+        unsafe {
+            Smoke::init(&mut *addr_of_mut!((*p).smoke).cast(), &mut hw.assets, &pack, seed);
+            Fonts::init(&mut *addr_of_mut!((*p).fonts).cast(), &mut hw.assets, &pack);
+        }
         let roller = RollEngine::new(&mut hw.secure_element)?;
         let settings = Settings {
             device_id: menu::short_id(&hw.secure_element.serial()?),
             ..Settings::default()
         };
         hw.display.set_enabled(true)?;
-        Ok(Self {
-            hw,
-            sm: StateMachine::new(),
-            motion: MotionDetector::new(),
-            settings,
-            potato: Potato::new(),
-            pigs: Pigs::default(),
-            pig_clock: 0.0,
-            pig_land: 0.0,
-            pig_landed_ms: 0,
-            pig_z: pigfx::DepthBuffer::new(),
-            roller,
-            smoke,
-            pending_special: None,
-            last_tick_ms: None,
-            fonts,
-            ui: Ui::new(),
-            frames: [Framebuffer::new(); smokebomb_hal::FACE_COUNT],
-            layer: Layer::new(),
-            panel: [0; FRAME_BYTES],
-            up: None,
-            orientation: TextOrientation::new(),
-            gravity: orientation::Gravity::new(),
-            touch_since: None,
-            touch_disturbed: false,
-            touch_rested_ms: 0,
-            still_since: None,
-            tap_deliberate: false,
-            locked: None,
-            touch_face: Face::PosZ,
-            menu_hold_fired: false,
-            menu: None,
-            up_face: Face::PosY,
-            frozen: None,
-            last_roll: None,
-            docked: false,
-            nest: Nest::new(),
-            reduced_motion: false,
-            last_activity: 0,
-            asleep: false,
-        })
+        // SAFETY: as above. The pixel buffers are plain integers, so zeroed
+        // is what their `new()` gives.
+        unsafe {
+            addr_of_mut!((*p).frames).write_bytes(0, 1);
+            addr_of_mut!((*p).layer).write_bytes(0, 1);
+            addr_of_mut!((*p).panel).write_bytes(0, 1);
+            addr_of_mut!((*p).pig_z).write_bytes(0, 1);
+            addr_of_mut!((*p).hw).write(hw);
+            addr_of_mut!((*p).sm).write(StateMachine::new());
+            addr_of_mut!((*p).motion).write(MotionDetector::new());
+            addr_of_mut!((*p).settings).write(settings);
+            addr_of_mut!((*p).potato).write(Potato::new());
+            addr_of_mut!((*p).pigs).write(Pigs::default());
+            addr_of_mut!((*p).pig_clock).write(0.0);
+            addr_of_mut!((*p).pig_land).write(0.0);
+            addr_of_mut!((*p).pig_landed_ms).write(0);
+            addr_of_mut!((*p).roller).write(roller);
+            addr_of_mut!((*p).pending_special).write(None);
+            addr_of_mut!((*p).last_tick_ms).write(None);
+            addr_of_mut!((*p).ui).write(Ui::new());
+            addr_of_mut!((*p).up).write(None);
+            addr_of_mut!((*p).orientation).write(TextOrientation::new());
+            addr_of_mut!((*p).gravity).write(orientation::Gravity::new());
+            addr_of_mut!((*p).touch_since).write(None);
+            addr_of_mut!((*p).touch_disturbed).write(false);
+            addr_of_mut!((*p).touch_rested_ms).write(0);
+            addr_of_mut!((*p).still_since).write(None);
+            addr_of_mut!((*p).tap_deliberate).write(false);
+            addr_of_mut!((*p).locked).write(None);
+            addr_of_mut!((*p).touch_face).write(Face::PosZ);
+            addr_of_mut!((*p).menu_hold_fired).write(false);
+            addr_of_mut!((*p).menu).write(None);
+            addr_of_mut!((*p).up_face).write(Face::PosY);
+            addr_of_mut!((*p).frozen).write(None);
+            addr_of_mut!((*p).last_roll).write(None);
+            addr_of_mut!((*p).docked).write(false);
+            addr_of_mut!((*p).nest).write(Nest::new());
+            addr_of_mut!((*p).reduced_motion).write(false);
+            addr_of_mut!((*p).last_activity).write(0);
+            addr_of_mut!((*p).asleep).write(false);
+        }
+        #[allow(unused_variables)]
+        fn _fields<P: Platform>(f: Firmware<P>) {
+            let Firmware {
+                hw,
+                sm,
+                motion,
+                settings,
+                potato,
+                pigs,
+                pig_clock,
+                pig_land,
+                pig_landed_ms,
+                pig_z,
+                roller,
+                smoke,
+                pending_special,
+                last_tick_ms,
+                fonts,
+                ui,
+                frames,
+                layer,
+                panel,
+                up,
+                orientation,
+                gravity,
+                touch_since,
+                touch_disturbed,
+                touch_rested_ms,
+                still_since,
+                tap_deliberate,
+                locked,
+                touch_face,
+                menu_hold_fired,
+                menu,
+                up_face,
+                frozen,
+                last_roll,
+                docked,
+                nest,
+                reduced_motion,
+                last_activity,
+                asleep,
+            } = f;
+        }
+        // SAFETY: every field was written above.
+        Ok(unsafe { slot.assume_init_mut() })
     }
 
     /// The Nest: docking, guidance and its screens' state.
