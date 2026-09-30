@@ -163,6 +163,7 @@ async fn run_firmware(
     let mut menu_was_open = false;
     let mut last_nest = String::new();
     let mut last_inventory = fw.inventory();
+    let mut history = phone::RollLog::default();
     let dt = TICK_S;
 
     loop {
@@ -186,7 +187,7 @@ async fn run_firmware(
 
         // BLE writes from the phone, before the tick as the die drains them.
         while let Ok(req) = phone_rx.try_recv() {
-            phone::handle(&mut fw, &state, req);
+            phone::handle(&mut fw, &history, &state, req);
             // `handle` answered with the inventory already.
             last_inventory = fw.inventory();
         }
@@ -257,6 +258,7 @@ async fn run_firmware(
             .cloned();
         if let Some(roll) = &roll {
             last_counter = Some(roll.record.counter);
+            history.push(roll.clone());
             let _ = state
                 .out
                 .send(Outbound::event(protocol::Event::Roll(roll.into())));

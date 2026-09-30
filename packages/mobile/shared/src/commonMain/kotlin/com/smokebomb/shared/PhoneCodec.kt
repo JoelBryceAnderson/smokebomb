@@ -3,6 +3,7 @@ package com.smokebomb.shared
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
@@ -24,6 +25,9 @@ object PhoneCodec {
     fun setEnabledModes(modes: Set<ModeId>): String = """{"SetEnabledModes":${ModeId.maskOf(modes)}}"""
 
     fun setDie(kind: DieKind, count: Int): String = """{"SetDie":{"kind":"${kind.variant}","count":$count}}"""
+
+    /** Ask for the die's kept rolls from [sinceCounter] on; they come back as [DieMessage.HistoryItem]s. */
+    fun syncHistory(sinceCounter: Long): String = """{"SyncHistory":{"since_counter":$sinceCounter}}"""
 
     /** A message from the die, or null for one this app doesn't know. */
     fun decode(text: String): DieMessage? = runCatching {
@@ -48,6 +52,9 @@ object PhoneCodec {
                 )
             }
             "Roll" -> DieMessage.Roll(roll(body.jsonObject) ?: return null)
+            "HistoryItem" -> DieMessage.HistoryItem(
+                if (body is JsonNull) null else roll(body.jsonObject) ?: return null,
+            )
             else -> null
         }
     }.getOrNull()
@@ -78,4 +85,7 @@ sealed interface DieMessage {
     data class Hello(val firmwareVersion: String, val batteryPercent: Int) : DieMessage
     data class Inventory(val inventory: com.smokebomb.shared.Inventory) : DieMessage
     data class Roll(val roll: SignedRoll) : DieMessage
+
+    /** One kept roll in answer to a history sync; null marks the end. */
+    data class HistoryItem(val roll: SignedRoll?) : DieMessage
 }

@@ -11,6 +11,7 @@
 //! Messages are handled by the firmware loop between ticks, as the die's
 //! main loop drains BLE writes.
 
+use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -23,10 +24,33 @@ use smokebomb_hal::SecureElement;
 use smokebomb_hal_simulator::SimSecureElement;
 use smokebomb_shared::protocol::{DieToPhone, PhoneToDie};
 use smokebomb_shared::types::MAX_POT_DICE;
-use smokebomb_shared::{DieKind, LicensedItem};
+use smokebomb_shared::{DieKind, LicensedItem, SignedRoll};
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::AppState;
+
+/// How many rolls the simulator keeps for `SyncHistory`, as the die will
+/// keep its recent rolls in flash.
+pub const HISTORY_LEN: usize = 500;
+
+/// The rolls since the simulator started, oldest first, at most
+/// [`HISTORY_LEN`].
+#[derive(Debug, Default)]
+pub struct RollLog(VecDeque<SignedRoll>);
+
+impl RollLog {
+    pub fn push(&mut self, roll: SignedRoll) {
+        if self.0.len() == HISTORY_LEN {
+            self.0.pop_front();
+        }
+        self.0.push_back(roll);
+    }
+
+    /// The kept rolls from `since_counter` on, oldest first.
+    pub fn since(&self, since_counter: u32) -> impl Iterator<Item = &SignedRoll> {
+        self.0.iter().filter(move |r| r.record.counter >= since_counter)
+    }
+}
 
 /// What the firmware loop gets from connected phones.
 #[derive(Debug)]
@@ -85,7 +109,7 @@ pub fn send(state: &AppState, msg: &DieToPhone) {
 }
 
 /// Act on one request, as the die would on a BLE write.
-pub fn handle(fw: &mut board::Firmware, state: &AppState, req: PhoneRequest) {
+pub fn handle(fw: &mut board::Firmware, history: &RollLog, state: &AppState, req: PhoneRequest) {
     let msg = match req {
         PhoneRequest::Connected => {
             send(state, &hello(state));
@@ -122,8 +146,7 @@ pub fn handle(fw: &mut board::Firmware, state: &AppState, req: PhoneRequest) {
             }
         }
         PhoneToDie::SyncHistory { since_counter } => {
-            // The simulator keeps only the last roll.
-            if let Some(r) = fw.last_roll().filter(|r| r.record.counter >= since_counter) {
+            for r in history.since(since_counter) {
                 send(state, &DieToPhone::HistoryItem(Some(r.clone())));
             }
             send(state, &DieToPhone::HistoryItem(None));
@@ -190,7 +213,7 @@ mod tests {
     #[test]
     fn the_phone_turns_modes_off_and_hears_the_inventory() {
         let (mut fw, state, mut rx) = rig();
-        handle(&mut fw, &state, PhoneRequest::Connected);
+        handle(&mut fw, &RollLog::default(), &state, PhoneRequest::Connected);
         assert_eq!(
             *rx.try_recv().unwrap(),
             r#"{"Hello":{"firmware_version":[0,1,0],"battery_percent":78}}"#
@@ -200,7 +223,12 @@ mod tests {
             r#"{"Inventory":{"licensed":15,"enabled":15,"active":"Dice"}}"#
         );
 
-        handle(&mut fw, &state, msg(r#"{"SetEnabledModes":4}"#));
+        handle(
+            &mut fw,
+            &RollLog::default(),
+            &state,
+            msg(r#"{"SetEnabledModes":4}"#),
+        );
         assert_eq!(
             *rx.try_recv().unwrap(),
             r#"{"Inventory":{"licensed":15,"enabled":5,"active":"Dice"}}"#,
@@ -212,10 +240,16 @@ mod tests {
     #[test]
     fn the_phone_sets_the_dice() {
         let (mut fw, state, _rx) = rig();
-        handle(&mut fw, &state, msg(r#"{"SetDie":{"kind":"D6","count":3}}"#));
+        handle(
+            &mut fw,
+            &RollLog::default(),
+            &state,
+            msg(r#"{"SetDie":{"kind":"D6","count":3}}"#),
+        );
         assert_eq!(fw.settings().active(), (DieKind::D6, 3));
         handle(
             &mut fw,
+            &RollLog::default(),
             &state,
             msg(r#"{"SetDie":{"kind":"PassThePot","count":9}}"#),
         );
@@ -224,5 +258,64 @@ mod tests {
             (DieKind::PassThePot, 3),
             "at most three bills"
         );
+    }
+
+    fn roll(counter: u32) -> SignedRoll {
+        use smokebomb_shared::{DeviceSerial, RollRecord, SessionId};
+        SignedRoll {
+            record: RollRecord {
+                device: DeviceSerial([1; 9]),
+                session: SessionId::NONE,
+                counter,
+                uptime_ms: 1000 * counter as u64,
+                die: DieKind::D6,
+                values: [counter as u8 % 6 + 1].into_iter().collect(),
+                prev_hash: [0; 32],
+            },
+            signature: [counter as u8; 64],
+        }
+    }
+
+    #[test]
+    fn history_sync_sends_the_kept_rolls_from_the_counter_then_the_end() {
+        let (mut fw, state, mut rx) = rig();
+        let mut log = RollLog::default();
+        for c in 0..3 {
+            log.push(roll(c));
+        }
+        handle(
+            &mut fw,
+            &log,
+            &state,
+            msg(r#"{"SyncHistory":{"since_counter":1}}"#),
+        );
+        let got: Vec<DieToPhone> = std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|j| serde_json::from_str(&j).unwrap())
+            .collect();
+        assert_eq!(
+            got,
+            [
+                DieToPhone::HistoryItem(Some(roll(1))),
+                DieToPhone::HistoryItem(Some(roll(2))),
+                DieToPhone::HistoryItem(None),
+            ]
+        );
+        handle(
+            &mut fw,
+            &log,
+            &state,
+            msg(r#"{"SyncHistory":{"since_counter":9}}"#),
+        );
+        assert_eq!(*rx.try_recv().unwrap(), r#"{"HistoryItem":null}"#);
+    }
+
+    #[test]
+    fn the_log_keeps_the_latest_rolls() {
+        let mut log = RollLog::default();
+        for c in 0..HISTORY_LEN as u32 + 5 {
+            log.push(roll(c));
+        }
+        assert_eq!(log.since(0).count(), HISTORY_LEN);
+        assert_eq!(log.since(0).next().unwrap().record.counter, 5);
     }
 }

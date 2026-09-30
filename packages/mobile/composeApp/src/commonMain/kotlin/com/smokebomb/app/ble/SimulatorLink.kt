@@ -16,6 +16,7 @@ import io.ktor.websocket.readText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +24,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * A "die" that is the desktop simulator, reached over the network instead of
@@ -48,6 +52,10 @@ class SimulatorLink(val address: String, private val scope: CoroutineScope) : Bl
 
     private var session: DefaultClientWebSocketSession? = null
     private var reader: Job? = null
+
+    /** History items as they arrive; null ends a sync. */
+    private val historyItems = Channel<SignedRoll?>(Channel.UNLIMITED)
+    private val syncing = Mutex()
 
     /** There is nothing to scan for: the simulator is the one die in the list. */
     override fun startScan() {
@@ -99,8 +107,21 @@ class SimulatorLink(val address: String, private val scope: CoroutineScope) : Bl
         client.close()
     }
 
-    /** The simulator keeps only its last roll, which arrives live anyway. */
-    override suspend fun syncHistory(sinceCounter: Long): List<SignedRoll> = emptyList()
+    /**
+     * The simulator's kept rolls (its last 500) from [sinceCounter] on,
+     * oldest first. Gives up after [SYNC_TIMEOUT_MS] with what arrived.
+     */
+    override suspend fun syncHistory(sinceCounter: Long): List<SignedRoll> = syncing.withLock {
+        // Leftovers from a sync that timed out.
+        while (historyItems.tryReceive().isSuccess) Unit
+        val s = session ?: return emptyList()
+        s.send(Frame.Text(PhoneCodec.syncHistory(sinceCounter)))
+        val rolls = mutableListOf<SignedRoll>()
+        withTimeoutOrNull(SYNC_TIMEOUT_MS) {
+            while (true) rolls += historyItems.receive() ?: break
+        }
+        rolls
+    }
 
     override suspend fun setEnabledModes(modes: Set<ModeId>) = send(PhoneCodec.setEnabledModes(modes))
 
@@ -115,7 +136,10 @@ class SimulatorLink(val address: String, private val scope: CoroutineScope) : Bl
             is DieMessage.Hello -> _state.value = BleState.Connected(die, m.batteryPercent)
             is DieMessage.Inventory -> _inventory.value = m.inventory
             is DieMessage.Roll -> _rolls.tryEmit(m.roll)
+            is DieMessage.HistoryItem -> historyItems.trySend(m.roll)
             null -> Unit
         }
     }
 }
+
+private const val SYNC_TIMEOUT_MS = 10_000L

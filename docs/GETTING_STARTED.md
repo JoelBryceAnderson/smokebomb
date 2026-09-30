@@ -195,7 +195,9 @@ die's BLE messages to the simulator over a WebSocket (`/phone`, see
 [STORE.md](STORE.md#simulator-link)). On the **Die** tab, under *No die? Use
 the simulator*, enter the simulator's address and tap **Connect to
 simulator**. Then you can set the dice, turn modes on and off, and see each
-throw's signed roll arrive. Keep the simulator's browser page open to throw
+throw's signed roll arrive. The **History** tab lists every roll the
+simulator kept since it started (it syncs on connect), then adds new ones as
+they land. Keep the simulator's browser page open to throw
 the die and to watch the menu change.
 
 | App runs on | Start the simulator with | Address in the app |

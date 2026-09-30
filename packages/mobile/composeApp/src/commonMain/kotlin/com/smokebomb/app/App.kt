@@ -8,6 +8,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.smokebomb.app.ble.BleManager
 import com.smokebomb.app.ble.DieLinks
+import com.smokebomb.app.history.RollHistory
 import com.smokebomb.app.navigation.AppShell
 import com.smokebomb.app.network.ApiClient
 import com.smokebomb.app.network.StubApiClient
@@ -20,11 +21,12 @@ fun App(ble: BleManager, api: ApiClient = remember { StubApiClient() }) {
     val scope = rememberCoroutineScope()
     // Bluetooth, or the desktop simulator when the Die tab picks it.
     val links = remember(ble) { DieLinks(ble, scope) }
+    val history = remember(links) { RollHistory(links, scope) }
     SmokebombTheme {
         // TODO: persist onboarding completion (DataStore / NSUserDefaults).
         var onboarded by remember { mutableStateOf(false) }
         if (onboarded) {
-            AppShell(links = links, api = api)
+            AppShell(links = links, history = history, api = api)
         } else {
             OnboardingScreen(onFinished = { onboarded = true })
         }

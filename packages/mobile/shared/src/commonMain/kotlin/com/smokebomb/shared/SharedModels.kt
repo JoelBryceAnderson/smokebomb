@@ -106,6 +106,19 @@ data class Inventory(
     fun request(enabled: Set<ModeId>): Set<ModeId> = (enabled intersect licensed) + ModeId.DICE
 }
 
+/**
+ * [existing] plus the rolls in [incoming] it doesn't have yet, newest first.
+ * A roll is the same roll if it has the same die and signature, so a roll
+ * seen live and again in a history sync is kept once. Rolls sort by counter,
+ * then by uptime (a restarted simulator starts counting again).
+ */
+fun mergeRolls(existing: List<SignedRoll>, incoming: Collection<SignedRoll>): List<SignedRoll> {
+    val seen = existing.mapTo(HashSet()) { it.deviceSerial to it.signature }
+    val added = incoming.filter { seen.add(it.deviceSerial to it.signature) }
+    if (added.isEmpty()) return existing
+    return (existing + added).sortedWith(compareByDescending<SignedRoll> { it.counter }.thenByDescending { it.uptimeMs })
+}
+
 data class Device(
     val serial: String,
     val publicKey: String,
