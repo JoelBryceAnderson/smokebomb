@@ -16,6 +16,9 @@
 //! the nRF54L15 the QSPI flash can be memory-mapped (XIP), which makes that a
 //! plain memory read; otherwise add a glyph cache.
 
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
+
 use heapless::Vec;
 use libm::floorf;
 use smokebomb_hal::{AssetStore, PANEL_WIDTH};
@@ -74,8 +77,26 @@ struct Placed {
 const MAX_TEXT: usize = 32;
 
 impl Fonts {
-    pub fn load<A: AssetStore>(assets: &mut A, pack: &PackIndex) -> Self {
-        let mut fonts = Self::default();
+    /// Read the font table from the pack into `slot`, in place (the glyph
+    /// buffer is 4 KB).
+    pub fn init<'a, A: AssetStore>(
+        slot: &'a mut MaybeUninit<Self>,
+        assets: &mut A,
+        pack: &PackIndex,
+    ) -> &'a mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: both fields are written through raw pointers before any
+        // read, and a zeroed byte array is a valid one. The pattern in
+        // `_fields` fails to compile if a field is added and not listed.
+        let fonts = unsafe {
+            addr_of_mut!((*p).sizes).write(Vec::new());
+            addr_of_mut!((*p).glyph).write_bytes(0, 1);
+            slot.assume_init_mut()
+        };
+        #[allow(unused_variables)]
+        fn _fields(f: Fonts) {
+            let Fonts { sizes, glyph } = f;
+        }
         for s in pack.sections(SectionKind::Font) {
             let mut h = [0u8; FONT_HEADER_LEN];
             if assets.read(s.offset, &mut h).is_ok() {

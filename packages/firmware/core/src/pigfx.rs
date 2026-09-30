@@ -18,6 +18,8 @@
 //! the score) isn't cast again at all.
 
 use core::f32::consts::PI;
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
 
 use libm::{acosf, cosf, fabsf, sinf, sqrtf};
 
@@ -401,6 +403,21 @@ impl Canvas {
             cover: [0; PIXELS],
             bounds: Region::EMPTY,
             cast: None,
+        }
+    }
+
+    /// An empty canvas, built in `slot`: it's more than a small stack
+    /// should hold and move.
+    pub fn init(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: every field but `cast` is integers, for which zero is valid
+        // (and what an empty canvas holds); `cast` is written after, before
+        // anything reads it.
+        unsafe {
+            p.write_bytes(0, 1);
+            addr_of_mut!((*p).bounds).write(Region::EMPTY);
+            addr_of_mut!((*p).cast).write(None);
+            slot.assume_init_mut()
         }
     }
 
