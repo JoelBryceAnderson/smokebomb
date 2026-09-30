@@ -27,6 +27,7 @@ pub mod pigs;
 pub mod potato;
 pub mod roll;
 pub mod screens;
+pub mod session;
 pub mod smoke;
 pub mod state;
 pub mod tips;
@@ -56,6 +57,7 @@ use pigs::Pigs;
 use potato::{Potato, PotatoCommand};
 use roll::RollEngine;
 use screens::Ctx;
+use session::Sessions;
 use smoke::{Smoke, Special};
 use state::{Command, Event, Mode, StateMachine};
 use tips::{Frame, TipDir, TipTracker, TipUpdate};
@@ -118,7 +120,7 @@ pub struct Firmware<P: Platform> {
     motion: MotionDetector,
     settings: Settings,
     potato: Potato,
-    pigs: Pigs,
+    sessions: Sessions,
     /// Seconds into the pigs' tumble, and how far in they were when the
     /// die landed. Runs only while the die is shaken or thrown.
     pig_clock: f32,
@@ -224,7 +226,7 @@ impl<P: Platform> Firmware<P> {
             addr_of_mut!((*p).motion).write(MotionDetector::new());
             addr_of_mut!((*p).settings).write(settings);
             addr_of_mut!((*p).potato).write(Potato::new());
-            addr_of_mut!((*p).pigs).write(Pigs::default());
+            addr_of_mut!((*p).sessions).write(Sessions::default());
             addr_of_mut!((*p).pig_clock).write(0.0);
             addr_of_mut!((*p).pig_land).write(0.0);
             addr_of_mut!((*p).pig_landed_ms).write(0);
@@ -261,7 +263,7 @@ impl<P: Platform> Firmware<P> {
                 motion,
                 settings,
                 potato,
-                pigs,
+                sessions,
                 pig_clock,
                 pig_land,
                 pig_landed_ms,
@@ -371,17 +373,19 @@ impl<P: Platform> Firmware<P> {
         }
         self.sm.set_rolls(self.settings.play().rolls());
         self.potato = Potato::new();
-        // Saving the menu keeps a game going unless it left Pig Toss or the
-        // table changed size.
+        // A game in play carries on through the menu and other modes; it
+        // ends only from its End game page. Pig Toss needs one to play, so
+        // arriving without one (a fresh die, settings from the phone) starts
+        // one for the table as set.
         self.locked = None;
-        if self.settings.play() != PlayMode::PigToss || self.pigs.players() != self.settings.players {
-            self.pigs = Pigs::new(self.settings.players);
+        if self.settings.play() == PlayMode::PigToss && !self.sessions.live(ModeId::PigToss) {
+            self.sessions.start_pigs(self.settings.players);
         }
     }
 
     /// The Pig Toss game: scores, whose turn and the last throw.
     pub fn pigs(&self) -> &Pigs {
-        &self.pigs
+        &self.sessions.pigs
     }
 
     /// The Hot Potato round in play, if any.
@@ -619,7 +623,7 @@ impl<P: Platform> Firmware<P> {
         ];
         // A third word decides whether the pigs landed touching.
         let touching = pigs::smooch_from_random(self.hw.rng.next_u32()?);
-        let throw = self.pigs.throw(poses, touching);
+        let throw = self.sessions.pigs.throw(poses, touching);
         self.locked = None;
         self.pending_special = None;
         if self.settings.haptics_on() {
@@ -656,11 +660,11 @@ impl<P: Platform> Firmware<P> {
     fn bank_pigs(&mut self, now: u64) -> HalResult<()> {
         // A winning throw is still counting up: don't wipe it before the
         // win screen has had its moment.
-        if self.pigs.last().is_some_and(|t| t.won) && self.pig_win_t(now).is_none() {
+        if self.sessions.pigs.last().is_some_and(|t| t.won) && self.pig_win_t(now).is_none() {
             return Ok(());
         }
-        let players = self.pigs.players();
-        let locked = match self.pigs.bank() {
+        let players = self.sessions.pigs.players();
+        let locked = match self.sessions.pigs.bank() {
             pigs::Banked::Passed {
                 player,
                 points,
@@ -687,7 +691,7 @@ impl<P: Platform> Firmware<P> {
     fn pig_win_t(&self, now: u64) -> Option<f32> {
         let since_landing = now.saturating_sub(self.pig_landed_ms) as f32 / 1000.0;
         (self.settings.play() == PlayMode::PigToss
-            && self.pigs.last().is_some_and(|t| t.won)
+            && self.sessions.pigs.last().is_some_and(|t| t.won)
             && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. })
             && since_landing >= screens::pig_win::AT)
             .then_some(since_landing - screens::pig_win::AT)
@@ -1006,9 +1010,9 @@ impl<P: Platform> Firmware<P> {
                 self.potato = Potato::new();
                 self.locked = None;
                 let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
-                let game_live = self.settings.play() == PlayMode::PigToss && self.pigs.in_progress();
+                let live = self.sessions.live(ModeId::PigToss);
                 self.menu = Some(MenuSession {
-                    draft: Draft::new(&self.settings).with_game(game_live),
+                    draft: Draft::new(&self.settings).with_session(live),
                     frame: Frame::new(
                         self.touch_face,
                         up,
@@ -1060,6 +1064,14 @@ impl<P: Platform> Firmware<P> {
             Command::MenuClose { save } => {
                 if let Some(m) = self.menu.take() {
                     if save {
+                        // Ending a game, or setting up a new one, happens
+                        // only now: backing out of the menu leaves it be.
+                        if m.draft.ended {
+                            self.sessions.end(ModeId::PigToss);
+                        }
+                        if m.draft.set_up() {
+                            self.sessions.start_pigs(m.draft.players);
+                        }
                         m.draft.commit(&mut self.settings);
                         self.apply_settings();
                         self.apply_hardware_settings()?;
@@ -1132,8 +1144,12 @@ impl<P: Platform> Firmware<P> {
         let label = setup.label();
         // Between throws the Pig Toss label says whose go it is, or who won.
         let tokens = self.settings.tokens;
-        let pigs_up = self.pigs.winner().unwrap_or(self.pigs.current());
-        let pigs_won = self.pigs.winner().is_some();
+        let pigs_up = self
+            .sessions
+            .pigs
+            .winner()
+            .unwrap_or(self.sessions.pigs.current());
+        let pigs_won = self.sessions.pigs.winner().is_some();
         let battery = self.hw.power.battery()?.percent;
         let potato_view = if matches!(mode, Mode::Menu | Mode::Nest) {
             None
@@ -1147,15 +1163,15 @@ impl<P: Platform> Firmware<P> {
         // Pig Toss: the pigs tumble while the die is in the air, and settle
         // into their poses once it lands, for as long as the result is up.
         let since_landing = now.saturating_sub(self.pig_landed_ms) as f32 / 1000.0;
-        let players = self.pigs.players();
+        let players = self.sessions.pigs.players();
         // A winning throw's score gives way to the win screen.
         let pig_win = self.pig_win_t(now).and_then(|t| {
             let fade = (LOCKED_MS as f32 / 1000.0 - t).clamp(0.0, 1.5) / 1.5;
-            let winner = self.pigs.winner()?;
+            let winner = self.sessions.pigs.winner()?;
             (fade > 0.0).then(|| {
                 (
                     tokens[winner as usize],
-                    self.pigs.scores()[winner as usize],
+                    self.sessions.pigs.scores()[winner as usize],
                     t,
                     fade,
                 )
@@ -1167,7 +1183,8 @@ impl<P: Platform> Firmware<P> {
         } else if matches!(mode, Mode::Shaking | Mode::Airborne | Mode::Settling) {
             Some(pigfx::Scene::Tumbling(self.pig_clock))
         } else {
-            self.pigs
+            self.sessions
+                .pigs
                 .last()
                 .filter(|_| self.ui.showing_result(now))
                 .map(|t| pigfx::Scene::Settling {
@@ -1183,7 +1200,7 @@ impl<P: Platform> Firmware<P> {
         let pig_alpha = if matches!(mode, Mode::Shaking | Mode::Airborne | Mode::Settling) {
             1.0
         } else {
-            self.ui.result_dim(now) * screens::pig_win::score_fade(self.pigs.last(), since_landing)
+            self.ui.result_dim(now) * screens::pig_win::score_fade(self.sessions.pigs.last(), since_landing)
         };
         // A bank locking in: a padlock snaps shut and the score counts up.
         let locked = self
@@ -1203,12 +1220,16 @@ impl<P: Platform> Firmware<P> {
             orientation,
             last_roll,
             menu,
-            pigs,
+            sessions,
             fx,
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
-        let pigs_throw = if pigs_on { pigs.last().copied() } else { None };
+        let pigs_throw = if pigs_on {
+            sessions.pigs.last().copied()
+        } else {
+            None
+        };
         let has_result = if pigs_on {
             pigs_throw.is_some()
         } else {

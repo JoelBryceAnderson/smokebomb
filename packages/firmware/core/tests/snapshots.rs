@@ -859,11 +859,38 @@ fn menu_pig_setup() {
 
 #[test]
 fn menu_pig_end_game() {
-    // A Pig Toss game with points on the board: opening the menu doesn't end
-    // it, but choosing Dice and holding asks first; a tip backs out.
+    // With a Pig Toss game in play the menu opens on Mode, and End game sits
+    // where Players was. A hold there ends it and Players comes back.
+    let run = Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::PigToss);
+    run_timeline(
+        "menu-pig-end-game",
+        run,
+        &[9.45, 10.1, 11.5],
+        vec![
+            (8.1, Run::press),
+            (9.3, Run::release),
+            (9.5, |r| r.tip(TipDir::Left)),
+            (10.3, Run::press),
+            (11.25, Run::release),
+        ],
+    );
+}
+
+/// Apply `inputs` in order, then run on to `until`.
+fn play(run: &mut Run, mut inputs: Vec<(f64, Input)>, until: f64) {
+    inputs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (at, input) in inputs {
+        run.advance_to(at - 1.0 / FPS);
+        input(run);
+    }
+    run.advance_to(until);
+}
+
+#[test]
+fn a_pig_toss_game_survives_other_modes_until_it_is_ended() {
+    use smokebomb_core::menu::PlayMode;
     use smokebomb_core::pigs::Pose::*;
-    let mut run =
-        Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::PigToss);
+    let mut run = Run::with_world_and_modes().with_settings(|s| s.play = PlayMode::PigToss);
     run.world.as_mut().unwrap().set_next_landing(Face::PosZ);
     {
         let mut s = run.sim.lock();
@@ -872,39 +899,85 @@ fn menu_pig_end_game() {
         }
         s.rng_script.push_back(u32::MAX);
     }
-    run_timeline(
-        "menu-pig-end-game",
-        run,
-        &[20.2, 21.4, 22.2],
+    // Throw 20 and bank it.
+    play(
+        &mut run,
+        vec![(9.0, Run::shake), (10.0, Run::throw_release), (15.6, Run::tap)],
+        16.0,
+    );
+    assert_eq!(run.fw.pigs().scores(), &[20, 0]);
+    // Off to Dice: the menu opens on Mode, one tip up is Dice, hold saves.
+    play(
+        &mut run,
         vec![
-            (9.0, Run::shake),
-            (10.0, Run::throw_release),
             (16.1, Run::press),
             (17.3, Run::release),
-            (17.5, |r| r.tip(TipDir::Right)),
-            (18.1, |r| r.tip(TipDir::Up)),
-            (18.8, Run::press),
-            (19.75, Run::release),
-            (21.6, |r| r.tip(TipDir::Left)),
+            (17.6, |r| r.tip(TipDir::Up)),
+            (18.2, Run::press),
+            (19.15, Run::release),
         ],
+        20.0,
     );
+    assert_eq!(run.fw.settings().play, PlayMode::Dice);
+    assert_eq!(run.fw.pigs().scores(), &[20, 0], "kept while away");
+    // Back to Pig Toss: Dice opens on its count, Mode is one tip right, and
+    // Pig Toss one down. With the game in play a hold just saves.
+    play(
+        &mut run,
+        vec![
+            (21.0, Run::press),
+            (22.2, Run::release),
+            (22.5, |r| r.tip(TipDir::Right)),
+            (23.1, |r| r.tip(TipDir::Down)),
+            (23.8, Run::press),
+            (24.75, Run::release),
+        ],
+        25.5,
+    );
+    assert_eq!(run.fw.settings().play, PlayMode::PigToss);
+    assert_eq!(run.fw.pigs().scores(), &[20, 0], "picked up where it was");
+    // End it: Mode, one tip left to End game, hold, then set up two players.
+    play(
+        &mut run,
+        vec![
+            (26.5, Run::press),
+            (27.7, Run::release),
+            (28.0, |r| r.tip(TipDir::Left)),
+            (28.6, Run::press),
+            (29.55, Run::release),
+            (30.0, Run::press),
+            (30.95, Run::release),
+            (31.4, Run::press),
+            (32.35, Run::release),
+        ],
+        32.6,
+    );
+    assert!(run.fw.menu_draft().is_some(), "still setting up");
+    assert_eq!(run.fw.pigs().scores(), &[20, 0], "nothing ends until the save");
+    play(&mut run, vec![(32.8, Run::press), (33.75, Run::release)], 34.5);
+    assert!(run.fw.menu_draft().is_none());
+    assert_eq!(run.fw.pigs().scores(), &[0, 0], "a new game");
 }
 
 #[test]
 fn menu_pig_symbols() {
-    // Pig Toss opens on Players; a hold goes to Player 1's initial. Tip
-    // down from A through the six symbols.
+    // Pig Toss opens on Mode with its game in play: tip to End game and
+    // hold, hold on Players for Player 1's initial, then tip down from A
+    // through the six symbols.
     let mut times: Vec<(f64, &str)> = Vec::new();
     let names: Vec<String> = (1..=6).map(|i| format!("symbol{i}")).collect();
     let mut inputs: Vec<(f64, Input)> = vec![
         (8.1, Run::press),
         (9.3, Run::release),
-        (9.6, Run::press),
-        (10.55, Run::release),
+        (9.5, |r| r.tip(TipDir::Left)),
+        (10.1, Run::press),
+        (11.05, Run::release),
+        (11.3, Run::press),
+        (12.25, Run::release),
     ];
     for (i, name) in names.iter().enumerate() {
-        inputs.push((11.0 + 0.5 * i as f64, |r| r.tip(TipDir::Down)));
-        times.push((11.0 + 0.5 * i as f64 + 0.45, name));
+        inputs.push((12.6 + 0.5 * i as f64, |r| r.tip(TipDir::Down)));
+        times.push((12.6 + 0.5 * i as f64 + 0.45, name));
     }
     let run = Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::PigToss);
     run_scenario("menu-pig-symbols", run, &times, inputs);

@@ -1125,19 +1125,20 @@ pub fn draw_menu<A: AssetStore>(
         c.painter
             .fill_rect(46.0, -69.0, 16.0 * battery.clamp(0.0, 1.0), 6.0, status);
 
+        c.text(m.page.title(), 0.0, -40.0, 15, Style::new(FG, 0.75 * alpha, 0.0));
+        // End game has nothing to scroll.
+        if m.page != Page::EndGame {
+            let arrows = Style::new(FG, 0.55 * alpha, 0.0);
+            let (w, h) = (4.5, 4.0);
+            c.painter
+                .fill_triangle([(0.0, -22.0 - h), (w, -22.0 + h), (-w, -22.0 + h)], arrows);
+            c.painter
+                .fill_triangle([(-w, 46.0 - h), (w, 46.0 - h), (0.0, 46.0 + h)], arrows);
+        }
+
         if m.page == Page::EndGame {
             draw_end_game(c, alpha);
-            return;
-        }
-        c.text(m.page.title(), 0.0, -40.0, 15, Style::new(FG, 0.75 * alpha, 0.0));
-        let arrows = Style::new(FG, 0.55 * alpha, 0.0);
-        let (w, h) = (4.5, 4.0);
-        c.painter
-            .fill_triangle([(0.0, -22.0 - h), (w, -22.0 + h), (-w, -22.0 + h)], arrows);
-        c.painter
-            .fill_triangle([(-w, 46.0 - h), (w, 46.0 - h), (0.0, 46.0 + h)], arrows);
-
-        if m.page == Page::Settings {
+        } else if m.page == Page::Settings {
             let name = m.setting().0;
             let value = m.setting_value();
             c.text(
@@ -1167,9 +1168,7 @@ pub fn draw_menu<A: AssetStore>(
             Page::Token(i) => m.tokens[i as usize].as_symbol(),
             _ => None,
         } {
-            // A symbol, with its name under it.
-            draw_symbol(c, symbol, 0.0, 2.0, 38.0, Style::new(FG, alpha, 14.0));
-            c.text(symbol.name(), 0.0, 31.0, 12, Style::new(FG, 0.7 * alpha, 0.0));
+            draw_symbol(c, symbol, 0.0, 10.0, 46.0, Style::new(FG, alpha, 14.0));
         } else {
             let value = m.value();
             c.text(
@@ -1191,19 +1190,16 @@ pub fn draw_menu<A: AssetStore>(
     });
 }
 
-/// Saving would end the Pig Toss game in play: say so, and how to go on or
-/// back out.
+/// The End game page's body: what a hold does, and what it costs.
 fn draw_end_game<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
-    c.text("End game?", 0.0, -22.0, 28, Style::new(FG, alpha, 12.0));
+    c.text("Hold to end", 0.0, 4.0, 24, Style::new(FG, alpha, 12.0));
     c.text(
         "Scores won't be kept",
         0.0,
-        6.0,
-        14,
-        Style::new(FG, 0.75 * alpha, 0.0),
+        32.0,
+        13,
+        Style::new(FG, 0.7 * alpha, 0.0),
     );
-    c.text("Hold to end", 0.0, 38.0, 15, Style::new(FG, 0.9 * alpha, 6.0));
-    c.text("Tip to go back", 0.0, 58.0, 13, Style::new(FG, 0.6 * alpha, 0.0));
 }
 
 /// The hold ring: a rounded square just inside the lit area that fills

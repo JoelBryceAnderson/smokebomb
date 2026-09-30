@@ -7,12 +7,13 @@
 //! a [`Draft`]; a hold saves it and returns to the roll, and a throw,
 //! docking or 25 s without input leaves the setup as it was.
 //!
-//! Pig Toss asks a little more of a hold ([`Draft::held`]). Choosing Pig
-//! Toss, or holding on its Players page, walks through setting the game
-//! up: how many players, then each player's initial or symbol, one hold
-//! per step. Opening the menu doesn't end a game, and neither does saving
-//! new initials; a save that would (leaving Pig Toss, or a different number
-//! of players) first asks, and a second hold ends the game.
+//! Pig Toss asks a little more of a hold ([`Draft::held`]). A game in play
+//! is a session ([`crate::session`]) that the menu and other modes leave
+//! alone, so while one is live Pig Toss has an End game page where Players
+//! would be, and a hold there ends it. Without a game, choosing Pig Toss or
+//! holding on Players walks through setting one up: how many players, then
+//! each player's initial or symbol, one hold per step. Nothing ends or
+//! starts until the menu saves.
 
 use core::fmt::Write as _;
 
@@ -180,8 +181,8 @@ pub enum Page {
     Players,
     /// Pig Toss: player `n`'s (0-based) initial or symbol.
     Token(u8),
-    /// Pig Toss: saving would end the game in play. Hold to end it, tip to
-    /// go back.
+    /// Pig Toss while a game is in play: hold to end it. Players takes its
+    /// place once it's ended.
     EndGame,
     Settings,
 }
@@ -197,6 +198,9 @@ static NAMING: [Page; 1 + crate::pigs::MAX_PLAYERS as usize] = [
     Page::Token(4),
     Page::Token(5),
 ];
+
+/// Pig Toss' pages while a game is in play: End game where Players was.
+const PIGS_LIVE: &[Page] = &[Page::Mode, Page::EndGame, Page::Settings];
 
 impl Page {
     pub const fn title(self) -> &'static str {
@@ -215,7 +219,7 @@ impl Page {
                 4 => "Player 5",
                 _ => "Player 6",
             },
-            Page::EndGame => "End game?",
+            Page::EndGame => "End game",
             Page::Settings => "Settings",
         }
     }
@@ -461,14 +465,10 @@ pub struct Draft {
     pub device_id: u16,
     /// In Pig Toss' setup: the ring is its pages ([`NAMING`]).
     pub naming: bool,
-    /// The mode and table size saved when the menu opened, and whether a
-    /// Pig Toss game with something to lose is in play: what a save would
-    /// end.
-    pub saved_play: PlayMode,
-    pub saved_players: u8,
-    pub game_live: bool,
-    /// The page [`Page::EndGame`] goes back to.
-    pub back: Page,
+    /// A Pig Toss game is in play (and hasn't been ended in this draft).
+    pub live: bool,
+    /// The game in play was ended: saving ends it.
+    pub ended: bool,
 }
 
 /// What a hold in the menu does.
@@ -497,69 +497,67 @@ impl Draft {
             choices: s.choices,
             device_id: s.device_id,
             naming: false,
-            saved_play: s.play(),
-            saved_players: s.players,
-            game_live: false,
-            back: Page::Settings,
+            live: false,
+            ended: false,
         }
     }
 
-    /// The same draft, knowing whether a Pig Toss game is in play.
-    pub fn with_game(self, live: bool) -> Self {
-        Self {
-            game_live: live,
-            ..self
+    /// The same draft, knowing whether a Pig Toss game is in play. With
+    /// one, Pig Toss opens on Mode, a tip away from both Settings and End
+    /// game, so a stray hold doesn't land on ending it.
+    pub fn with_session(self, live: bool) -> Self {
+        let mut d = Self { live, ..self };
+        if live && d.play == PlayMode::PigToss && d.page == Page::Players {
+            d.page = Page::Mode;
         }
+        d
+    }
+
+    /// Saving this draft sets up a new Pig Toss game: it went through the
+    /// setup to the last player.
+    pub fn set_up(&self) -> bool {
+        self.play == PlayMode::PigToss && self.naming
     }
 
     /// The pages the draft can tip through.
     pub fn ring(&self) -> &'static [Page] {
         if self.naming {
             &NAMING[..1 + self.players as usize]
+        } else if self.play == PlayMode::PigToss && self.live && self.modes.len() > 1 {
+            PIGS_LIVE
         } else {
             self.play.ring(self.modes.len() > 1)
         }
     }
 
-    /// Saving this draft would end the Pig Toss game in play.
-    pub fn ends_game(&self) -> bool {
-        self.game_live
-            && self.saved_play == PlayMode::PigToss
-            && (self.play != PlayMode::PigToss || self.players != self.saved_players)
-    }
-
-    /// A hold: save, or in Pig Toss go on to the next step first. Choosing
-    /// Pig Toss goes to Players; holding on Players, or saving a new number
-    /// of players, goes to the first player's token; each token goes to the
-    /// next, and the last saves. A save that would end a game asks first.
+    /// A hold: save, or in Pig Toss go on to the next step first. On End
+    /// game the game ends and Players comes back. Without a game, Pig Toss
+    /// can't be saved until one is set up: a hold goes to Players, a hold
+    /// on Players to the first player's token, each token to the next, and
+    /// the last saves.
     pub fn held(self) -> Held {
         use crate::menu::Page::*;
-        if self.page == EndGame {
+        if self.play != PlayMode::PigToss {
             return Held::Save;
         }
         let mut next = self;
-        if self.play == PlayMode::PigToss {
-            let step = match self.page {
-                Token(i) if i + 1 < self.players => Some(Token(i + 1)),
-                Token(_) => None,
-                Players => Some(Token(0)),
-                _ if self.naming => None,
-                _ if self.saved_play != PlayMode::PigToss => Some(Players),
-                _ if self.players != self.saved_players => Some(Token(0)),
-                _ => None,
-            };
-            if let Some(page) = step {
-                next.page = page;
-                next.naming = true;
-                return Held::Next(next);
+        next.page = match self.page {
+            EndGame => {
+                next.live = false;
+                next.ended = true;
+                return Held::Next(Self {
+                    page: Players,
+                    ..next
+                });
             }
-        }
-        if self.ends_game() {
-            next.back = self.page;
-            next.page = EndGame;
-            return Held::Next(next);
-        }
-        Held::Save
+            Token(i) if i + 1 < self.players => Token(i + 1),
+            Token(_) => return Held::Save,
+            Players => Token(0),
+            _ if self.live || self.naming => return Held::Save,
+            _ => Players,
+        };
+        next.naming = true;
+        Held::Next(next)
     }
 
     /// Where the page sits in this mode's ring, for the page dots.
@@ -571,11 +569,6 @@ impl Draft {
     /// is the next value, down the previous. Values wrap around.
     pub fn tipped(self, dir: TipDir) -> Self {
         let mut next = self;
-        // Any tip backs out of ending the game.
-        if self.page == Page::EndGame {
-            next.page = self.back;
-            return next;
-        }
         let ring = self.ring();
         match dir {
             TipDir::Left => next.page = ring[step(self.page_index(), 1, ring.len())],
@@ -1144,6 +1137,7 @@ mod tests {
         let p3 = hold(p2);
         assert_eq!(p3.page, Page::Token(2));
         assert_eq!(p3.held(), Held::Save, "the last player saves");
+        assert!(p3.set_up() && !p3.ended);
         let mut s = Settings::default();
         p3.commit(&mut s);
         assert_eq!(s.play(), PlayMode::PigToss);
@@ -1154,7 +1148,7 @@ mod tests {
 
     #[test]
     fn setting_up_tips_through_players_and_tokens_only() {
-        let p1 = hold(Draft::new(&pigs(2)).with_game(false));
+        let p1 = hold(Draft::new(&pigs(2)));
         assert_eq!(p1.page, Page::Token(0));
         assert_eq!(p1.ring(), &[Page::Players, Page::Token(0), Page::Token(1)]);
         assert_eq!(p1.tipped(TipDir::Left).page, Page::Token(1));
@@ -1163,59 +1157,67 @@ mod tests {
     }
 
     #[test]
-    fn holding_on_players_in_pig_toss_goes_to_the_tokens() {
+    fn without_a_game_pig_toss_cant_be_saved_until_one_is_set_up() {
         let d = Draft::new(&pigs(2));
-        assert_eq!(d.page, Page::Players, "Pig Toss opens on Players");
+        assert_eq!(d.page, Page::Players);
         assert_eq!(hold(d).page, Page::Token(0));
-        // Anywhere else a hold saves as before.
-        assert_eq!(d.tipped(TipDir::Left).page, Page::Settings);
-        assert_eq!(d.tipped(TipDir::Left).held(), Held::Save);
+        // From Settings a hold goes to Players first.
+        let settings = d.tipped(TipDir::Left);
+        assert_eq!(settings.page, Page::Settings);
+        assert_eq!(hold(settings).page, Page::Players);
     }
 
     #[test]
-    fn a_new_table_size_saved_from_elsewhere_asks_for_tokens() {
-        let d = Draft::new(&pigs(2)).tipped(TipDir::Up).tipped(TipDir::Left);
-        assert_eq!((d.page, d.players), (Page::Settings, 3));
-        assert_eq!(hold(d).page, Page::Token(0));
+    fn a_game_in_play_has_end_game_instead_of_players() {
+        let d = Draft::new(&pigs(2)).with_session(true);
+        assert_eq!(d.page, Page::Mode, "opens a tip away from End game");
+        assert_eq!(d.ring(), &[Page::Mode, Page::EndGame, Page::Settings]);
+        assert_eq!(d.held(), Held::Save, "the menu doesn't end it");
+        assert_eq!(d.tipped(TipDir::Right).held(), Held::Save);
+        assert!(!d.set_up() && !d.ended);
+        // Up and down do nothing on End game.
+        let end = d.tipped(TipDir::Left);
+        assert_eq!(end.page, Page::EndGame);
+        assert_eq!(end.page.title(), "End game");
+        assert_eq!(end.tipped(TipDir::Up), end);
     }
 
     #[test]
-    fn the_menu_opens_mid_game_without_ending_it() {
-        let d = Draft::new(&pigs(2)).with_game(true);
-        assert!(!d.ends_game());
-        assert_eq!(d.tipped(TipDir::Left).held(), Held::Save, "settings save");
-        // New initials keep the game.
-        let last = hold(hold(d));
-        assert_eq!(last.page, Page::Token(1));
-        assert_eq!(last.held(), Held::Save);
-    }
-
-    #[test]
-    fn leaving_pig_toss_mid_game_asks_and_a_second_hold_ends_it() {
-        let d = Draft::new(&pigs(2)).with_game(true);
-        let dice = d.tipped(TipDir::Right).tipped(TipDir::Up);
+    fn ending_the_game_brings_players_back() {
+        let end = Draft::new(&pigs(2)).with_session(true).tipped(TipDir::Left);
+        let players = hold(end);
+        assert_eq!(players.page, Page::Players);
+        assert!(players.ended && !players.live);
+        assert_eq!(players.ring(), &[Page::Mode, Page::Players, Page::Settings]);
+        // A new game from here...
+        let p2 = hold(hold(players));
+        assert_eq!(p2.page, Page::Token(1));
+        assert_eq!(p2.held(), Held::Save);
+        assert!(p2.ended && p2.set_up());
+        // ...or off to Dice with the game ended and no new one.
+        let dice = players.tipped(TipDir::Right).tipped(TipDir::Up);
         assert_eq!(dice.play, PlayMode::Dice);
-        assert!(dice.ends_game());
-        let ask = hold(dice);
-        assert_eq!(ask.page, Page::EndGame);
-        assert_eq!(ask.held(), Held::Save, "hold again to end it");
-        // Any tip backs out, to where the hold was.
-        assert_eq!(ask.tipped(TipDir::Left).page, Page::Mode);
-        assert_eq!(ask.tipped(TipDir::Up).page, Page::Mode);
-        assert_eq!(ask.tipped(TipDir::Up).play, PlayMode::Dice);
-        // No game, or a finished one: nothing to ask.
-        let idle = Draft::new(&pigs(2)).tipped(TipDir::Right).tipped(TipDir::Up);
-        assert_eq!(idle.held(), Held::Save);
+        assert_eq!(dice.held(), Held::Save);
+        assert!(dice.ended && !dice.set_up());
     }
 
     #[test]
-    fn changing_the_table_size_mid_game_asks_after_the_tokens() {
-        let d = Draft::new(&pigs(2)).with_game(true).tipped(TipDir::Up);
-        let p3 = hold(hold(hold(d)));
-        assert_eq!(p3.page, Page::Token(2));
-        let ask = hold(p3);
-        assert_eq!(ask.page, Page::EndGame);
-        assert_eq!(ask.held(), Held::Save);
+    fn switching_modes_keeps_the_game() {
+        let d = Draft::new(&pigs(2)).with_session(true);
+        let dice = d.tipped(TipDir::Up);
+        assert_eq!(dice.play, PlayMode::Dice);
+        assert_eq!(dice.held(), Held::Save);
+        assert!(!dice.ended);
+        // Back to Pig Toss from Dice with the game still in play: no setup.
+        let mut s = pigs(2);
+        dice.commit(&mut s);
+        let back = Draft::new(&s)
+            .with_session(true)
+            .tipped(TipDir::Right)
+            .tipped(TipDir::Down);
+        assert_eq!(back.play, PlayMode::PigToss);
+        assert_eq!(back.held(), Held::Save);
+        assert!(!back.set_up());
     }
 
     #[test]

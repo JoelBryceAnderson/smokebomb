@@ -418,12 +418,6 @@ impl Pigs {
     fn advance(&mut self) {
         self.current = (self.current + 1) % self.players;
     }
-
-    /// A game with something to lose: points scored or thrown, and no
-    /// winner yet.
-    pub fn in_progress(&self) -> bool {
-        self.winner.is_none() && (self.turn > 0 || self.scores().iter().any(|&s| s > 0))
-    }
 }
 
 #[cfg(test)]
@@ -595,7 +589,6 @@ mod tests {
         assert_eq!(g.scores(), &[100, 0], "the turn goes into the score");
         assert_eq!(g.turn(), 0);
         assert_eq!(g.current(), 0, "the die stays with the winner");
-        assert!(!g.in_progress(), "a won game has nothing left to lose");
         g.throw([Back, Feet], false);
         assert_eq!(g.turn(), 0, "no throwing once it's won");
         assert_eq!(g.bank(), Banked::NewGame);
@@ -615,16 +608,6 @@ mod tests {
         g.throw([Nose, Nose], false);
         assert_eq!(g.winner(), Some(0), "60 banked + 40 thrown");
         assert_eq!(g.scores(), &[100, 10]);
-    }
-
-    #[test]
-    fn a_game_is_in_progress_once_anything_is_scored() {
-        let mut g = Pigs::new(2);
-        assert!(!g.in_progress());
-        g.throw([Back, Feet], false);
-        assert!(g.in_progress(), "points thrown but not banked");
-        g.bank();
-        assert!(g.in_progress());
     }
 
     #[test]
