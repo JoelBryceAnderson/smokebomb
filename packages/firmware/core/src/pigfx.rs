@@ -156,7 +156,7 @@ const fn part(centre: [f32; 3], radii: [f32; 3], tone: u8, gloss: f32, solid: bo
     }
 }
 
-const PARTS: [Part; 24] = [
+const PARTS: [Part; 20] = [
     // Barrel body, and the rump that makes it pear-shaped.
     part([0.05, 0.0, 0.0], [0.58, 0.44, 0.42], 215, 0.3, true),
     part([-0.32, -0.02, 0.0], [0.44, 0.43, 0.42], 215, 0.3, true),
@@ -174,8 +174,8 @@ const PARTS: [Part; 24] = [
     part([-0.36, -0.44, -0.23], [0.11, 0.16, 0.11], 200, 0.2, true),
     part([0.36, -0.6, 0.23], [0.115, 0.06, 0.115], 60, 0.4, true),
     part([0.36, -0.6, -0.23], [0.115, 0.06, 0.115], 60, 0.4, true),
-    // The start of the curly tail; the rest of the curl is at the end.
-    part([-0.78, 0.15, 0.0], [0.075, 0.075, 0.075], 205, 0.2, true),
+    // Tail.
+    part([-0.76, 0.13, 0.0], [0.075, 0.075, 0.075], 205, 0.2, true),
     // Eyes.
     part([0.88, 0.13, 0.22], [0.05, 0.055, 0.04], 10, 0.9, false),
     part([0.88, 0.13, -0.22], [0.05, 0.055, 0.04], 10, 0.9, false),
@@ -184,12 +184,6 @@ const PARTS: [Part; 24] = [
     // Rear hooves.
     part([-0.36, -0.6, 0.23], [0.115, 0.06, 0.115], 60, 0.4, true),
     part([-0.36, -0.6, -0.23], [0.115, 0.06, 0.115], 60, 0.4, true),
-    // The rest of the tail: one loop of a spiral seen from the side,
-    // curling up and forward, thinning to the tip.
-    part([-0.921, 0.209, 0.0], [0.07, 0.07, 0.07], 205, 0.2, true),
-    part([-0.98, 0.35, 0.0], [0.065, 0.065, 0.065], 205, 0.2, true),
-    part([-0.921, 0.491, 0.0], [0.06, 0.06, 0.06], 205, 0.2, true),
-    part([-0.78, 0.5, 0.0], [0.055, 0.055, 0.055], 205, 0.2, true),
 ];
 
 /// Where a pig is and how it is turned. `y` is the height of the pig's
