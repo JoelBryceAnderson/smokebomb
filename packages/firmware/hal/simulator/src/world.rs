@@ -258,6 +258,7 @@ impl World {
         }
         let front = self.viewer_right.cross(Vec3::Y);
         let to = Quat::from_axis_angle(front, -degrees.to_radians()) * self.pose.rotation;
+        self.tilt = None;
         self.turn = Some(Turn {
             start: self.time,
             duration: 0.3,
@@ -319,6 +320,7 @@ impl World {
         };
         let to = Quat::from_axis_angle(axis, angle) * self.pose.rotation;
         let duration = if self.reduced_motion { 0.15 } else { 0.42 };
+        self.tilt = None;
         self.turn = Some(Turn {
             start: self.time,
             duration,
@@ -349,6 +351,7 @@ impl World {
                     r
                 }
             };
+            self.tilt = None;
             self.spin = Some(Spin {
                 from: self.pose.rotation,
                 axis,
@@ -370,6 +373,7 @@ impl World {
         let quarter = std::f32::consts::FRAC_PI_2;
         let settled = (s.target / quarter).round() * quarter;
         let to = (Quat::from_axis_angle(s.axis, settled) * s.from).normalize();
+        self.tilt = None;
         self.turn = Some(Turn {
             start: self.time,
             duration: if self.reduced_motion { 0.12 } else { 0.25 },
@@ -388,6 +392,7 @@ impl World {
         if self.busy() || self.docked {
             return;
         }
+        self.tilt = None;
         self.turn = Some(Turn {
             start: self.time,
             duration: SNAP_S,
@@ -469,6 +474,7 @@ impl World {
         self.nest_under = false;
         let normal = self.pose.rotation * face_normal(face);
         let to = Quat::from_rotation_arc(normal.normalize(), Vec3::Y) * self.pose.rotation;
+        self.tilt = None;
         self.turn = Some(Turn {
             start: self.time,
             duration: 0.35,
@@ -502,6 +508,7 @@ impl World {
 
     /// Seat the die in the Nest, settling into `rot`.
     fn seat(&mut self, rot: Quat) {
+        self.tilt = None;
         self.spin = None;
         self.shake_start = None;
         self.throw_when_ready = false;
@@ -580,9 +587,9 @@ impl World {
     }
 
     /// In a motion that owns the pose: nothing else may start. A lean
-    /// counts, except to turning the die in the hand or leaning it again.
+    /// doesn't count: a tip, a spin or setting a face up takes over from it.
     fn busy(&self) -> bool {
-        self.moving() || self.tilt.is_some()
+        self.moving()
     }
 
     fn moving(&self) -> bool {
@@ -683,6 +690,7 @@ impl World {
                 .into_iter()
                 .max_by(|a, b| toward(*a).total_cmp(&toward(*b)))
                 .unwrap_or(Face::PosZ);
+            self.tilt = None;
             self.turn = Some(Turn {
                 start: self.time,
                 duration: 0.3,

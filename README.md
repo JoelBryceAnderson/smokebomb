@@ -23,7 +23,8 @@ the real firmware, the backend that verifies rolls, and the phone app.
   Pig Toss (two 3D pigs tumble across the screens instead of sugar and land
   in scored poses; set 2–6 players, tap to bank and pass the die), and Sugar
   Run (a maze over the whole cube: tilt to run it, eat the sugar, dodge the
-  ants; the map rolls over the die to keep you on top).
+  ants; the maze is fixed to the die, so you tip it to follow the runner over
+  the edges).
 - **On-die menu.** Press and hold a screen to open it, tip the die to move
   between pages and values, tap to edit a setting, hold to save. Turning
   several faces in one swipe steps several pages or values. Settings include

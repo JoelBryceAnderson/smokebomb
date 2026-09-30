@@ -2,15 +2,14 @@
 //!
 //! Every face is an 8×8 grid of cells, and the corridors carry on over the
 //! edges, so the maze has no border: it is the surface of the die. You chase
-//! sugar round it and ants chase you. Tilt the die to steer; the runner goes
-//! downhill, turning at the next opening like a joystick held over.
+//! sugar round it and ants chase you.
 //!
-//! The runner always stays on the top screen. When it crosses an edge the
-//! map rolls a quarter turn over the die, bringing the face it ran onto up
-//! ([`View`]). A cube's surface can only be turned onto itself in quarter
-//! turns, so the map rolls a face at a time rather than scrolling. The four
-//! side screens show the faces next to the runner's, so you see ants coming;
-//! the face underneath is the far side of the world.
+//! The maze is locked to the die, like a printed one: each screen always
+//! shows the same part of it. When the runner runs off the top screen onto
+//! a side, you tip the die to bring that screen up and follow it. Lean the
+//! runner's screen to steer; the runner goes downhill, turning at the next
+//! opening like a joystick held over. Each life starts on whichever screen
+//! is up, with the ants' nest on the one underneath.
 //!
 //! ```text
 //!   Ready ── shake ──▶ Playing ── caught, lives left ──▶ Caught ──▶ Playing
@@ -33,8 +32,7 @@
 use heapless::Vec;
 use smokebomb_hal::{Face, FACE_COUNT};
 
-use crate::gfx::Transform;
-use crate::orientation::{Quarter, BASES};
+use crate::orientation::BASES;
 
 /// Cells along a face's side.
 pub const N: usize = 8;
@@ -102,14 +100,6 @@ fn add(a: V3, b: V3) -> V3 {
 
 fn scale(a: V3, k: i32) -> V3 {
     a.map(|c| c * k)
-}
-
-fn cross(a: V3, b: V3) -> V3 {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
 }
 
 fn ivec(v: [f32; 3]) -> V3 {
@@ -472,14 +462,16 @@ pub enum RunEvent {
 
 pub type RunEvents = Vec<RunEvent, 8>;
 
-/// Where the runner starts, and where the ants' nest is: the far side.
-pub const START: Cell = Cell::new(Face::PosY, 3, 4);
-const NEST: [Cell; MAX_ANTS as usize] = [
-    Cell::new(Face::NegY, 3, 3),
-    Cell::new(Face::NegY, 4, 4),
-    Cell::new(Face::NegY, 4, 3),
-    Cell::new(Face::NegY, 3, 4),
-];
+/// Where the runner starts a life on the `top` face.
+pub const fn start_cell(top: Face) -> Cell {
+    Cell::new(top, 3, 4)
+}
+
+/// Ant `k`'s place in the nest, in the middle of the face under `top`.
+const fn nest_cell(top: Face, k: usize) -> Cell {
+    const AT: [(usize, usize); MAX_ANTS as usize] = [(3, 3), (4, 4), (4, 3), (3, 4)];
+    Cell::new(top.opposite(), AT[k].0, AT[k].1)
+}
 /// The corner each ant heads for while it wanders.
 const CORNERS: [V3; MAX_ANTS as usize] = [[9, 9, 9], [-9, -9, 9], [9, -9, -9], [-9, 9, -9]];
 /// Where the sugar lumps are, one per face.
@@ -492,6 +484,9 @@ pub struct Game {
     lumps: [u8; CELLS / 8],
     dots_left: u16,
     pub runner: Walker,
+    /// The face that's up, as of the last step: a life starts there, the
+    /// ants under it.
+    top: Face,
     ants: [Ant; MAX_ANTS as usize],
     ant_count: u8,
     phase: Phase,
@@ -515,9 +510,10 @@ impl Game {
             dots: [0; CELLS / 8],
             lumps: [0; CELLS / 8],
             dots_left: 0,
-            runner: Walker::at(START, Face::PosX),
+            runner: Walker::at(start_cell(Face::PosY), Face::PosX),
+            top: Face::PosY,
             ants: [Ant {
-                w: Walker::at(NEST[0], Face::PosX),
+                w: Walker::at(nest_cell(Face::PosY, 0), Face::PosX),
                 state: AntState::Nest { until: 0 },
                 scared: false,
             }; MAX_ANTS as usize],
@@ -599,14 +595,15 @@ impl Game {
     }
 
     /// Start a game, or a new one once it's over (the firmware does this
-    /// when a shake settles).
-    pub fn start(&mut self, now: u64, seed: u32) -> RunEvents {
+    /// when a shake settles), the runner on the `top` face.
+    pub fn start(&mut self, now: u64, seed: u32, top: Face) -> RunEvents {
         let mut out = RunEvents::new();
         if matches!(self.phase, Phase::Ready | Phase::Over { .. }) {
             self.rng = Rng::new(seed);
             self.score = 0;
             self.lives = LIVES;
             self.level = 1;
+            self.top = top;
             self.new_maze();
             self.new_round(now);
             let _ = out.push(RunEvent::Started);
@@ -647,10 +644,6 @@ impl Game {
         self.maze.generate(&mut self.rng);
         self.dots = [0xff; CELLS / 8];
         self.lumps = [0; CELLS / 8];
-        clear_bit(&mut self.dots, START);
-        for c in NEST {
-            clear_bit(&mut self.dots, c);
-        }
         for (face, (i, j)) in Face::ALL.into_iter().zip(LUMPS) {
             let c = Cell::new(face, i, j);
             clear_bit(&mut self.dots, c);
@@ -664,15 +657,20 @@ impl Game {
             .sum();
     }
 
-    /// Everyone back to the start for a new life or level.
+    /// Everyone back to the start for a new life or level: the runner on
+    /// the face that's up, the ants in the nest under it.
     fn new_round(&mut self, now: u64) {
-        let start_dir = ways(START.face())
+        let start = start_cell(self.top);
+        let start_dir = ways(self.top)
             .into_iter()
-            .find(|d| self.maze.open(START, *d))
+            .find(|d| self.maze.open(start, *d))
             .unwrap_or(Face::PosX);
-        self.runner = Walker::at(START, start_dir);
+        self.runner = Walker::at(start, start_dir);
+        if take_bit(&mut self.dots, start) {
+            self.dots_left -= 1;
+        }
         for (k, a) in self.ants.iter_mut().enumerate() {
-            let cell = NEST[k];
+            let cell = nest_cell(self.top, k);
             a.w = Walker::at(cell, ways(cell.face())[k % 4]);
             a.state = AntState::Nest {
                 until: now + NEST_FIRST_MS + NEST_GAP_MS * k as u64,
@@ -699,11 +697,12 @@ impl Game {
             .max(SCARE_MIN_MS)
     }
 
-    /// Advance by `dt` seconds. `want` is the way the die is tipped, as a
-    /// way through the maze (it may not lie along the runner's face while
-    /// the map is still rolling round to it; then it waits).
-    pub fn step(&mut self, now: u64, dt: f32, want: Option<Face>) -> RunEvents {
+    /// Advance by `dt` seconds. `want` is the way the runner's screen is
+    /// leaning (a way along it, or it's ignored), and `top` the face that's
+    /// up, where the next life starts.
+    pub fn step(&mut self, now: u64, dt: f32, want: Option<Face>, top: Face) -> RunEvents {
         let mut out = RunEvents::new();
+        self.top = top;
         match self.phase {
             Phase::Playing => {}
             Phase::Caught { since } if now.saturating_sub(since) >= CAUGHT_MS => {
@@ -863,7 +862,9 @@ impl Game {
     fn meet(&mut self, now: u64, out: &mut RunEvents) {
         let p = self.runner.pos();
         let n = self.ant_count as usize;
-        for (k, (a, home)) in self.ants[..n].iter_mut().zip(NEST).enumerate() {
+        let top = self.top;
+        for (k, a) in self.ants[..n].iter_mut().enumerate() {
+            let home = nest_cell(top, k);
             if a.state != AntState::Out {
                 continue;
             }
@@ -949,197 +950,6 @@ fn take_bit(bits: &mut [u8; CELLS / 8], c: Cell) -> bool {
     had
 }
 
-// ---------- the map on the die ----------
-
-/// A turn of the maze against the die, as a signed permutation matrix:
-/// maze direction = `M · die direction`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Turn([[i8; 3]; 3]);
-
-impl Turn {
-    pub const IDENTITY: Turn = Turn([[1, 0, 0], [0, 1, 0], [0, 0, 1]]);
-
-    pub fn apply(&self, v: V3) -> V3 {
-        let m = &self.0;
-        [0, 1, 2].map(|r| (0..3).map(|c| m[r][c] as i32 * v[c]).sum())
-    }
-
-    /// The inverse turn, applied: maze direction → die direction.
-    pub fn unapply(&self, v: V3) -> V3 {
-        let m = &self.0;
-        [0, 1, 2].map(|c| (0..3).map(|r| m[r][c] as i32 * v[r]).sum())
-    }
-
-    /// `self` after `q`: `(self · q) v = self (q v)`.
-    fn then(&self, q: &Turn) -> Turn {
-        let mut out = [[0i8; 3]; 3];
-        for (r, row) in out.iter_mut().enumerate() {
-            for (c, v) in row.iter_mut().enumerate() {
-                *v = (0..3).map(|k| self.0[r][k] * q.0[k][c]).sum();
-            }
-        }
-        Turn(out)
-    }
-
-    /// A quarter turn about the axis direction `a`: `v ↦ (a·v)a + a × v`.
-    fn quarter_about(a: V3) -> Turn {
-        let col = |e: V3| add(scale(a, dot(a, e)), cross(a, e));
-        let cols = [col([1, 0, 0]), col([0, 1, 0]), col([0, 0, 1])];
-        Turn([0, 1, 2].map(|r| [0, 1, 2].map(|c| cols[c][r] as i8)))
-    }
-
-    /// The maze face shown on the die's `face`.
-    pub fn maze_face(&self, face: Face) -> Face {
-        face_along(self.apply(axis(face)))
-    }
-
-    /// How the maze face's canvas sits on the die's `face` (a quarter
-    /// turn, as the text orientation is).
-    pub fn quarter(&self, face: Face) -> Quarter {
-        let (cos, sin) = self.cos_sin(face);
-        match (cos, sin) {
-            (1, _) => Quarter::R0,
-            (_, 1) => Quarter::R90,
-            (-1, _) => Quarter::R180,
-            _ => Quarter::R270,
-        }
-    }
-
-    fn cos_sin(&self, face: Face) -> (i32, i32) {
-        let f = &BASES[face.index()];
-        let g = &BASES[self.maze_face(face).index()];
-        let gx = ivec(g.x);
-        (dot(gx, self.apply(ivec(f.x))), -dot(gx, self.apply(ivec(f.y))))
-    }
-}
-
-/// How long the map takes to roll a quarter turn.
-pub const ROLL_MS: u64 = 280;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Roll {
-    from: Turn,
-    /// The die axis it turns about.
-    about: V3,
-    start: u64,
-}
-
-/// Which part of the maze each screen shows, keeping the runner's face on
-/// top.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct View {
-    turn: Turn,
-    roll: Option<Roll>,
-}
-
-impl Default for View {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl View {
-    pub const fn new() -> Self {
-        Self {
-            turn: Turn::IDENTITY,
-            roll: None,
-        }
-    }
-
-    /// Where the map is heading (settled, or once the roll ends).
-    pub fn turn(&self) -> Turn {
-        self.turn
-    }
-
-    pub fn rolling(&self) -> bool {
-        self.roll.is_some()
-    }
-
-    /// The quarter turn that brings maze face `target` a step toward the
-    /// die's `up` face, if it isn't there.
-    fn step_toward(turn: &Turn, up: Face, target: Face) -> Option<V3> {
-        let d = turn.unapply(axis(target));
-        let n = axis(up);
-        if d == n {
-            return None;
-        }
-        // On the far side: roll it round to a side first.
-        let side = if d == scale(n, -1) { axis(ways(up)[0]) } else { d };
-        Some(cross(n, side))
-    }
-
-    /// Keep maze face `target` (the runner's) on the die's `up` face,
-    /// rolling the map there a quarter turn at a time.
-    pub fn update(&mut self, now: u64, up: Face, target: Face) {
-        if self.roll.is_some_and(|r| now.saturating_sub(r.start) >= ROLL_MS) {
-            self.roll = None;
-        }
-        if self.roll.is_none() {
-            if let Some(about) = Self::step_toward(&self.turn, up, target) {
-                let from = self.turn;
-                self.turn = from.then(&Turn::quarter_about(about));
-                self.roll = Some(Roll {
-                    from,
-                    about,
-                    start: now,
-                });
-            }
-        }
-    }
-
-    /// Put maze face `target` on the die's `up` face at once.
-    pub fn snap(&mut self, up: Face, target: Face) {
-        self.roll = None;
-        while let Some(about) = Self::step_toward(&self.turn, up, target) {
-            self.turn = self.turn.then(&Turn::quarter_about(about));
-        }
-    }
-
-    /// The way through the maze that the die direction `d` stands for.
-    pub fn maze_way(&self, d: Face) -> Face {
-        face_along(self.turn.apply(axis(d)))
-    }
-
-    /// What the die's `face` shows at `now`: up to two maze faces, each with
-    /// the transform that lays its canvas onto the screen. While the map
-    /// rolls, faces round the roll slide one maze face off and the next on,
-    /// and the two on its axis turn.
-    pub fn layers(&self, now: u64, face: Face) -> Vec<(Face, Transform), 2> {
-        let mut out = Vec::new();
-        let settled = |t: &Turn| (t.maze_face(face), Transform::quarter(t.quarter(face)));
-        let Some(roll) = self.roll else {
-            let _ = out.push(settled(&self.turn));
-            return out;
-        };
-        let u = crate::ui::ease((now.saturating_sub(roll.start)) as f32 / ROLL_MS as f32);
-        let n = axis(face);
-        if dot(n, roll.about) != 0 {
-            let (c0, s0) = roll.from.cos_sin(face);
-            let (c1, s1) = self.turn.cos_sin(face);
-            let a0 = libm::atan2f(s0 as f32, c0 as f32);
-            let mut da = libm::atan2f(s1 as f32, c1 as f32) - a0;
-            if da > core::f32::consts::PI {
-                da -= core::f32::consts::TAU;
-            } else if da < -core::f32::consts::PI {
-                da += core::f32::consts::TAU;
-            }
-            let _ = out.push((roll.from.maze_face(face), Transform::rotated(a0 + da * u)));
-            return out;
-        }
-        // The content moves away from the face whose maze comes onto this
-        // one (`about × n`).
-        let f = &BASES[face.index()];
-        let v = scale(cross(roll.about, n), -1);
-        let (dx, dy) = (dot(v, ivec(f.x)) as f32, -dot(v, ivec(f.y)) as f32);
-        let w = 2.0 * HALF;
-        let (old, new) = (settled(&roll.from), settled(&self.turn));
-        let _ = out.push((old.0, old.1.offset(dx * w * u, dy * w * u)));
-        let back = -(1.0 - u) * w;
-        let _ = out.push((new.0, new.1.offset(dx * back, dy * back)));
-        out
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1171,11 +981,12 @@ mod tests {
     #[test]
     fn four_steps_over_an_edge_come_round_the_die() {
         // 32 steps straight on is once round the die.
-        let mut w = (START, Face::PosX);
+        let start = start_cell(Face::PosY);
+        let mut w = (start, Face::PosX);
         for _ in 0..4 * N {
             w = w.0.step(w.1);
         }
-        assert_eq!(w, (START, Face::PosX));
+        assert_eq!(w, (start, Face::PosX));
     }
 
     fn maze(seed: u32) -> Maze {
@@ -1207,76 +1018,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_quarter_turn_is_a_rotation() {
-        for f in Face::ALL {
-            let q = Turn::quarter_about(axis(f));
-            assert_eq!(q.apply(axis(f)), axis(f));
-            let four = q.then(&q).then(&q).then(&q);
-            assert_eq!(four, Turn::IDENTITY);
-        }
-    }
-
-    #[test]
-    fn the_view_keeps_the_runners_face_on_top() {
-        for up in Face::ALL {
-            for target in Face::ALL {
-                let mut v = View::new();
-                v.snap(up, target);
-                assert_eq!(v.turn().maze_face(up), target);
-                // Rolled one step at a time it gets there too, in at most two.
-                let mut v = View::new();
-                let mut now = 0;
-                for _ in 0..3 {
-                    v.update(now, up, target);
-                    now += ROLL_MS;
-                }
-                assert_eq!(v.turn().maze_face(up), target, "{up:?} {target:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn neighbouring_screens_show_neighbouring_maze_faces() {
-        // Whatever the turn, a die edge shows a maze edge, lined up: the
-        // cell by the edge on one screen steps onto the cell by the edge on
-        // the other.
-        let mut v = View::new();
-        v.snap(Face::PosZ, Face::NegX);
-        let t = v.turn();
-        for f in Face::ALL {
-            let g = t.maze_face(f);
-            for d in ways(f) {
-                assert_eq!(t.maze_face(d), face_along(t.apply(axis(d))));
-                let way = v.maze_way(d);
-                assert!(slot(g, way).is_some());
-                assert_eq!(t.maze_face(d), way, "the screen that way shows the maze that way");
-            }
-        }
-    }
-
-    #[test]
-    fn layers_line_up_with_the_turn() {
-        let mut v = View::new();
-        v.snap(Face::PosY, Face::PosY);
-        // A cell's canvas position, laid onto its screen, points the same way
-        // in the die as the cell does.
-        for f in Face::ALL {
-            let layers = v.layers(0, f);
-            let (g, xf) = layers[0];
-            let c = Cell::new(g, 7, 3);
-            let (x, y) = c.canvas();
-            let (px, py) = xf.forward(x, y);
-            let b = &BASES[f.index()];
-            let die = v.turn().unapply(c.pos());
-            let (ex, ey) = (dot(die, ivec(b.x)) as f32, -dot(die, ivec(b.y)) as f32);
-            assert!((px - 48.0) * ex >= 0.0 && (py - 48.0) * ey >= 0.0, "{f:?}");
-        }
-    }
-
     fn game() -> (Game, u64) {
         let mut g = Game::new(3);
-        g.start(0, 1234);
+        g.start(0, 1234, Face::PosY);
         (g, 0)
     }
 
@@ -1289,7 +1033,7 @@ mod tests {
         for _ in 0..60 {
             now += 16;
             dots += g
-                .step(now, 1.0 / 60.0, None)
+                .step(now, 1.0 / 60.0, None, Face::PosY)
                 .iter()
                 .filter(|e| **e == RunEvent::Dot)
                 .count();
@@ -1303,9 +1047,9 @@ mod tests {
     fn the_runner_turns_when_asked_and_reverses_at_once() {
         let (mut g, _) = game();
         let back = g.runner.dir.opposite();
-        g.step(16, 0.2, None);
+        g.step(16, 0.2, None, Face::PosY);
         assert!(g.runner.moving);
-        g.step(32, 0.0, Some(back));
+        g.step(32, 0.0, Some(back), Face::PosY);
         assert_eq!(g.runner.dir, back);
     }
 
@@ -1315,12 +1059,12 @@ mod tests {
         let out = |g: &Game| g.ants().iter().filter(|a| a.state == AntState::Out).count();
         while now < NEST_FIRST_MS + 100 {
             now += 16;
-            g.step(now, 1.0 / 60.0, None);
+            g.step(now, 1.0 / 60.0, None, Face::PosY);
         }
         assert_eq!(out(&g), 1);
         while now < NEST_FIRST_MS + 2 * NEST_GAP_MS + 100 && g.phase() == Phase::Playing {
             now += 16;
-            g.step(now, 1.0 / 60.0, None);
+            g.step(now, 1.0 / 60.0, None, Face::PosY);
         }
         assert!(g.phase() != Phase::Playing || out(&g) == 3);
     }
@@ -1328,14 +1072,14 @@ mod tests {
     #[test]
     fn standing_still_the_runner_is_caught_and_the_game_ends() {
         let mut g = Game::new(4);
-        g.start(0, 99);
+        g.start(0, 99, Face::PosY);
         let mut now = 0;
         let mut caught = 0;
         let mut over = false;
         // Walk into the first wall and stay there.
         while now < 600_000 && !over {
             now += 16;
-            for e in g.step(now, 1.0 / 60.0, None) {
+            for e in g.step(now, 1.0 / 60.0, None, Face::PosY) {
                 caught += (e == RunEvent::Caught) as u32;
                 over |= e == RunEvent::GameOver;
             }
@@ -1344,8 +1088,26 @@ mod tests {
         assert_eq!(caught, LIVES as u32);
         assert!(matches!(g.phase(), Phase::Over { .. }));
         // A shake starts again.
-        assert_eq!(g.start(now, 5).as_slice(), &[RunEvent::Started]);
+        assert_eq!(g.start(now, 5, Face::PosY).as_slice(), &[RunEvent::Started]);
         assert_eq!(g.lives(), LIVES);
+    }
+
+    #[test]
+    fn each_life_starts_on_the_face_that_is_up() {
+        let mut g = Game::new(2);
+        g.start(0, 3, Face::PosZ);
+        assert_eq!(g.runner.cell.face(), Face::PosZ);
+        assert!(
+            g.ants().iter().all(|a| a.w.cell.face() == Face::NegZ),
+            "nest underneath"
+        );
+        assert!(!g.has_dot(g.runner.cell), "the start's crystal is taken");
+        // Caught, with the die turned since: the next life is on the new top.
+        g.phase = Phase::Caught { since: 0 };
+        g.step(CAUGHT_MS, 0.0, None, Face::NegX);
+        assert_eq!(g.phase(), Phase::Playing);
+        assert_eq!(g.runner.cell.face(), Face::NegX);
+        assert!(g.ants().iter().all(|a| a.w.cell.face() == Face::PosX));
     }
 
     #[test]
@@ -1353,7 +1115,7 @@ mod tests {
         let (mut g, mut now) = game();
         while g.ants().iter().all(|a| a.state != AntState::Out) {
             now += 16;
-            g.step(now, 1.0 / 60.0, None);
+            g.step(now, 1.0 / 60.0, None, Face::PosY);
         }
         // Put the runner by a lump, then an ant right behind it.
         let lump = Cell::new(Face::PosY, LUMPS[2].0, LUMPS[2].1);
@@ -1368,12 +1130,12 @@ mod tests {
             t: 0.9,
             moving: true,
         };
-        let out = g.step(now + 16, 0.05, None);
+        let out = g.step(now + 16, 0.05, None, Face::PosY);
         assert!(out.contains(&RunEvent::Lump));
         let k = g.ants().iter().position(|a| a.state == AntState::Out).unwrap();
         assert!(g.ants[k].scared);
         g.ants[k].w = Walker::at(g.runner.cell, g.runner.dir);
-        let out = g.step(now + 32, 0.0, None);
+        let out = g.step(now + 32, 0.0, None, Face::PosY);
         assert!(out.contains(&RunEvent::AteAnt));
         assert_eq!(g.phase(), Phase::Playing);
         assert!(matches!(g.ants[k].state, AntState::Nest { .. }));
@@ -1382,10 +1144,10 @@ mod tests {
     #[test]
     fn a_pause_holds_everything() {
         let (mut g, _) = game();
-        g.step(100, 0.1, None);
+        g.step(100, 0.1, None, Face::PosY);
         let r = g.runner;
         g.pause();
-        g.step(200, 0.1, None);
+        g.step(200, 0.1, None, Face::PosY);
         assert_eq!(g.runner, r);
         g.resume(4_900);
         assert_eq!(g.phase(), Phase::Playing);

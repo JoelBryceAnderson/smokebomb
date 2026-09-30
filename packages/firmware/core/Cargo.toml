@@ -15,5 +15,6 @@ smokebomb-shared.workspace = true
 
 [dev-dependencies]
 smokebomb-hal-simulator.workspace = true
+glam.workspace = true
 p256.workspace = true
 png.workspace = true

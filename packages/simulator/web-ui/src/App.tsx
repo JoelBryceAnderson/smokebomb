@@ -117,6 +117,43 @@ export function App() {
     return yOf.indexOf(Math.min(...yOf));
   };
 
+  /** The face whose normal points most nearly along `dir` (world) in the current pose. */
+  const faceToward = (dir: [number, number, number]) => {
+    const q = poseRef.current?.rotation ?? [0, 0, 0, 1];
+    const normals: [number, number, number][] = [
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ];
+    const along = normals.map((n) => {
+      const [x, y, z, w] = q;
+      // q · n · q⁻¹, dotted with dir.
+      const [nx, ny, nz] = n;
+      const tx = 2 * (y * nz - z * ny);
+      const ty = 2 * (z * nx - x * nz);
+      const tz = 2 * (x * ny - y * nx);
+      const v = [nx + w * tx + (y * tz - z * ty), ny + w * ty + (z * tx - x * tz), nz + w * tz + (x * ty - y * tx)];
+      return v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2];
+    });
+    return along.indexOf(Math.max(...along));
+  };
+
+  /** Tip the die so its side toward `[right, away]` (as the camera sees it) comes up. */
+  const rollUp = (right: number, away: number) => {
+    const r = die.current?.viewerRight() ?? [1, 0, 0];
+    // Toward the viewer: right × up.
+    const front: [number, number, number] = [-r[2], 0, r[0]];
+    const dir: [number, number, number] = [0, 1, 2].map((i) => r[i] * right - front[i] * away) as [
+      number,
+      number,
+      number,
+    ];
+    send({ type: "place_face_up", face: faceToward(dir) });
+  };
+
   const placeInNest = () =>
     send({ type: "place_in_nest", face: nestFace < 0 ? currentDownFace() : nestFace, quarters: nestQuarters });
 
@@ -162,6 +199,12 @@ export function App() {
     const onDown = (e: KeyboardEvent) => {
       if (!isLean(e)) return;
       e.preventDefault();
+      if (e.shiftKey) {
+        // Shift: tip that side up instead (following Sugar Run's runner over an edge).
+        const l = LEANS.find((l) => l.key === e.code);
+        if (l && !e.repeat) rollUp(l.lean[0], l.lean[1]);
+        return;
+      }
       lean(e.code, true);
     };
     const onUp = (e: KeyboardEvent) => {
@@ -176,6 +219,7 @@ export function App() {
       window.removeEventListener("keyup", onUp);
       window.removeEventListener("blur", onBlur);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lean]);
 
   useEffect(() => {
@@ -237,7 +281,7 @@ export function App() {
         <p className="hint">
           {menuOpen
             ? "Menu: swipe or use the tip pad to turn to the next screen · hold F and drag to turn several · tap to change a setting · hold to save"
-            : "Drag to turn the die · press and hold a face to touch it · arrow keys tip it · hold W A S D to lean it"}
+            : "Drag to turn the die · press and hold a face to touch it · arrow keys tip it · hold W A S D to lean it, Shift to tip that side up"}
         </p>
       </main>
 
@@ -298,7 +342,8 @@ export function App() {
           <h2>Lean in the hand</h2>
           <p className="muted">
             Hold to tip the die about 20° and keep it there; let go and it levels again. Sugar Run steers by
-            this: the runner heads for the lowered side. Keys W A S D work too.
+            this: the runner heads for the lowered side of its screen. Keys W A S D work too, and Shift+W A S D
+            tips that side's screen up, to follow the runner over an edge.
           </p>
           <div className="tip-pad">
             {LEANS.map(({ key, dir, arrow, what }) => (

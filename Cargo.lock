@@ -1704,6 +1704,7 @@ dependencies = [
 name = "smokebomb-core"
 version = "0.1.0"
 dependencies = [
+ "glam",
  "heapless",
  "libm",
  "p256",

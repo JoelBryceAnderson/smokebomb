@@ -1,11 +1,11 @@
 //! Sugar Run end to end: the firmware on the simulator HAL, with the die
 //! moved by the simulator's world model.
 
-use smokebomb_core::maze::Phase;
+use smokebomb_core::maze::{self, Phase};
 use smokebomb_core::menu::{PlayMode, Settings};
 use smokebomb_core::Firmware;
 use smokebomb_hal::Face;
-use smokebomb_hal_simulator::world::{World, DEFAULT_VIEWER_RIGHT};
+use smokebomb_hal_simulator::world::{face_normal, World, DEFAULT_VIEWER_RIGHT};
 use smokebomb_hal_simulator::{SimHandle, SimPlatform};
 
 const FPS: f64 = 60.0;
@@ -20,6 +20,11 @@ struct Rig {
 
 impl Rig {
     fn new() -> Self {
+        Self::with_maze(1)
+    }
+
+    /// The maze is drawn from the TRNG's next word: `seed`.
+    fn with_maze(seed: u32) -> Self {
         let sim = SimHandle::new();
         sim.lock().manual_time_ms = Some(0);
         let mut fw = Firmware::new(sim.peripherals()).unwrap();
@@ -27,6 +32,7 @@ impl Rig {
             play: PlayMode::SugarRun,
             ..Settings::default()
         });
+        sim.lock().rng_script.push_back(seed);
         let mut world = World::with_seed(3);
         world.set_next_landing(Face::PosY);
         Self {
@@ -59,6 +65,43 @@ impl Rig {
         self.sim.lock().touch_mask = if on { 1 << face.index() } else { 0 };
     }
 
+    /// Lean the die so the side of `way` goes down, as the viewer sees it.
+    fn lean_toward(&mut self, way: Face) {
+        let v = self.world.pose().rotation * face_normal(way);
+        let right = DEFAULT_VIEWER_RIGHT;
+        let front = right.cross(glam::Vec3::Y);
+        let (r, a) = (v.dot(right), -v.dot(front));
+        let k = LEAN / r.abs().max(a.abs()).max(1e-3);
+        self.world.tilt(r * k, a * k, right);
+    }
+
+    /// An open way out of the runner's cell, other than `not`.
+    fn open_way(&self, not: Option<Face>) -> Face {
+        let r = self.fw.run().runner;
+        maze::ways(r.cell.face())
+            .into_iter()
+            .find(|d| self.fw.run().maze().open(r.cell, *d) && Some(*d) != not)
+            .expect("no dead ends")
+    }
+
+    /// Wait for the runner to stop at a wall, lean toward an open way, and
+    /// say whether it went that way.
+    fn steers(&mut self) -> bool {
+        while self.fw.run().runner.moving && self.phase() == Phase::Playing {
+            self.step();
+        }
+        let from = self.fw.run().runner.cell;
+        let way = self.open_way(None);
+        self.lean_toward(way);
+        for _ in 0..60 {
+            self.step();
+            if self.fw.run().runner.cell != from {
+                break;
+            }
+        }
+        self.fw.run().runner.cell == from.step(way).0
+    }
+
     fn phase(&self) -> Phase {
         self.fw.run().phase()
     }
@@ -82,21 +125,45 @@ fn a_run_starts_when_the_shake_settles_and_steers_by_the_lean() {
     let mut rig = Rig::new();
     rig.start();
     assert_eq!(
-        rig.fw.run_view().turn().maze_face(Face::PosY),
+        rig.fw.run().runner.cell.face(),
         Face::PosY,
-        "the runner's face on top"
+        "on the screen that's up"
     );
-    // Held leaning, the run goes on and the runner goes somewhere.
-    rig.world.tilt(LEAN, 0.0, DEFAULT_VIEWER_RIGHT);
-    let score = rig.fw.run().score();
-    rig.run_for(3.0);
-    assert!(matches!(rig.phase(), Phase::Playing | Phase::Caught { .. }));
-    assert!(rig.fw.run().score() > score, "it ate");
-    // Whatever face the runner is on is on top.
-    let runner = rig.fw.run().runner.face();
-    if !rig.fw.run_view().rolling() {
-        assert_eq!(rig.fw.run_view().turn().maze_face(Face::PosY), runner);
+    while rig.fw.run().runner.moving {
+        rig.step();
     }
+    assert_eq!(
+        rig.fw.run().runner.face(),
+        Face::PosY,
+        "stopped on the top screen"
+    );
+    assert!(rig.steers(), "it goes the way the die leans");
+}
+
+#[test]
+fn off_the_top_you_tip_the_die_to_follow() {
+    let mut rig = Rig::new();
+    rig.start();
+    // Steer it wherever it can go until it leaves the top screen.
+    let mut t = 0.0;
+    while rig.fw.run().runner.face() == Face::PosY && t < 20.0 {
+        if !rig.fw.run().runner.moving {
+            let back = rig.fw.run().runner.dir.opposite();
+            let way = rig.open_way(Some(back));
+            rig.lean_toward(way);
+        }
+        rig.run_for(0.1);
+        t += 0.1;
+    }
+    let side = rig.fw.run().runner.face();
+    assert_ne!(side, Face::PosY, "it ran off the top");
+    // Its screen faces sideways: leaning doesn't steer it there.
+    assert!(!rig.steers(), "no steering on a screen facing sideways");
+    // Tip its screen up, and leaning steers it again.
+    rig.world.place_face_up(rig.fw.run().runner.face());
+    rig.run_for(0.8);
+    assert_eq!(rig.phase(), Phase::Playing);
+    assert!(rig.steers(), "steered on its new screen");
 }
 
 #[test]
