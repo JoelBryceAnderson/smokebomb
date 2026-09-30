@@ -44,9 +44,9 @@ able to switch on a mode nobody paid for.
 - An account can install an item on a limited number of dice (a server
   setting, say 3). The server records each license it issues, so it knows
   which of the account's dice hold which items.
-- Dice mode is always licensed. The four current modes ship free, so a
-  fresh die starts with all of them licensed; modes added later start
-  unlicensed.
+- Dice mode is always licensed. The five current modes (Sugar Run the
+  latest) ship free, so a fresh die starts with all of them licensed; modes
+  added later start unlicensed.
 
 ## Handover and restore
 

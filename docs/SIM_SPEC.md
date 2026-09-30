@@ -264,14 +264,17 @@ The mockup has three pages: How many dice, Which die, Settings. The firmware add
 | Dice | Mode, How many dice, Which die, Settings | How many dice |
 | Pass the Pot | Mode, Bills in hand, Settings | Bills in hand |
 | Hot Potato | Mode, Fuse length, Settings | Fuse length |
+| Pig Toss | Mode, Players, Settings (Mode, End game, Settings with a game in play) | Players (Mode with a game in play) |
+| Sugar Run | Mode, Ants, Settings | Ants |
 
 | Page | Title | Values |
 |---|---|---|
-| Mode | Mode | Dice, Pass the Pot, Hot Potato |
+| Mode | Mode | Dice, Pass the Pot, Hot Potato, Pig Toss, Sugar Run |
 | Count | How many dice | 1–10 |
 | Die | Which die | d4, d6, d8, d10, d12, d20, d100 |
 | Pot | Bills in hand | 1–3 (starts at 3) |
 | Fuse | Fuse length | Short (10–20 s), Medium (20–40 s), Long (40–90 s) |
+| Ants | Ants | 1–4 (starts at 3) |
 | Settings | Settings | Brightness 70%; Haptics On; Sugar Full; Sleep after 2 min; Bluetooth On; Owner "Joel"; Power off "Tap to power off"; About (the firmware version and the die's id, `v0.1.0 · SC-A1B2`); Regulatory (`FCC ID: TBD` over `IC: TBD · CE · SC-1`, placeholders until certified, H14). **Decided (H11, H13):** a tap steps the selected item to its next value; Owner, Power off, About and Regulatory aren't editable. |
 
 - **X1, Mode page.** Mode sits one tip *right* of How many dice, so the dice flow is unchanged: hold, tip up or down for the count, one tip left for the die, hold to save.
@@ -293,6 +296,24 @@ Shake the die to light the fuse, then pass it around. Whoever holds it when it g
 - **No menu mid-round.** A hold does nothing while the fuse is lit (and no hold ring shows). It opens the menu as usual once the die has gone off. Opening the menu, docking or changing mode resets the round.
 - **Shakes in the menu.** A shake or throw with the menu open closes it without saving and leaves the die idle; in a game that doesn't roll it doesn't start a round.
 - **Label.** The wake label and menu status read "Hot Potato" and "Potato". The success screen says "Shake to light" instead of "Ready to roll".
+
+**X3, Sugar Run** (extension; not in the mockup)
+
+A maze over the whole cube. Tilt the die to run it, eat the sugar, and keep away from the ants. It never rolls or signs anything (`maze.rs`, drawn by `mazefx.rs`).
+
+- **The maze.** Each face is an 8×8 grid of cells (12 px each) and the corridors carry on over the edges, so the maze has no border. Each game draws a new one from the TRNG: a random spanning tree, so every cell reaches every other, then no dead ends, then about a quarter of the remaining walls come down so there's always a way round an ant. Every cell starts with a sugar crystal, except the start and the ants' nest; each face has one sugar lump in a corner.
+- **The runner stays on top.** The runner is on the top screen. When it crosses an edge the map rolls a quarter turn over the die (280 ms, ease-out), bringing the face it ran onto up: the screens round the roll slide one maze face off and the next on, and the two on the roll's axis turn. A cube's surface only maps onto itself in quarter turns, so the map rolls a face at a time rather than scrolling under the runner. The four side screens show the maze faces next to the runner's, so ants can be seen coming; the face-down screen, the far side of the world, stays dark (B3). Turning the die over by hand rolls the map the same way, to put the runner back on whatever face is now up.
+- **Steering.** The runner heads for the lowered side: lean the die past about 12° (the sine of the tilt ≥ 0.2) toward one of the side faces. Like a joystick held over, the lean is kept: the runner turns that way at the next opening, reverses at once if it's straight back, and stops at a wall until it can go on. It moves 4.2 cells a second (up to 5.4 on later levels).
+- **Ants.** One to four (the Ants page). They leave the nest, in the middle of the face opposite the start, 1.5 s after a life begins and 2.5 s apart. They wander toward their own corners of the die for 6 s, then hunt for 20 s, in turn: the first goes for the runner, the second for where it's heading, the third for where it's been, the fourth hunts only from afar. At each cell they take the opening toward their target by direction from the die's centre (a straight line through the die would leave them stuck on the far face), never turning straight back.
+- **Sugar lumps.** Eating one scares the ants for 6.5 s (0.7 s less each level, at least 2.5 s): they turn round, go faint, slow to 55% and wander at random, and flicker for the last 1.8 s. A scared ant the runner meets is eaten and waits 3 s in the nest. Points: crystal 10, lump 50, ants 200, 400, 800, 1600 on one lump.
+- **Caught.** An ant that meets the runner catches it: a buzz, the runner bursts into sugar (the landing cloud) and its mouth opens all the way round over 1.2 s; the maze dims under the lives left, drawn as runners ("Caught!" on the last). After 1.8 s play goes on from the start. Three lives.
+- **Cleared.** With every crystal and lump eaten the maze flashes, the gold ring plays with the max haptic, and "Level" and the next number show; after 2.6 s a new maze, faster ants.
+- **Starting.** A shake starts the run once the die settles (the motion detector's rest after the shake), so the map doesn't roll with every jolt of the shake. The wake label is the runner icon and "Sugar Run"; the success screen says "Shake to start"; the menu status reads `Run ×3`.
+- **Pause.** Lying level (under about 6°) and still for 4 s, as when set down on the table, pauses the run: the maze dims under "Paused", the score and "Tilt to play". Leaning it past about 17° carries on, the ants' timers not counting the pause. Docking pauses it too.
+- **No menu mid-run.** While the maze moves the die is in the hand, so a finger on a screen is the grip: taps and holds do nothing and no hold ring shows. Paused or over, a hold opens the menu. A run carries on through the menu unless the mode or the number of ants changes.
+- **Over.** With no lives left: "Game over", the score and, from 1.5 s, "Shake to play" over the dimmed maze on every face except the one facing down, fading out by 15 s. A shake starts a new game.
+- **Haptics.** A tick on a lump and when a run starts; the landing thud for an ant eaten; buzz when caught; the max celebration for a cleared maze; the dud when the game is over. Crystals are silent.
+- **Simulator.** Hold W A S D (or the "Lean in the hand" pad) to lean the die about 20° toward the far, left, near or right side as the camera sees it; let go and it levels. `sugar-run` and `sugar-run-over` show it.
 
 **Tips**
 

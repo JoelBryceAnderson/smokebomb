@@ -7,7 +7,7 @@ use smokebomb_shared::SignedRoll;
 /// Bumped whenever a message changes shape. The browser compares it with its
 /// own copy (`web-ui/src/protocol.ts`) and shows a banner when they differ,
 /// which usually means the web UI build is out of date.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// First byte of a binary frame packet; followed by six 4bpp panel frames in
 /// `Face` order.
@@ -145,6 +145,13 @@ pub enum Inbound {
     Rotate {
         yaw: f32,
         pitch: f32,
+    },
+    /// Lean the die in the hand (Sugar Run steers by it): radians with the
+    /// viewer's right side down, and the far side down. Zeros let it back.
+    Tilt {
+        right: f32,
+        away: f32,
+        viewer_right: [f32; 3],
     },
     /// Set the die down with this face on top.
     PlaceFaceUp {

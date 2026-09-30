@@ -85,6 +85,11 @@ fn apply(state: &AppState, input: Inbound) {
         }
         Inbound::SpinEnd => world.end_spin(),
         Inbound::Rotate { yaw, pitch } => world.rotate(yaw, pitch),
+        Inbound::Tilt {
+            right,
+            away,
+            viewer_right,
+        } => world.tilt(right, away, glam::Vec3::from_array(viewer_right)),
         Inbound::PlaceFaceUp { face } => {
             if let Some(f) = Face::from_index(face as usize) {
                 world.place_face_up(f);

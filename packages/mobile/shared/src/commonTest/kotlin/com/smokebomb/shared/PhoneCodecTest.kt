@@ -8,7 +8,7 @@ import kotlin.test.assertNull
 class PhoneCodecTest {
     @Test
     fun variants() {
-        assertEquals(listOf("Dice", "PassThePot", "HotPotato", "PigToss"), ModeId.entries.map { it.variant })
+        assertEquals(listOf("Dice", "PassThePot", "HotPotato", "PigToss", "SugarRun"), ModeId.entries.map { it.variant })
         assertEquals("D100", DieKind.D100.variant)
         assertEquals(DieKind.PASS_THE_POT, DieKind.fromVariant("PassThePot"))
     }

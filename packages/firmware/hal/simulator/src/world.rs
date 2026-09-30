@@ -109,6 +109,15 @@ pub struct Hand {
     pub resquare: bool,
 }
 
+/// Held leaning in the hand (Sugar Run's steering): the die eases toward
+/// `target` from the way it sat when the lean began.
+struct Tilt {
+    base: Quat,
+    /// Radians: right side down, and far side down, as the viewer sees it.
+    target: [f32; 2],
+    now: [f32; 2],
+}
+
 struct Turn {
     start: f64,
     duration: f64,
@@ -130,6 +139,7 @@ pub struct World {
     tumble: Option<Tumble>,
     turn: Option<Turn>,
     spin: Option<Spin>,
+    tilt: Option<Tilt>,
     /// The viewer's right in world space (horizontal). Tips use it as the
     /// up/down axis; the menu snap turns the held face toward the viewer.
     viewer_right: Vec3,
@@ -182,6 +192,7 @@ impl World {
             tumble: None,
             turn: None,
             spin: None,
+            tilt: None,
             viewer_right: DEFAULT_VIEWER_RIGHT,
             docked: false,
             dock_rot: Quat::IDENTITY,
@@ -226,6 +237,7 @@ impl World {
             return;
         }
         self.spin = None;
+        self.tilt = None;
         self.docked = false;
         self.nest_under = false;
         self.hover = None;
@@ -421,11 +433,31 @@ impl World {
     /// Turn the die in the hand by world-axis angles (the mockup's drag:
     /// yaw about vertical, then pitch about the world X axis).
     pub fn rotate(&mut self, yaw: f32, pitch: f32) {
-        if self.busy() || self.docked {
+        if self.moving() || self.docked {
             return;
         }
-        self.pose.rotation =
-            (Quat::from_rotation_x(pitch) * Quat::from_rotation_y(yaw) * self.pose.rotation).normalize();
+        let turn = Quat::from_rotation_x(pitch) * Quat::from_rotation_y(yaw);
+        self.pose.rotation = (turn * self.pose.rotation).normalize();
+        if let Some(t) = &mut self.tilt {
+            t.base = (turn * t.base).normalize();
+        }
+    }
+
+    /// Lean the die in the hand, radians: `right` lowers the side on the
+    /// viewer's right, `away` the far side. It eases there and stays until
+    /// told otherwise; zero lets it back to how it sat before.
+    pub fn tilt(&mut self, right: f32, away: f32, viewer_right: Vec3) {
+        if self.moving() || self.docked {
+            return;
+        }
+        self.viewer_right = viewer_right.try_normalize().unwrap_or(self.viewer_right);
+        let base = self.pose.rotation;
+        let t = self.tilt.get_or_insert(Tilt {
+            base,
+            target: [0.0; 2],
+            now: [0.0; 2],
+        });
+        t.target = [right, away];
     }
 
     /// Set the die down with `face` on top, taking the shortest turn.
@@ -547,7 +579,13 @@ impl World {
         Quat::from_mat3(&glam::Mat3::from_cols(ex, ey, ex.cross(ey))).normalize()
     }
 
+    /// In a motion that owns the pose: nothing else may start. A lean
+    /// counts, except to turning the die in the hand or leaning it again.
     fn busy(&self) -> bool {
+        self.moving() || self.tilt.is_some()
+    }
+
+    fn moving(&self) -> bool {
         self.tumble.is_some() || self.turn.is_some() || self.shake_start.is_some() || self.spin.is_some()
     }
 
@@ -666,6 +704,21 @@ impl World {
             });
             let v = Vec3::from_array(w) * dt as f32;
             self.pose.rotation = (Quat::from_scaled_axis(v) * self.pose.rotation).normalize();
+        }
+
+        if let Some(t) = &mut self.tilt {
+            let k = 1.0 - (-10.0 * dt as f32).exp();
+            for i in 0..2 {
+                t.now[i] += (t.target[i] - t.now[i]) * k;
+            }
+            let front = self.viewer_right.cross(Vec3::Y);
+            let lean =
+                Quat::from_axis_angle(front, -t.now[0]) * Quat::from_axis_angle(self.viewer_right, -t.now[1]);
+            self.pose.rotation = (lean * t.base).normalize();
+            if t.target == [0.0; 2] && t.now.iter().all(|a| a.abs() < 1e-3) {
+                self.pose.rotation = t.base;
+                self.tilt = None;
+            }
         }
 
         if self.docked {
@@ -945,5 +998,29 @@ mod tests {
             run(&mut w, 2.0);
             assert!(w.on_charger(), "{turns} quarter turns");
         }
+    }
+
+    #[test]
+    fn a_lean_tips_the_die_toward_the_lowered_side_and_levels_again() {
+        let mut w = World::new();
+        w.pose.rotation = Quat::IDENTITY;
+        // The viewer's right side down: gravity leans toward +X in the die.
+        w.tilt(0.35, 0.0, Vec3::X);
+        let s = *run(&mut w, 1.0).last().unwrap();
+        let expect = (0.35f32.sin() * 1000.0) as i16;
+        assert!((s.accel_mg[0] + expect).abs() < 20, "{s:?}");
+        assert!(s.gyro_mdps.iter().all(|g| g.abs() < 1_000), "held still: {s:?}");
+        // The far side down.
+        w.tilt(0.0, 0.35, Vec3::X);
+        let s = *run(&mut w, 1.0).last().unwrap();
+        assert!(
+            s.accel_mg[0].abs() < 20 && (s.accel_mg[2] - expect).abs() < 20,
+            "{s:?}"
+        );
+        // Let go: level again, and nothing is left leaning.
+        w.tilt(0.0, 0.0, Vec3::X);
+        run(&mut w, 1.5);
+        assert!(w.tilt.is_none());
+        assert_eq!(w.pose.rotation, Quat::IDENTITY);
     }
 }

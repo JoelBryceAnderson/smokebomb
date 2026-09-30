@@ -1097,6 +1097,54 @@ pub fn draw_boom<A: AssetStore>(c: &mut Ctx<A>, t: f32) {
     }
 }
 
+// ---------- Sugar Run ----------
+
+/// Set down mid-run: the dimmed maze waits under the score, and a nudge.
+pub fn draw_run_paused<A: AssetStore>(c: &mut Ctx<A>, score: u32) {
+    c.text("Paused", 0.0, -30.0, 22, Style::new(FG, 0.9, 10.0));
+    let mut n: String<12> = String::new();
+    let _ = write!(n, "{score}");
+    c.text(&n, 0.0, 8.0, fit_px(&n, 40, 150.0), Style::new(FG, 1.0, 12.0));
+    c.text("Tilt to play", 0.0, 50.0, 14, Style::new(FG, 0.7, 0.0));
+}
+
+/// Caught: the runners left, one fewer than a moment ago. `t` is seconds
+/// since they began to show.
+pub fn draw_run_lives<A: AssetStore>(c: &mut Ctx<A>, lives: u8, t: f32) {
+    let a = (t / 0.25).min(1.0);
+    let n = lives.max(1) as f32;
+    for i in 0..lives {
+        let x = (i as f32 - (n - 1.0) / 2.0) * 40.0;
+        crate::mazefx::draw_runner_icon(c.painter, x, -6.0, 13.0, Style::new(FG, a, 8.0));
+    }
+    if lives == 0 {
+        c.text("Caught!", 0.0, -6.0, 26, Style::new(FG, a, 10.0));
+    }
+}
+
+/// Every crystal eaten: the next level's number grows in.
+pub fn draw_run_level<A: AssetStore>(c: &mut Ctx<A>, level: u8, t: f32) {
+    let a = (t / 0.3).min(1.0);
+    c.text("Level", 0.0, -24.0, 18, Style::new(FG, 0.8 * a, 0.0));
+    let mut n: String<4> = String::new();
+    let _ = write!(n, "{level}");
+    c.text(&n, 0.0, 16.0, 52, Style::new(FG, a, 16.0));
+}
+
+/// The run is over: the score, and how to go again. `t` is seconds since
+/// it ended; `fade` takes it all away at the end.
+pub fn draw_run_over<A: AssetStore>(c: &mut Ctx<A>, score: u32, t: f32, fade: f32) {
+    let a = (t / 0.4).min(1.0) * fade;
+    c.text("Game over", 0.0, -40.0, 18, Style::new(FG, 0.8 * a, 0.0));
+    let mut n: String<12> = String::new();
+    let _ = write!(n, "{score}");
+    c.text(&n, 0.0, 4.0, fit_px(&n, 44, 150.0), Style::new(FG, a, 14.0));
+    if t > 1.5 {
+        let a = ((t - 1.5) / 0.4).min(1.0) * fade;
+        c.text("Shake to play", 0.0, 52.0, 13, Style::new(FG, 0.7 * a, 0.0));
+    }
+}
+
 // ---------- menu (C3, C4) ----------
 
 /// How far menu content slides during a tip, canvas units.

@@ -18,6 +18,8 @@ pub mod effects;
 pub mod font;
 pub mod gfx;
 pub mod icons;
+pub mod maze;
+pub mod mazefx;
 pub mod menu;
 pub mod motion;
 pub mod nest;
@@ -49,6 +51,7 @@ use smokebomb_shared::{DieKind, ModeId, ModeSet, SignedRoll};
 use display::Framebuffer;
 use font::Fonts;
 use gfx::{Layer, Painter, Transform};
+use maze::{Phase as RunPhase, RunEvent};
 use menu::{Draft, Held, PlayMode, Settings};
 use motion::{Motion, MotionDetector};
 use nest::{Nest, NestFace};
@@ -93,6 +96,15 @@ pub const LOCKED_MS: u64 = 12_000;
 pub const HOLD_RING_AFTER_MS: u64 = 220;
 /// The menu closes without saving after this long without a tip.
 pub const MENU_IDLE_MS: u64 = 25_000;
+/// Sugar Run: how far the die must lean (the sine of the angle) to steer,
+/// to carry on after a pause, and how little it leans when it lies level.
+const RUN_STEER: f32 = 0.2;
+const RUN_RESUME: f32 = 0.3;
+const RUN_LEVEL: f32 = 0.1;
+/// Lying level and still this long pauses a run: it has been set down.
+pub const RUN_PAUSE_MS: u64 = 4_000;
+/// How long the score shows once the game is over.
+pub const RUN_OVER_MS: u64 = 15_000;
 
 /// How the screens were oriented when a result was revealed. While the
 /// result lasts they stay that way, like a printed die: picking the die up to
@@ -165,6 +177,18 @@ pub struct Firmware<P: Platform> {
     /// The screens' orientation, frozen while a result is up.
     frozen: Option<Frozen>,
     last_roll: Option<SignedRoll>,
+    /// Sugar Run: the game, and which maze face each screen shows.
+    run: maze::Game,
+    run_view: maze::View,
+    /// The way the die was last tipped, in die axes: the runner turns that
+    /// way at the next opening.
+    run_want: Option<Face>,
+    /// Since when the die has lain level and still mid-run, and when the
+    /// run paused.
+    run_level_since: Option<u64>,
+    run_paused_at: u64,
+    /// A shake that will start a run once it settles.
+    run_armed: bool,
     /// Seated in the Nest (one of its docked states).
     docked: bool,
     nest: Nest,
@@ -250,6 +274,12 @@ impl<P: Platform> Firmware<P> {
             addr_of_mut!((*p).up_face).write(Face::PosY);
             addr_of_mut!((*p).frozen).write(None);
             addr_of_mut!((*p).last_roll).write(None);
+            addr_of_mut!((*p).run).write(maze::Game::new(settings.ants));
+            addr_of_mut!((*p).run_view).write(maze::View::new());
+            addr_of_mut!((*p).run_want).write(None);
+            addr_of_mut!((*p).run_level_since).write(None);
+            addr_of_mut!((*p).run_paused_at).write(0);
+            addr_of_mut!((*p).run_armed).write(false);
             addr_of_mut!((*p).docked).write(false);
             addr_of_mut!((*p).nest).write(Nest::new());
             addr_of_mut!((*p).reduced_motion).write(false);
@@ -292,6 +322,12 @@ impl<P: Platform> Firmware<P> {
                 up_face,
                 frozen,
                 last_roll,
+                run,
+                run_view,
+                run_want,
+                run_level_since,
+                run_paused_at,
+                run_armed,
                 docked,
                 nest,
                 reduced_motion,
@@ -374,6 +410,12 @@ impl<P: Platform> Firmware<P> {
         }
         self.sm.set_rolls(self.settings.play().rolls());
         self.potato = Potato::new();
+        // A run carries on through the menu, like a Pig Toss game, unless
+        // the mode or the ants change.
+        if self.settings.play() != PlayMode::SugarRun || self.run.ant_count() != self.settings.ants {
+            self.run = maze::Game::new(self.settings.ants);
+            self.run_armed = false;
+        }
         // A game in play carries on through the menu and other modes; it
         // ends only from its End game page. Pig Toss needs one to play, so
         // arriving without one (a fresh die, settings from the phone) starts
@@ -387,6 +429,16 @@ impl<P: Platform> Firmware<P> {
     /// The Pig Toss game: scores, whose turn and the last throw.
     pub fn pigs(&self) -> &Pigs {
         &self.sessions.pigs
+    }
+
+    /// The Sugar Run game.
+    pub fn run(&self) -> &maze::Game {
+        &self.run
+    }
+
+    /// Which maze face each screen shows in Sugar Run.
+    pub fn run_view(&self) -> &maze::View {
+        &self.run_view
     }
 
     /// The Hot Potato round in play, if any.
@@ -489,9 +541,22 @@ impl<P: Platform> Firmware<P> {
         let before = *self.sm.mode();
         let input = !events.is_empty();
         let _ = events.push(Event::Tick);
-        let game = !self.settings.play().rolls();
+        let potato_on = self.settings.play() == PlayMode::HotPotato;
+        let run_on = self.settings.play() == PlayMode::SugarRun;
         for event in events {
-            if game && !matches!(self.sm.mode(), Mode::Menu | Mode::Nest | Mode::Off) {
+            let in_game = !matches!(self.sm.mode(), Mode::Menu | Mode::Nest | Mode::Off);
+            if run_on && in_game {
+                match event {
+                    // A shake starts a run once the die settles in the hand.
+                    Event::Motion(Motion::Shaking) if !self.run.in_play() => self.run_armed = true,
+                    Event::Motion(Motion::Rest) if self.run_armed => self.start_run(now)?,
+                    // Mid-run the die is in the hand: a finger on a screen
+                    // is the grip, not a tap or a hold.
+                    Event::Tap | Event::LongPress if self.run.running() => continue,
+                    _ => {}
+                }
+            }
+            if potato_on && in_game {
                 match event {
                     Event::Motion(Motion::Shaking) if self.potato.is_idle() => self.light_potato(now)?,
                     Event::Tap => {
@@ -517,6 +582,7 @@ impl<P: Platform> Firmware<P> {
             }
             if event == Event::Docked(true) {
                 self.locked = None;
+                self.pause_run(now);
                 for cmd in self.potato.reset() {
                     self.run_potato(cmd)?;
                 }
@@ -539,6 +605,10 @@ impl<P: Platform> Firmware<P> {
         for cmd in self.potato.tick(now) {
             self.run_potato(cmd)?;
         }
+        let dt = self.frame_dt(now);
+        if run_on && !matches!(self.sm.mode(), Mode::Menu | Mode::Nest | Mode::Off) {
+            self.update_run(now, dt)?;
+        }
         if self.potato.is_lit() {
             let heat = self.potato.heat(now);
             if let Some(smoke) = self.fx.smoke() {
@@ -548,7 +618,7 @@ impl<P: Platform> Firmware<P> {
         let after = *self.sm.mode();
         self.update_sleep(now, input, &after)?;
         self.ui.tick(now, &before, &after, self.up_face, self.docked);
-        self.update_smoke(now, &before, &after);
+        self.update_smoke(now, dt, &before, &after);
         self.freeze_for_result(&before, &after);
 
         self.render(now)?;
@@ -602,6 +672,122 @@ impl<P: Platform> Firmware<P> {
             }
         }
         Ok(())
+    }
+
+    /// A shake settled in Sugar Run: a new run, with the runner's face on
+    /// top.
+    fn start_run(&mut self, now: u64) -> HalResult<()> {
+        self.run_armed = false;
+        let seed = self.hw.rng.next_u32()?;
+        let events = self.run.start(now, seed);
+        self.run_view.snap(self.up_face, maze::START.face());
+        self.run_want = None;
+        self.run_level_since = None;
+        self.ui.game_started();
+        if let Some(smoke) = self.fx.smoke() {
+            smoke.clear();
+        }
+        self.feel_run(&events)
+    }
+
+    /// Set down (or docked) mid-run: wait.
+    fn pause_run(&mut self, now: u64) {
+        if self.run.phase() == RunPhase::Playing {
+            self.run.pause();
+            self.run_paused_at = now;
+        }
+        self.run_level_since = None;
+    }
+
+    /// Sugar Run each tick: steer by the tilt, pause when the die is set
+    /// down and carry on when it's tilted again, keep the runner's face on
+    /// top, and play the run.
+    fn update_run(&mut self, now: u64, dt: f32) -> HalResult<()> {
+        let up = self.up_face;
+        let (downhill, lean) = downhill(self.gravity.up(), up);
+        if lean >= RUN_STEER {
+            self.run_want = downhill;
+        }
+        match self.run.phase() {
+            RunPhase::Paused if lean >= RUN_RESUME => {
+                self.run.resume(now.saturating_sub(self.run_paused_at));
+            }
+            RunPhase::Playing if self.motion.is_still() && lean < RUN_LEVEL => {
+                let since = *self.run_level_since.get_or_insert(now);
+                if now.saturating_sub(since) >= RUN_PAUSE_MS {
+                    self.pause_run(now);
+                }
+            }
+            _ => self.run_level_since = None,
+        }
+        self.run_view.update(now, up, self.run.runner.face());
+        let want = self.run_want.map(|d| self.run_view.maze_way(d));
+        let events = self.run.step(now, dt, want);
+        self.feel_run(&events)
+    }
+
+    /// What a run's events feel like, and the sugar they throw.
+    fn feel_run(&mut self, events: &maze::RunEvents) -> HalResult<()> {
+        use smokebomb_hal::HapticEffect as H;
+        for e in events {
+            let effect = match e {
+                RunEvent::Dot => None,
+                RunEvent::Started | RunEvent::Lump => Some(H::Tick),
+                RunEvent::AteAnt => Some(H::LandingThud),
+                RunEvent::Caught => {
+                    // The runner bursts into sugar.
+                    if let Some(smoke) = self.fx.smoke() {
+                        smoke.throw();
+                        smoke.land();
+                    }
+                    Some(H::Buzz)
+                }
+                RunEvent::Cleared => {
+                    if let Some(smoke) = self.fx.smoke() {
+                        smoke.special(Special::Max);
+                    }
+                    Some(H::MaxCelebration)
+                }
+                RunEvent::GameOver => Some(H::Dud),
+            };
+            if let Some(effect) = effect.filter(|_| self.settings.haptics_on()) {
+                self.hw.haptics.play(effect)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What Sugar Run shows over the faces now, if it shows anything: the
+    /// maze from the first shake until a while after the game is over.
+    fn run_screen(&self, now: u64, mode: &Mode) -> Option<RunScreen> {
+        if self.settings.play() != PlayMode::SugarRun || matches!(mode, Mode::Menu | Mode::Nest | Mode::Off) {
+            return None;
+        }
+        let secs = |since: u64| now.saturating_sub(since) as f32 / 1000.0;
+        let (alpha, overlay) = match self.run.phase() {
+            RunPhase::Ready => return None,
+            RunPhase::Playing => (1.0, RunOverlay::None),
+            RunPhase::Paused => (0.3, RunOverlay::Paused),
+            RunPhase::Caught { since } => {
+                let t = secs(since);
+                let fade = ((t - 1.2) / 0.3).clamp(0.0, 1.0);
+                (1.0 - 0.65 * fade, RunOverlay::Lives(t - 1.2))
+            }
+            RunPhase::Cleared { since } => {
+                let t = secs(since);
+                let flash = 0.6 + 0.4 * libm::cosf(t * core::f32::consts::TAU * 2.5);
+                (flash, RunOverlay::Level(t - 1.0))
+            }
+            RunPhase::Over { since } => {
+                let t = secs(since);
+                if now.saturating_sub(since) >= RUN_OVER_MS {
+                    return None;
+                }
+                let fade = ((RUN_OVER_MS as f32 / 1000.0 - t) / 1.0).clamp(0.0, 1.0);
+                (0.25 * fade, RunOverlay::Over(t, fade))
+            }
+        };
+        Some(RunScreen { alpha, overlay })
     }
 
     /// A shake lit Hot Potato: pick the fuse at random within the setting.
@@ -733,6 +919,7 @@ impl<P: Platform> Firmware<P> {
             || self.touch_since.is_some()
             || !matches!(mode, Mode::Idle)
             || !self.potato.is_idle()
+            || self.run.running()
             || self.ui.booting();
         if busy {
             self.last_activity = now;
@@ -779,12 +966,11 @@ impl<P: Platform> Firmware<P> {
 
     /// Drive the smoke through the throw, in the mockup's frame order:
     /// throw and landing first, then a step.
-    fn update_smoke(&mut self, now: u64, before: &Mode, after: &Mode) {
+    fn update_smoke(&mut self, now: u64, dt: f32, before: &Mode, after: &Mode) {
         let entered = |m: fn(&Mode) -> bool| !m(before) && m(after);
         if entered(|m| matches!(m, Mode::Shaking) || matches!(m, Mode::Airborne)) {
             self.pending_special = None;
         }
-        let dt = self.frame_dt(now);
         self.step_pigs(dt, before, after, now);
         // Pig Toss has no smoke.
         let Some(smoke) = self.fx.smoke() else {
@@ -967,6 +1153,7 @@ impl<P: Platform> Firmware<P> {
         let held = now.saturating_sub(since);
         let ring = !self.menu_hold_fired
             && !self.potato.is_lit()
+            && !self.run.running()
             && held > HOLD_RING_AFTER_MS
             && matches!(
                 self.sm.mode(),
@@ -1212,6 +1399,7 @@ impl<P: Platform> Firmware<P> {
         let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
         let asleep = self.asleep;
         let nest_faces = self.nest_faces(now, &mode, battery);
+        let run_screen = self.run_screen(now, &mode);
         let Self {
             frames,
             layer,
@@ -1223,6 +1411,8 @@ impl<P: Platform> Firmware<P> {
             menu,
             sessions,
             fx,
+            run,
+            run_view,
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
@@ -1258,7 +1448,8 @@ impl<P: Platform> Firmware<P> {
             // A round of Hot Potato takes the faces, except the one facing
             // down (H2).
             let potato_face = potato_view.filter(|_| face != up.opposite());
-            let content = if potato_face.is_some() || locked.is_some() || win_up {
+            let run_face = run_screen.filter(|_| face != up.opposite());
+            let content = if potato_face.is_some() || locked.is_some() || win_up || run_screen.is_some() {
                 FaceContent::Blank
             } else {
                 content
@@ -1270,6 +1461,16 @@ impl<P: Platform> Firmware<P> {
                 fonts,
                 assets: &mut hw.assets,
             };
+
+            // Sugar Run's maze under everything: the maze faces this
+            // screen shows (two while the map rolls over it).
+            if let Some(rs) = run_face {
+                for (g, xf) in run_view.layers(now, face) {
+                    c.painter.xf = xf;
+                    mazefx::draw_face(c.painter, run, g, now, rs.alpha);
+                }
+                c.painter.xf = Transform::quarter(rot);
+            }
 
             // Under the content: the save flash (not on the face-down
             // screen, H2), the closed menu fading, and the hold ring.
@@ -1369,6 +1570,13 @@ impl<P: Platform> Firmware<P> {
                 Some(PotatoView::Boom(t)) => screens::draw_boom(&mut c, t),
                 None => {}
             }
+            match run_face.map(|rs| rs.overlay) {
+                Some(RunOverlay::Paused) => screens::draw_run_paused(&mut c, run.score()),
+                Some(RunOverlay::Lives(t)) if t > 0.0 => screens::draw_run_lives(&mut c, run.lives(), t),
+                Some(RunOverlay::Level(t)) if t > 0.0 => screens::draw_run_level(&mut c, run.level() + 1, t),
+                Some(RunOverlay::Over(t, fade)) => screens::draw_run_over(&mut c, run.score(), t, fade),
+                _ => {}
+            }
         }
 
         // Smoke over everything, wrapping round the edges (SIM_SPEC D1).
@@ -1387,6 +1595,48 @@ impl<P: Platform> Firmware<P> {
 /// at full heat: enough to build, little enough to read "PASS IT" through.
 const SMOLDER_MIN: f32 = 0.08;
 const SMOLDER_MAX: f32 = 0.3;
+
+/// What Sugar Run shows: how bright the maze is, and what is written over
+/// it.
+#[derive(Clone, Copy)]
+struct RunScreen {
+    alpha: f32,
+    overlay: RunOverlay,
+}
+
+#[derive(Clone, Copy)]
+enum RunOverlay {
+    None,
+    Paused,
+    /// Seconds since the lives left began to show.
+    Lives(f32),
+    /// Seconds since the next level's number began to show.
+    Level(f32),
+    /// Seconds since the game ended, and how far it has faded.
+    Over(f32, f32),
+}
+
+/// Which way the die leans, as the side face lowest (downhill from the
+/// top), and how far: the sine of the tilt.
+fn downhill(sky: [f32; 3], up: Face) -> (Option<Face>, f32) {
+    let n = maze::axis(up).map(|c| c as f32);
+    let k = sky[0] * n[0] + sky[1] * n[1] + sky[2] * n[2];
+    let down = [0, 1, 2].map(|i| -(sky[i] - n[i] * k));
+    let lean = libm::sqrtf(down.iter().map(|c| c * c).sum());
+    let (axis, v) = (0..3)
+        .map(|i| (i, down[i]))
+        .max_by(|a, b| libm::fabsf(a.1).total_cmp(&libm::fabsf(b.1)))
+        .unwrap_or((1, 0.0));
+    let face = match (axis, v > 0.0) {
+        (0, true) => Face::PosX,
+        (0, false) => Face::NegX,
+        (1, true) => Face::PosY,
+        (1, false) => Face::NegY,
+        (_, true) => Face::PosZ,
+        _ => Face::NegZ,
+    };
+    ((lean > 1e-3).then_some(face), lean)
+}
 
 /// What a round of Hot Potato shows on the faces.
 #[derive(Clone, Copy)]

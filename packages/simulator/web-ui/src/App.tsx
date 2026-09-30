@@ -32,6 +32,17 @@ const KEY_TIPS: Record<string, TipDirection> = {
   ArrowRight: "right",
 };
 
+/** How far a held lean tips the die, radians (Sugar Run steers by it). */
+const LEAN = 0.35;
+
+/** Hold-to-lean keys (physical key codes) and pad buttons: [right, away] as seen from the camera. */
+const LEANS: { key: string; dir: TipDirection; arrow: string; lean: [number, number]; what: string }[] = [
+  { key: "KeyW", dir: "up", arrow: "W", lean: [0, 1], what: "far side down" },
+  { key: "KeyA", dir: "left", arrow: "A", lean: [-1, 0], what: "left side down" },
+  { key: "KeyD", dir: "right", arrow: "D", lean: [1, 0], what: "right side down" },
+  { key: "KeyS", dir: "down", arrow: "S", lean: [0, -1], what: "near side down" },
+];
+
 export function App() {
   const die = useRef<DieViewHandle>(null);
   const onFrames = useCallback((faces: Uint8Array[]) => die.current?.drawFrames(faces), []);
@@ -114,6 +125,59 @@ export function App() {
     [send],
   );
 
+  // Leans held by key or pad button; the die leans the way of all of them
+  // and levels again once they're let go.
+  const leaning = useRef(new Set<string>());
+  const sendLean = useCallback(() => {
+    let right = 0;
+    let away = 0;
+    for (const l of LEANS) {
+      if (leaning.current.has(l.key)) {
+        right += l.lean[0];
+        away += l.lean[1];
+      }
+    }
+    send({
+      type: "tilt",
+      right: Math.sign(right) * LEAN,
+      away: Math.sign(away) * LEAN,
+      viewer_right: die.current?.viewerRight() ?? [1, 0, 0],
+    });
+  }, [send]);
+  const lean = useCallback(
+    (key: string, on: boolean) => {
+      const had = leaning.current.has(key);
+      if (on === had) return;
+      if (on) leaning.current.add(key);
+      else leaning.current.delete(key);
+      sendLean();
+    },
+    [sendLean],
+  );
+
+  useEffect(() => {
+    // The physical key, as for F: W A S D sit the same on any layout.
+    const isLean = (e: KeyboardEvent) =>
+      !(e.target instanceof HTMLInputElement) && LEANS.some((l) => l.key === e.code);
+    const onDown = (e: KeyboardEvent) => {
+      if (!isLean(e)) return;
+      e.preventDefault();
+      lean(e.code, true);
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (isLean(e)) lean(e.code, false);
+    };
+    const onBlur = () => LEANS.forEach((l) => lean(l.key, false));
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [lean]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const dir = KEY_TIPS[e.key];
@@ -173,7 +237,7 @@ export function App() {
         <p className="hint">
           {menuOpen
             ? "Menu: swipe or use the tip pad to turn to the next screen · hold F and drag to turn several · tap to change a setting · hold to save"
-            : "Drag to turn the die · press and hold a face to touch it · arrow keys tip it"}
+            : "Drag to turn the die · press and hold a face to touch it · arrow keys tip it · hold W A S D to lean it"}
         </p>
       </main>
 
@@ -228,6 +292,32 @@ export function App() {
             Or hold F while you drag: the die follows your finger across as many screens as you like and
             settles on the nearest one when you let go. Each screen passed is one step.
           </p>
+        </section>
+
+        <section>
+          <h2>Lean in the hand</h2>
+          <p className="muted">
+            Hold to tip the die about 20° and keep it there; let go and it levels again. Sugar Run steers by
+            this: the runner heads for the lowered side. Keys W A S D work too.
+          </p>
+          <div className="tip-pad">
+            {LEANS.map(({ key, dir, arrow, what }) => (
+              <button
+                key={key}
+                className={`tip-${dir}`}
+                aria-label={`Lean: ${what}`}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  lean(key, true);
+                }}
+                onPointerUp={() => lean(key, false)}
+                onPointerCancel={() => lean(key, false)}
+              >
+                <span className="arrow">{arrow}</span>
+                <span className="what">{what}</span>
+              </button>
+            ))}
+          </div>
         </section>
 
         <section>

@@ -906,22 +906,24 @@ fn a_pig_toss_game_survives_other_modes_until_it_is_ended() {
         16.0,
     );
     assert_eq!(run.fw.pigs().scores(), &[20, 0]);
-    // Off to Dice: the menu opens on Mode, one tip up is Dice, hold saves.
+    // Off to Dice: the menu opens on Mode, two tips up (past Sugar Run) is
+    // Dice, hold saves.
     play(
         &mut run,
         vec![
             (16.1, Run::press),
             (17.3, Run::release),
             (17.6, |r| r.tip(TipDir::Up)),
-            (18.2, Run::press),
-            (19.15, Run::release),
+            (18.2, |r| r.tip(TipDir::Up)),
+            (18.8, Run::press),
+            (19.75, Run::release),
         ],
-        20.0,
+        20.5,
     );
     assert_eq!(run.fw.settings().play, PlayMode::Dice);
     assert_eq!(run.fw.pigs().scores(), &[20, 0], "kept while away");
     // Back to Pig Toss: Dice opens on its count, Mode is one tip right, and
-    // Pig Toss one down. With the game in play a hold just saves.
+    // Pig Toss two down. With the game in play a hold just saves.
     play(
         &mut run,
         vec![
@@ -929,10 +931,11 @@ fn a_pig_toss_game_survives_other_modes_until_it_is_ended() {
             (22.2, Run::release),
             (22.5, |r| r.tip(TipDir::Right)),
             (23.1, |r| r.tip(TipDir::Down)),
-            (23.8, Run::press),
-            (24.75, Run::release),
+            (23.7, |r| r.tip(TipDir::Down)),
+            (24.4, Run::press),
+            (25.35, Run::release),
         ],
-        25.5,
+        26.0,
     );
     assert_eq!(run.fw.settings().play, PlayMode::PigToss);
     assert_eq!(run.fw.pigs().scores(), &[20, 0], "picked up where it was");
@@ -940,21 +943,21 @@ fn a_pig_toss_game_survives_other_modes_until_it_is_ended() {
     play(
         &mut run,
         vec![
-            (26.5, Run::press),
-            (27.7, Run::release),
-            (28.0, |r| r.tip(TipDir::Left)),
-            (28.6, Run::press),
-            (29.55, Run::release),
-            (30.0, Run::press),
-            (30.95, Run::release),
-            (31.4, Run::press),
-            (32.35, Run::release),
+            (27.0, Run::press),
+            (28.2, Run::release),
+            (28.5, |r| r.tip(TipDir::Left)),
+            (29.1, Run::press),
+            (30.05, Run::release),
+            (30.5, Run::press),
+            (31.45, Run::release),
+            (31.9, Run::press),
+            (32.85, Run::release),
         ],
-        32.6,
+        33.1,
     );
     assert!(run.fw.menu_draft().is_some(), "still setting up");
     assert_eq!(run.fw.pigs().scores(), &[20, 0], "nothing ends until the save");
-    play(&mut run, vec![(32.8, Run::press), (33.75, Run::release)], 34.5);
+    play(&mut run, vec![(33.3, Run::press), (34.25, Run::release)], 35.0);
     assert!(run.fw.menu_draft().is_none());
     assert_eq!(run.fw.pigs().scores(), &[0, 0], "a new game");
 }
@@ -1142,5 +1145,60 @@ fn hot_potato_round() {
         run,
         &[10.5, 14.0, 18.0, 22.0, 25.0, 27.0, 29.0],
         vec![(9.0, Run::shake), (9.4, Run::throw_release)],
+    );
+}
+
+// ---------- Sugar Run ----------
+
+/// A lean the hand holds while steering Sugar Run: about 20°.
+const LEAN: f32 = 0.35;
+
+fn lean(run: &mut Run, right: f32, away: f32) {
+    world_of(run).tilt(right, away, DEFAULT_VIEWER_RIGHT);
+}
+
+#[test]
+fn sugar_run() {
+    // Shake to start: the throw lands +Y up and the run starts as it
+    // settles, the runner on top. It runs off the top toward +X and the map
+    // rolls over the die to keep it there. Leaning steers it, until an ant
+    // catches it; set down level, the next life pauses.
+    let mut run =
+        Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::SugarRun);
+    run.world.as_mut().unwrap().set_next_landing(Face::PosY);
+    run.sim.lock().rng_script.push_back(7);
+    run_timeline(
+        "sugar-run",
+        run,
+        &[11.2, 11.9, 12.0, 12.1, 12.3, 13.5, 15.0, 20.5, 27.0],
+        vec![
+            (9.0, Run::shake),
+            (9.4, Run::throw_release),
+            (12.6, |r| lean(r, 0.0, LEAN)),
+            (14.0, |r| lean(r, -LEAN, 0.0)),
+            (15.2, |r| lean(r, 0.0, 0.0)),
+        ],
+    );
+}
+
+#[test]
+fn sugar_run_over() {
+    // Four ants, and a runner held leaning one way: caught three times, the
+    // last life shrinks away, then the score and a nudge, which fade.
+    let mut run = Run::with_world_and_modes().with_settings(|s| {
+        s.play = smokebomb_core::menu::PlayMode::SugarRun;
+        s.ants = 4;
+    });
+    run.world.as_mut().unwrap().set_next_landing(Face::PosY);
+    run.sim.lock().rng_script.push_back(7);
+    run_timeline(
+        "sugar-run-over",
+        run,
+        &[45.9, 46.6, 47.3, 48.0, 50.0, 62.6],
+        vec![
+            (9.0, Run::shake),
+            (9.4, Run::throw_release),
+            (11.0, |r| lean(r, LEAN, 0.0)),
+        ],
     );
 }

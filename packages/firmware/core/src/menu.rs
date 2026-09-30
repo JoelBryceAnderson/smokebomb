@@ -104,15 +104,19 @@ pub enum PlayMode {
     HotPotato,
     /// Two pigs to throw for points; the die keeps score for the table.
     PigToss,
+    /// A maze over the whole cube: tilt to run it, eat the sugar, dodge
+    /// the ants.
+    SugarRun,
 }
 
 impl PlayMode {
     /// Menu order on the Mode page.
-    pub const ALL: [PlayMode; 4] = [
+    pub const ALL: [PlayMode; 5] = [
         PlayMode::Dice,
         PlayMode::PassThePot,
         PlayMode::HotPotato,
         PlayMode::PigToss,
+        PlayMode::SugarRun,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -121,12 +125,13 @@ impl PlayMode {
             PlayMode::PassThePot => "Pass the Pot",
             PlayMode::HotPotato => "Hot Potato",
             PlayMode::PigToss => "Pig Toss",
+            PlayMode::SugarRun => "Sugar Run",
         }
     }
 
     /// Whether a throw rolls and signs dice in this mode.
     pub const fn rolls(self) -> bool {
-        !matches!(self, PlayMode::HotPotato)
+        !matches!(self, PlayMode::HotPotato | PlayMode::SugarRun)
     }
 
     /// The mode's id on the wire and in the store.
@@ -136,6 +141,7 @@ impl PlayMode {
             PlayMode::PassThePot => ModeId::PassThePot,
             PlayMode::HotPotato => ModeId::HotPotato,
             PlayMode::PigToss => ModeId::PigToss,
+            PlayMode::SugarRun => ModeId::SugarRun,
         }
     }
 
@@ -145,6 +151,7 @@ impl PlayMode {
             ModeId::PassThePot => PlayMode::PassThePot,
             ModeId::HotPotato => PlayMode::HotPotato,
             ModeId::PigToss => PlayMode::PigToss,
+            ModeId::SugarRun => PlayMode::SugarRun,
         }
     }
 
@@ -157,6 +164,7 @@ impl PlayMode {
             (PlayMode::PassThePot, true) => &[Page::Mode, Page::Pot, Page::Settings],
             (PlayMode::HotPotato, true) => &[Page::Mode, Page::Fuse, Page::Settings],
             (PlayMode::PigToss, true) => &[Page::Mode, Page::Players, Page::Settings],
+            (PlayMode::SugarRun, true) => &[Page::Mode, Page::Ants, Page::Settings],
             _ => &[Page::Count, Page::Die, Page::Settings],
         }
     }
@@ -181,6 +189,8 @@ pub enum Page {
     Players,
     /// Pig Toss: player `n`'s (0-based) initial or symbol.
     Token(u8),
+    /// Sugar Run's option: how many ants give chase.
+    Ants,
     /// Pig Toss while a game is in play: hold to end it. Players takes its
     /// place once it's ended.
     EndGame,
@@ -219,6 +229,7 @@ impl Page {
                 4 => "Player 5",
                 _ => "Player 6",
             },
+            Page::Ants => "Ants",
             Page::EndGame => "End game",
             Page::Settings => "Settings",
         }
@@ -263,6 +274,8 @@ pub enum Setup {
     HotPotato,
     /// Pig Toss for this many players.
     Pigs(u8),
+    /// Sugar Run with this many ants.
+    SugarRun(u8),
 }
 
 impl Setup {
@@ -280,6 +293,11 @@ impl Setup {
                 let _ = s.push_str("Pig Toss");
                 s
             }
+            Setup::SugarRun(_) => {
+                let mut s = String::new();
+                let _ = s.push_str("Sugar Run");
+                s
+            }
         }
     }
 
@@ -289,6 +307,7 @@ impl Setup {
             Setup::Roll(..) => "Ready to roll",
             Setup::HotPotato => "Shake to light",
             Setup::Pigs(_) => "Shake to roll",
+            Setup::SugarRun(_) => "Shake to start",
         }
     }
 
@@ -304,6 +323,11 @@ impl Setup {
             Setup::Pigs(players) => {
                 let mut s = String::new();
                 let _ = write!(s, "Pigs ×{players}");
+                s
+            }
+            Setup::SugarRun(ants) => {
+                let mut s = String::new();
+                let _ = write!(s, "Run ×{ants}");
                 s
             }
         }
@@ -333,6 +357,8 @@ pub struct Settings {
     pub players: u8,
     /// Pig Toss: each player's initial or symbol.
     pub tokens: [Token; MAX_PLAYERS as usize],
+    /// Sugar Run: how many ants give chase.
+    pub ants: u8,
     /// The chosen option of each [`SETTINGS`] item.
     pub choices: Choices,
     /// A short id made from the die's serial, which About shows. It is the
@@ -369,6 +395,7 @@ impl Default for Settings {
             fuse: Fuse::Medium,
             players: crate::pigs::MIN_PLAYERS,
             tokens: DEFAULT_TOKENS,
+            ants: crate::maze::DEFAULT_ANTS,
             choices: default_choices(),
             device_id: 0,
             night_hours: (crate::nest::NIGHT_START_H, crate::nest::NIGHT_END_H),
@@ -428,7 +455,9 @@ impl Settings {
     /// doesn't roll leaves this at the dice setup.
     pub fn active(&self) -> (DieKind, u8) {
         match self.play() {
-            PlayMode::Dice | PlayMode::HotPotato | PlayMode::PigToss => (self.die, self.count),
+            PlayMode::Dice | PlayMode::HotPotato | PlayMode::PigToss | PlayMode::SugarRun => {
+                (self.die, self.count)
+            }
             PlayMode::PassThePot => (DieKind::PassThePot, self.pot_count),
         }
     }
@@ -438,6 +467,7 @@ impl Settings {
         match self.play() {
             PlayMode::HotPotato => Setup::HotPotato,
             PlayMode::PigToss => Setup::Pigs(self.players),
+            PlayMode::SugarRun => Setup::SugarRun(self.ants),
             _ => {
                 let (die, count) = self.active();
                 Setup::Roll(die, count)
@@ -459,6 +489,7 @@ pub struct Draft {
     pub fuse: Fuse,
     pub players: u8,
     pub tokens: [Token; MAX_PLAYERS as usize],
+    pub ants: u8,
     /// Index into [`SETTINGS`].
     pub setting: u8,
     pub choices: Choices,
@@ -493,6 +524,7 @@ impl Draft {
             fuse: s.fuse,
             players: s.players,
             tokens: s.tokens,
+            ants: s.ants,
             setting: 0,
             choices: s.choices,
             device_id: s.device_id,
@@ -607,6 +639,11 @@ impl Draft {
                         let t = &mut next.tokens[i as usize];
                         *t = t.stepped(by as i32);
                     }
+                    Page::Ants => {
+                        let n = (crate::maze::MAX_ANTS - crate::maze::MIN_ANTS + 1) as usize;
+                        let i = (self.ants - crate::maze::MIN_ANTS) as usize;
+                        next.ants = step(i, by, n) as u8 + crate::maze::MIN_ANTS;
+                    }
                     Page::EndGame => {}
                     Page::Settings => {
                         next.setting = step(self.setting as usize, by, SETTINGS.len()) as u8;
@@ -676,6 +713,7 @@ impl Draft {
         s.fuse = self.fuse;
         s.players = self.players;
         s.tokens = self.tokens;
+        s.ants = self.ants;
         s.choices = self.choices;
     }
 
@@ -719,6 +757,7 @@ impl Draft {
                     _ => Ok(()),
                 }
             }
+            Page::Ants => write!(s, "{}", self.ants),
             Page::EndGame => Ok(()),
             Page::Settings => write!(s, "{}", self.setting().0),
         };
@@ -859,6 +898,27 @@ mod tests {
         assert_eq!(fuse.tipped(TipDir::Up).tipped(TipDir::Up).fuse, Fuse::Short);
         assert_eq!(fuse.tipped(TipDir::Down).value().as_str(), "Short");
         assert_eq!(fuse.tipped(TipDir::Left).page, Page::Settings);
+    }
+
+    #[test]
+    fn sugar_run_has_an_ants_page_and_does_not_roll() {
+        let run = Draft::new(&Settings::default())
+            .tipped(TipDir::Right)
+            .tipped(TipDir::Down);
+        assert_eq!(run.play, PlayMode::SugarRun, "last on the Mode page");
+        assert!(!run.play.rolls());
+        assert_eq!(run.setup(), Setup::SugarRun(crate::maze::DEFAULT_ANTS));
+        let ants = run.tipped(TipDir::Left);
+        assert_eq!(ants.page, Page::Ants);
+        assert_eq!(ants.value().as_str(), "3");
+        assert_eq!(ants.tipped(TipDir::Up).ants, 4);
+        assert_eq!(ants.tipped(TipDir::Up).tipped(TipDir::Up).ants, 1, "wraps");
+        assert_eq!(ants.tipped(TipDir::Left).page, Page::Settings);
+        let mut s = Settings::default();
+        ants.tipped(TipDir::Down).commit(&mut s);
+        assert_eq!(s.setup(), Setup::SugarRun(2));
+        assert_eq!(s.setup().short_label().as_str(), "Run ×2");
+        assert_eq!(s.setup().nudge(), "Shake to start");
     }
 
     #[test]
@@ -1194,8 +1254,12 @@ mod tests {
         assert_eq!(p2.page, Page::Token(1));
         assert_eq!(p2.held(), Held::Save);
         assert!(p2.ended && p2.set_up());
-        // ...or off to Dice with the game ended and no new one.
-        let dice = players.tipped(TipDir::Right).tipped(TipDir::Up);
+        // ...or off to Dice (past Sugar Run) with the game ended and no new
+        // one.
+        let dice = players
+            .tipped(TipDir::Right)
+            .tipped(TipDir::Up)
+            .tipped(TipDir::Up);
         assert_eq!(dice.play, PlayMode::Dice);
         assert_eq!(dice.held(), Held::Save);
         assert!(dice.ended && !dice.set_up());
@@ -1204,7 +1268,8 @@ mod tests {
     #[test]
     fn switching_modes_keeps_the_game() {
         let d = Draft::new(&pigs(2)).with_session(true);
-        let dice = d.tipped(TipDir::Up);
+        // Up past Sugar Run, round to Dice.
+        let dice = d.tipped(TipDir::Up).tipped(TipDir::Up);
         assert_eq!(dice.play, PlayMode::Dice);
         assert_eq!(dice.held(), Held::Save);
         assert!(!dice.ended);
@@ -1214,6 +1279,7 @@ mod tests {
         let back = Draft::new(&s)
             .with_session(true)
             .tipped(TipDir::Right)
+            .tipped(TipDir::Down)
             .tipped(TipDir::Down);
         assert_eq!(back.play, PlayMode::PigToss);
         assert_eq!(back.held(), Held::Save);

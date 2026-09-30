@@ -282,6 +282,15 @@ impl<'a> Painter<'a> {
     /// bounds. `sdf` returns canvas units (negative inside).
     pub fn shape(&mut self, bounds: (f32, f32, f32, f32), style: Style, sdf: impl Fn(f32, f32) -> f32) {
         self.begin();
+        self.add_shape(bounds, sdf);
+        self.finish(style);
+    }
+
+    /// Add a shape's coverage to the current draw call without finishing
+    /// it: many small shapes between one [`Painter::begin`] and
+    /// [`Painter::finish`] are painted as one, each rasterized only over
+    /// its own bounds.
+    pub fn add_shape(&mut self, bounds: (f32, f32, f32, f32), sdf: impl Fn(f32, f32) -> f32) {
         let r = self.xf.bounds(bounds.0, bounds.1, bounds.2, bounds.3, 1.0);
         let ppu = self.xf.px_per_unit();
         for y in r.y0..r.y1 {
@@ -292,7 +301,6 @@ impl<'a> Painter<'a> {
             }
         }
         self.mark(r);
-        self.finish(style);
     }
 
     pub fn fill_circle(&mut self, cx: f32, cy: f32, radius: f32, style: Style) {

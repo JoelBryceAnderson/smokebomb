@@ -19,9 +19,11 @@ the real firmware, the backend that verifies rolls, and the phone app.
   on the throw and tumble off the faces as the result appears. Themes ship
   sprites and parameters, not frames.
 - **Game modes.** Dice, Pass the Pot (the menu page is the bills in your
-  hand) and Hot Potato (set a fuse length and pass it round),
-  and Pig Toss (two 3D pigs tumble across the screens instead of sugar and land
-  in scored poses; set 2–6 players, tap to bank and pass the die).
+  hand), Hot Potato (set a fuse length and pass it round),
+  Pig Toss (two 3D pigs tumble across the screens instead of sugar and land
+  in scored poses; set 2–6 players, tap to bank and pass the die), and Sugar
+  Run (a maze over the whole cube: tilt to run it, eat the sugar, dodge the
+  ants; the map rolls over the die to keep you on top).
 - **On-die menu.** Press and hold a screen to open it, tip the die to move
   between pages and values, tap to edit a setting, hold to save. Turning
   several faces in one swipe steps several pages or values. Settings include

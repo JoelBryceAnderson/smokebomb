@@ -1,7 +1,7 @@
 // Mirror of packages/simulator/server/src/protocol.rs.
 
 /** Must match `PROTOCOL_VERSION` in the server's protocol.rs. */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export const FACE_COUNT = 6;
 export const PANEL_SIZE = 96;
@@ -46,6 +46,8 @@ export type ClientMessage =
   | { type: "spin"; axis: SpinAxis; angle: number; right: [number, number, number] }
   | { type: "spin_end" }
   | { type: "rotate"; yaw: number; pitch: number }
+  /** Lean the die in the hand, radians: right side down, far side down. Zeros level it. */
+  | { type: "tilt"; right: number; away: number; viewer_right: [number, number, number] }
   | { type: "place_face_up"; face: number }
   | { type: "dock"; docked: boolean }
   | { type: "place_in_nest"; face: number; quarters: number }

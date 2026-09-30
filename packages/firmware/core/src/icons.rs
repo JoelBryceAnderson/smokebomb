@@ -1,5 +1,6 @@
 //! Line-art icons for the setup label: a wireframe of each die's solid, a
-//! bomb for Hot Potato and a banknote for Pass the Pot. Coordinates are
+//! bomb for Hot Potato, a banknote for Pass the Pot and the runner for
+//! Sugar Run. Coordinates are
 //! canvas units around the icon's centre; `r` is the icon's radius.
 
 use libm::{cosf, sinf};
@@ -35,8 +36,18 @@ pub fn draw_setup_icon<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, cx: f32, cy:
         Setup::Pigs(_) => {
             crate::pigfx::draw_icon(c.painter, cx, cy, r, alpha);
         }
+        Setup::SugarRun(_) => sugar_run(c, cx, cy, r, style),
         Setup::Roll(DieKind::PassThePot, _) => banknote(c, cx, cy, r, style),
         Setup::Roll(die, _) => die_solid(c, die, cx, cy, r, style),
+    }
+}
+
+/// Sugar Run: the runner, mouth open, with sugar to eat ahead of it.
+fn sugar_run<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Style) {
+    crate::mazefx::draw_runner_icon(c.painter, cx - r * 0.32, cy, r * 0.62, style);
+    for k in 0..2 {
+        let x = cx + r * (0.55 + 0.4 * k as f32);
+        c.painter.fill_circle(x, cy, r * 0.11, style);
     }
 }
 
