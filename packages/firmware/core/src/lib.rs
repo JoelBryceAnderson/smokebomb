@@ -623,6 +623,7 @@ impl<P: Platform> Firmware<P> {
         self.pending_special = None;
         if self.settings.haptics_on() {
             let effect = match throw.outcome {
+                _ if throw.won => smokebomb_hal::HapticEffect::MaxCelebration,
                 pigs::Outcome::Smooch => smokebomb_hal::HapticEffect::Dud,
                 pigs::Outcome::Bust => smokebomb_hal::HapticEffect::Buzz,
                 pigs::Outcome::Score(_) => smokebomb_hal::HapticEffect::Tick,
@@ -649,8 +650,14 @@ impl<P: Platform> Firmware<P> {
         Ok(())
     }
 
-    /// A tap in Pig Toss: bank the turn and pass the die.
+    /// A tap in Pig Toss: bank the turn and pass the die, or start a new
+    /// game once the win screen is up.
     fn bank_pigs(&mut self, now: u64) -> HalResult<()> {
+        // A winning throw is still counting up: don't wipe it before the
+        // win screen has had its moment.
+        if self.pigs.last().is_some_and(|t| t.won) && self.pig_win_t(now).is_none() {
+            return Ok(());
+        }
         let players = self.pigs.players();
         let locked = match self.pigs.bank() {
             pigs::Banked::Passed {
@@ -663,35 +670,26 @@ impl<P: Platform> Firmware<P> {
                 before: total - points,
                 after: total,
                 next: (player + 1) % players,
-                won: false,
-            }),
-            pigs::Banked::Won {
-                player,
-                points,
-                total,
-            } => Some(pigs::Locked {
-                player,
-                points,
-                before: total - points,
-                after: total,
-                next: player,
-                won: true,
             }),
             pigs::Banked::Nothing | pigs::Banked::NewGame => None,
         };
         self.locked = locked.map(|l| (l, now));
-        if let Some(l) = locked {
-            if self.settings.haptics_on() {
-                // A thunk as it locks; a celebration for a win.
-                let effect = if l.won {
-                    smokebomb_hal::HapticEffect::MaxCelebration
-                } else {
-                    smokebomb_hal::HapticEffect::LandingThud
-                };
-                self.hw.haptics.play(effect)?;
-            }
+        if locked.is_some() && self.settings.haptics_on() {
+            // A thunk as it locks.
+            self.hw.haptics.play(smokebomb_hal::HapticEffect::LandingThud)?;
         }
         Ok(())
+    }
+
+    /// Seconds since the winning throw's score gave way to the win screen,
+    /// once it has.
+    fn pig_win_t(&self, now: u64) -> Option<f32> {
+        let since_landing = now.saturating_sub(self.pig_landed_ms) as f32 / 1000.0;
+        (self.settings.play() == PlayMode::PigToss
+            && self.pigs.last().is_some_and(|t| t.won)
+            && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. })
+            && since_landing >= screens::pig_win::AT)
+            .then_some(since_landing - screens::pig_win::AT)
     }
 
     /// Do what the game asked for: haptics and smoke.
@@ -1133,7 +1131,14 @@ impl<P: Platform> Firmware<P> {
         // into their poses once it lands, for as long as the result is up.
         let since_landing = now.saturating_sub(self.pig_landed_ms) as f32 / 1000.0;
         let players = self.pigs.players();
-        let pig_scene = if !pigs_on || matches!(mode, Mode::Menu | Mode::Nest | Mode::Off) {
+        // A winning throw's score gives way to the win screen.
+        let pig_win = self.pig_win_t(now).and_then(|t| {
+            let fade = (LOCKED_MS as f32 / 1000.0 - t).clamp(0.0, 1.5) / 1.5;
+            let winner = self.pigs.winner()?;
+            (fade > 0.0).then(|| (winner, self.pigs.scores()[winner as usize], t, fade))
+        });
+        let win_up = pig_win.is_some();
+        let pig_scene = if !pigs_on || win_up || matches!(mode, Mode::Menu | Mode::Nest | Mode::Off) {
             None
         } else if matches!(mode, Mode::Shaking | Mode::Airborne | Mode::Settling) {
             Some(pigfx::Scene::Tumbling(self.pig_clock))
@@ -1154,7 +1159,7 @@ impl<P: Platform> Firmware<P> {
         let pig_alpha = if matches!(mode, Mode::Shaking | Mode::Airborne | Mode::Settling) {
             1.0
         } else {
-            self.ui.result_dim(now)
+            self.ui.result_dim(now) * screens::pig_win::score_fade(self.pigs.last(), since_landing)
         };
         // A bank locking in: a padlock snaps shut and the score counts up.
         let locked = self
@@ -1207,7 +1212,7 @@ impl<P: Platform> Firmware<P> {
             // A round of Hot Potato takes the faces, except the one facing
             // down (H2).
             let potato_face = potato_view.filter(|_| face != up.opposite());
-            let content = if potato_face.is_some() || locked.is_some() {
+            let content = if potato_face.is_some() || locked.is_some() || win_up {
                 FaceContent::Blank
             } else {
                 content
@@ -1252,6 +1257,7 @@ impl<P: Platform> Firmware<P> {
                 FaceContent::Result { alpha } => {
                     if let Some(t) = pigs_throw {
                         let next = (t.player + 1) % players;
+                        let alpha = alpha * screens::pig_win::score_fade(Some(&t), since_landing);
                         screens::draw_pig_score(&mut c, &t, since_landing, next, alpha);
                     } else if let Some(r) = record {
                         screens::draw_result(&mut c, r, ui.special(), alpha);
@@ -1290,6 +1296,11 @@ impl<P: Platform> Firmware<P> {
                         t,
                         (LOCKED_MS as f32 / 1000.0 - t).clamp(0.0, 1.5) / 1.5,
                     );
+                }
+            }
+            if let Some((player, total, t, fade)) = pig_win {
+                if face != up.opposite() {
+                    screens::draw_pig_win(&mut c, player, total, t, fade);
                 }
             }
             if let Some(scene) = pig_scene {

@@ -26,7 +26,8 @@
 //!   **smooch**, about one throw in a hundred) the player's whole banked
 //!   score goes back to 0, the turn is lost and the die passes.
 //!
-//! First to [`TARGET`] wins, once they bank it.
+//! First to [`TARGET`] wins: the throw that takes the player's banked
+//! score plus the turn's points there wins on the spot, with no bank.
 //!
 //! Like [`crate::potato::Potato`] this is pure: the firmware draws the
 //! poses from its RNG and passes them in.
@@ -37,7 +38,7 @@ use heapless::String;
 
 pub const MIN_PLAYERS: u8 = 2;
 pub const MAX_PLAYERS: u8 = 6;
-/// Banked points that win the game.
+/// The score that wins the game.
 pub const TARGET: u16 = 100;
 
 /// How a pig can land.
@@ -178,6 +179,8 @@ pub struct Throw {
     pub turn_before: u16,
     /// The player's banked score before this throw (what a smooch wipes).
     pub banked_before: u16,
+    /// This throw took the player to the target and won the game.
+    pub won: bool,
 }
 
 /// What the faces show while a bank locks in: who banked what, and who has
@@ -192,7 +195,6 @@ pub struct Locked {
     pub after: u16,
     /// Who the die passes to.
     pub next: u8,
-    pub won: bool,
 }
 
 /// What banking did.
@@ -203,8 +205,6 @@ pub enum Banked {
     /// The turn's points went to the player, who is now on `total`, and the
     /// die passed on.
     Passed { player: u8, points: u16, total: u16 },
-    /// The banked points reached the target.
-    Won { player: u8, points: u16, total: u16 },
     /// A tap on a finished game starts the next one.
     NewGame,
 }
@@ -268,17 +268,28 @@ impl Pigs {
     /// touching, are already drawn.
     pub fn throw(&mut self, poses: [Pose; 2], touching: bool) -> Throw {
         let outcome = if touching { Outcome::Smooch } else { score(poses) };
-        let throw = Throw {
+        let mut throw = Throw {
             poses,
             outcome,
             touching,
             player: self.current,
             turn_before: self.turn,
             banked_before: self.scores[self.current as usize],
+            won: false,
         };
         if self.winner.is_none() {
             match outcome {
-                Outcome::Score(points) => self.turn += points,
+                Outcome::Score(points) => {
+                    self.turn += points;
+                    // Reaching the target wins there and then: no bank.
+                    let total = self.scores[self.current as usize] + self.turn;
+                    if total >= TARGET {
+                        self.scores[self.current as usize] = total;
+                        self.turn = 0;
+                        self.winner = Some(self.current);
+                        throw.won = true;
+                    }
+                }
                 Outcome::Bust => {
                     self.turn = 0;
                     self.advance();
@@ -310,20 +321,11 @@ impl Pigs {
         let total = self.scores[player as usize] + points;
         self.scores[player as usize] = total;
         self.turn = 0;
-        if total >= TARGET {
-            self.winner = Some(player);
-            Banked::Won {
-                player,
-                points,
-                total,
-            }
-        } else {
-            self.advance();
-            Banked::Passed {
-                player,
-                points,
-                total,
-            }
+        self.advance();
+        Banked::Passed {
+            player,
+            points,
+            total,
         }
     }
 
@@ -498,22 +500,19 @@ mod tests {
     }
 
     #[test]
-    fn banking_the_target_wins_and_a_tap_starts_again() {
+    fn reaching_the_target_wins_without_a_bank_and_a_tap_starts_again() {
         let mut g = Pigs::new(2);
-        for _ in 0..5 {
-            g.throw([Back, Back], false);
+        for _ in 0..4 {
+            assert!(!g.throw([Back, Back], false).won);
         }
-        assert_eq!(g.turn(), 100);
-        assert_eq!(g.winner(), None, "not won until banked");
-        assert_eq!(
-            g.bank(),
-            Banked::Won {
-                player: 0,
-                points: 100,
-                total: 100
-            }
-        );
+        assert_eq!(g.turn(), 80);
+        assert_eq!(g.winner(), None);
+        let t = g.throw([Back, Back], false);
+        assert!(t.won, "the throw that reaches the target wins");
         assert_eq!(g.winner(), Some(0));
+        assert_eq!(g.scores(), &[100, 0], "the turn goes into the score");
+        assert_eq!(g.turn(), 0);
+        assert_eq!(g.current(), 0, "the die stays with the winner");
         assert_eq!(g.status().as_str(), "P1 wins!");
         g.throw([Back, Feet], false);
         assert_eq!(g.turn(), 0, "no throwing once it's won");
@@ -521,6 +520,19 @@ mod tests {
         assert_eq!(g.scores(), &[0, 0]);
         assert_eq!(g.winner(), None);
         assert_eq!(g.players(), 2);
+    }
+
+    #[test]
+    fn banked_points_count_towards_the_target() {
+        let mut g = Pigs::new(2);
+        g.throw([Ear, Ear], false);
+        g.bank();
+        g.throw([Back, Feet], false);
+        g.bank();
+        assert_eq!(g.scores(), &[60, 10]);
+        g.throw([Nose, Nose], false);
+        assert_eq!(g.winner(), Some(0), "60 banked + 40 thrown");
+        assert_eq!(g.scores(), &[100, 10]);
     }
 
     #[test]

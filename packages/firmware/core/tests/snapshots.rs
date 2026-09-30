@@ -611,6 +611,30 @@ fn pigs_smooch_wipes_the_score() {
     );
 }
 
+/// A throw that takes the player to 100 wins on the spot, no bank: the
+/// score counts up, then a happy pig takes over.
+#[test]
+fn pigs_win() {
+    use smokebomb_core::pigs::Pose::*;
+    let run = Run::new().with_settings(|s| {
+        s.enabled = ModeSet::ALL;
+        s.play = smokebomb_core::menu::PlayMode::PigToss;
+    });
+    run_timeline(
+        "pigs-win",
+        run,
+        &[30.9, 31.8, 32.3, 32.5, 32.8, 33.3, 34.5],
+        vec![
+            // Player 1 banks 60, player 2 banks 10, then player 1 throws 40.
+            (THROW_AT, |r| r.throw_pigs([Ear, Ear])),
+            (15.6, Run::tap),
+            (19.0, |r| r.throw_pigs([Back, Feet])),
+            (24.6, Run::tap),
+            (28.0, |r| r.throw_pigs([Nose, Nose])),
+        ],
+    );
+}
+
 /// Between turns the label shows a little pig and whose go it is.
 #[test]
 fn pigs_wake_label() {

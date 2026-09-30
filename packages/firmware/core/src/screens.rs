@@ -15,7 +15,7 @@ use crate::font::{fit_px, Align, Fonts, SCRIPT};
 use crate::gfx::{segment_distance, triangle_distance, Painter, Style};
 use crate::menu::{Draft, Page, Setup};
 use crate::nest::{ChargeView, ClockView, Label, NestFace, Screen};
-use crate::pigs::{throw_label, Locked, Outcome, Throw, TARGET};
+use crate::pigs::{throw_label, Locked, Outcome, Throw};
 use crate::smoke::Special;
 
 /// The lit area's half-size in canvas units.
@@ -680,20 +680,9 @@ pub fn draw_pig_score<A: AssetStore>(c: &mut Ctx<A>, throw: &Throw, t: f32, next
             );
         } else {
             c.text("Shake to roll again", 0.0, 56.0, 14, style(prompt * 0.7, 0.0));
-            // The action that matters breathes a little. Banking what is
-            // enough to reach the target wins, so it says so.
+            // The action that matters breathes a little.
             let breathe = 0.85 + 0.15 * sinf((t - PROMPT_AT) * 4.0);
-            let turn = throw.turn_before
-                + if let Outcome::Score(p) = throw.outcome {
-                    p
-                } else {
-                    0
-                };
-            let line = if banked + turn >= TARGET {
-                "Tap top to WIN!"
-            } else {
-                "Tap top to bank & pass"
-            };
+            let line = "Tap top to bank & pass";
             c.text(
                 line,
                 0.0,
@@ -790,24 +779,138 @@ pub fn draw_locked<A: AssetStore>(c: &mut Ctx<A>, l: &Locked, t: f32, fade: f32)
 
     let next = ramp(t, NEXT_AT, 0.3);
     if next > 0.0 {
-        if l.won {
-            let breathe = 0.8 + 0.2 * sinf((t - NEXT_AT) * 5.0);
-            let mut line: String<24> = String::new();
-            let _ = write!(line, "P{} WINS!", l.player + 1);
-            c.text(&line, 0.0, 64.0, 20, style(next * breathe, 8.0));
-            c.text("Tap top: new game", 0.0, 79.0, 12, style(next * 0.7, 0.0));
+        let mut line: String<24> = String::new();
+        let _ = write!(line, "P{} · shake to roll", l.next + 1);
+        c.text(
+            &line,
+            0.0,
+            66.0,
+            fit_px(&line, 16, 150.0),
+            style(next * 0.85, 4.0),
+        );
+    }
+}
+
+/// The win: once a winning throw's score has counted up, it fades and a
+/// happy pig takes over.
+pub mod pig_win {
+    use crate::pigs::Throw;
+
+    /// Seconds after the die lands that the win screen starts: the throw's
+    /// points have popped in and the total has counted up.
+    pub const AT: f32 = 3.2;
+    /// How long the throw's score takes to fade out before it.
+    pub const FADE_S: f32 = 0.4;
+
+    /// How much of the throw's score to show, `t` seconds after landing:
+    /// all of it, unless the throw won, when it fades out before the win.
+    pub fn score_fade(throw: Option<&Throw>, t: f32) -> f32 {
+        if throw.is_some_and(|t| t.won) {
+            1.0 - super::ramp(t, AT - FADE_S, FADE_S)
         } else {
-            let mut line: String<24> = String::new();
-            let _ = write!(line, "P{} · shake to roll", l.next + 1);
-            c.text(
-                &line,
-                0.0,
-                66.0,
-                fit_px(&line, 16, 150.0),
-                style(next * 0.85, 4.0),
-            );
+            1.0
         }
     }
+}
+
+/// The win screen, `t` seconds in: a happy pig face bounces in with a burst
+/// of sparks, then who won, their score, and how to start again. `fade`
+/// (0–1) takes it away when it has been up a while.
+pub fn draw_pig_win<A: AssetStore>(c: &mut Ctx<A>, player: u8, total: u16, t: f32, fade: f32) {
+    use core::f32::consts::PI;
+    let alpha = ramp(t, 0.0, 0.2) * fade;
+    let style = |a: f32, glow: f32| Style::new(FG, alpha * a, glow);
+
+    // The pig pops in with an overshoot, then bobs gently.
+    let pop = ramp(t, 0.0, 0.45);
+    let over = 1.0 - pop;
+    let scale = (1.0 - over * over * over) * (1.0 + 0.25 * sinf(pop * PI));
+    let bob = if pop >= 1.0 {
+        2.0 * sinf((t - 0.45) * 3.5)
+    } else {
+        0.0
+    };
+    c.shifted(0.0, -22.0 + bob, scale.max(0.01), |c| draw_happy_pig(c, alpha));
+
+    // Sparks as it lands.
+    let u = ((t - 0.35) / 0.7).clamp(0.0, 1.0);
+    if t > 0.35 && u < 1.0 {
+        for k in 0..12 {
+            let a = k as f32 * PI / 6.0 + 0.2;
+            let r = 36.0 + 42.0 * u * (0.7 + 0.3 * ((k % 3) as f32 / 2.0));
+            let dot = Style::new(FG, alpha * (1.0 - u), 4.0);
+            c.painter
+                .fill_circle(cosf(a) * r, -22.0 + sinf(a) * r, 2.6 * (1.0 - 0.6 * u), dot);
+        }
+    }
+
+    let words = ramp(t, 0.6, 0.3);
+    if words > 0.0 {
+        let breathe = 0.8 + 0.2 * sinf((t - 0.6) * 5.0);
+        let mut line: String<24> = String::new();
+        let _ = write!(line, "P{} WINS!", player + 1);
+        c.text(&line, 0.0, 36.0, 22, style(words * breathe, 10.0));
+        let mut score: String<16> = String::new();
+        let _ = write!(score, "{total} points");
+        c.text(&score, 0.0, 56.0, 13, style(words * 0.75, 0.0));
+    }
+    let prompt = ramp(t, 1.6, 0.3);
+    if prompt > 0.0 {
+        c.text("Tap top: new game", 0.0, 72.0, 12, style(prompt * 0.7, 0.0));
+    }
+}
+
+/// A happy pig's face, centred on the origin, about 60 units across: round
+/// head and ears, smiling closed eyes, a snout, and rosy cheeks.
+fn draw_happy_pig<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
+    use core::f32::consts::PI;
+    let face = Style::new(FG, alpha, 10.0);
+    let dark = Style::new(0, alpha, 0.0);
+    let r = 24.0;
+    // Ears: triangles poking up from the top of the head, a dark inner fold.
+    for s in [-1.0f32, 1.0] {
+        c.painter
+            .fill_triangle([(s * 11.0, -20.0), (s * 25.0, -12.0), (s * 24.0, -31.0)], face);
+        c.painter.fill_triangle(
+            [(s * 15.0, -19.0), (s * 22.0, -15.0), (s * 21.5, -25.0)],
+            Style::new(0, alpha * 0.45, 0.0),
+        );
+    }
+    c.painter.fill_circle(0.0, 0.0, r, face);
+    // Happy closed eyes: little upturned arcs.
+    for s in [-1.0f32, 1.0] {
+        c.painter
+            .stroke_arc(s * 9.0, -5.0, 4.0, PI * 1.1, PI * 1.9, 2.4, dark);
+    }
+    // Rosy cheeks.
+    for s in [-1.0f32, 1.0] {
+        c.painter
+            .fill_circle(s * 15.0, 5.0, 3.2, Style::new(0, alpha * 0.25, 0.0));
+    }
+    // The snout: a dark oval rim round a lighter one, with two nostrils.
+    let (sw, sh, sy) = (10.0, 6.5, 5.0);
+    let oval = |w: f32, h: f32| {
+        move |x: f32, y: f32| {
+            let (u, v) = (x / w, (y - sy) / h);
+            (sqrtf(u * u + v * v) - 1.0) * w.min(h)
+        }
+    };
+    c.painter.shape(
+        (-sw - 1.0, sy - sh - 1.0, sw + 1.0, sy + sh + 1.0),
+        dark,
+        oval(sw, sh),
+    );
+    c.painter.shape(
+        (-sw, sy - sh, sw, sy + sh),
+        Style::new(FG, alpha, 0.0),
+        oval(sw - 2.0, sh - 2.0),
+    );
+    for s in [-1.0f32, 1.0] {
+        c.painter.fill_circle(s * 3.6, sy, 1.8, dark);
+    }
+    // A big smile under the snout.
+    c.painter
+        .stroke_arc(0.0, 10.0, 8.0, PI * 0.2, PI * 0.8, 2.2, dark);
 }
 
 // ---------- Hot Potato ----------
