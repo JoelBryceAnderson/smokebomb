@@ -1159,11 +1159,10 @@ fn lean(run: &mut Run, right: f32, away: f32) {
 
 #[test]
 fn sugar_run() {
-    // Shake to start: the throw lands +Y up and the run starts on that
-    // screen as the die settles. The maze is locked to the die: the runner
-    // runs off the top onto +X, and setting +X up follows it. Leaning its
-    // screen steers it, until an ant catches it; the next life starts on the
-    // screen that's up, and set down level, it pauses.
+    // Shake to start: the throw lands +Y up and the run starts as it
+    // settles, the runner on top. It runs off the top toward +X and the map
+    // rolls over the die to keep it there. Leaning steers it, until an ant
+    // catches it; set down level, the next life pauses.
     let mut run =
         Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::SugarRun);
     run.world.as_mut().unwrap().set_next_landing(Face::PosY);
@@ -1171,12 +1170,11 @@ fn sugar_run() {
     run_timeline(
         "sugar-run",
         run,
-        &[11.2, 11.9, 12.3, 12.6, 13.5, 15.0, 18.0, 27.0],
+        &[11.2, 11.9, 12.0, 12.1, 12.3, 13.5, 15.0, 20.5, 27.0],
         vec![
             (9.0, Run::shake),
             (9.4, Run::throw_release),
-            (12.35, |r| world_of(r).place_face_up(Face::PosX)),
-            (13.0, |r| lean(r, 0.0, LEAN)),
+            (12.6, |r| lean(r, 0.0, LEAN)),
             (14.0, |r| lean(r, -LEAN, 0.0)),
             (15.2, |r| lean(r, 0.0, 0.0)),
         ],

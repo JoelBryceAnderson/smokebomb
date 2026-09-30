@@ -116,7 +116,18 @@ struct Tilt {
     /// Radians: right side down, and far side down, as the viewer sees it.
     target: [f32; 2],
     now: [f32; 2],
+    /// How far into the held pose (0–1): see [`World::set_held`].
+    hold: f32,
+    /// The viewer's right when the hold began: the hold tips about it, so a
+    /// lean sent with a moved camera doesn't swing the die.
+    hold_axis: Vec3,
 }
+
+/// Held up to play (Sugar Run): the top tipped this far toward the viewer,
+/// so its screen faces the camera, and turned a little about vertical so the
+/// die isn't square on.
+pub const HOLD_TOWARD: f32 = 0.7;
+pub const HOLD_TWIST: f32 = 0.2;
 
 struct Turn {
     start: f64,
@@ -140,6 +151,8 @@ pub struct World {
     turn: Option<Turn>,
     spin: Option<Spin>,
     tilt: Option<Tilt>,
+    /// Held up toward the viewer to play.
+    held: bool,
     /// The viewer's right in world space (horizontal). Tips use it as the
     /// up/down axis; the menu snap turns the held face toward the viewer.
     viewer_right: Vec3,
@@ -193,6 +206,7 @@ impl World {
             turn: None,
             spin: None,
             tilt: None,
+            held: false,
             viewer_right: DEFAULT_VIEWER_RIGHT,
             docked: false,
             dock_rot: Quat::IDENTITY,
@@ -258,7 +272,6 @@ impl World {
         }
         let front = self.viewer_right.cross(Vec3::Y);
         let to = Quat::from_axis_angle(front, -degrees.to_radians()) * self.pose.rotation;
-        self.tilt = None;
         self.turn = Some(Turn {
             start: self.time,
             duration: 0.3,
@@ -320,7 +333,6 @@ impl World {
         };
         let to = Quat::from_axis_angle(axis, angle) * self.pose.rotation;
         let duration = if self.reduced_motion { 0.15 } else { 0.42 };
-        self.tilt = None;
         self.turn = Some(Turn {
             start: self.time,
             duration,
@@ -351,7 +363,6 @@ impl World {
                     r
                 }
             };
-            self.tilt = None;
             self.spin = Some(Spin {
                 from: self.pose.rotation,
                 axis,
@@ -373,7 +384,6 @@ impl World {
         let quarter = std::f32::consts::FRAC_PI_2;
         let settled = (s.target / quarter).round() * quarter;
         let to = (Quat::from_axis_angle(s.axis, settled) * s.from).normalize();
-        self.tilt = None;
         self.turn = Some(Turn {
             start: self.time,
             duration: if self.reduced_motion { 0.12 } else { 0.25 },
@@ -392,7 +402,6 @@ impl World {
         if self.busy() || self.docked {
             return;
         }
-        self.tilt = None;
         self.turn = Some(Turn {
             start: self.time,
             duration: SNAP_S,
@@ -461,8 +470,31 @@ impl World {
             base,
             target: [0.0; 2],
             now: [0.0; 2],
+            hold: 0.0,
+            hold_axis: self.viewer_right,
         });
         t.target = [right, away];
+    }
+
+    /// Hold the die up to play, or set it back down: tipped about 40°
+    /// toward the viewer (with a slight twist) so its top screen faces the
+    /// camera, as a hand holds it to watch the top. Leans go on top of it.
+    /// It eases there and back; a shake or a throw lets go.
+    pub fn set_held(&mut self, on: bool) {
+        self.held = on;
+        if on && self.tilt.is_none() && !self.moving() && !self.docked {
+            self.tilt = Some(Tilt {
+                base: self.pose.rotation,
+                target: [0.0; 2],
+                now: [0.0; 2],
+                hold: 0.0,
+                hold_axis: self.viewer_right,
+            });
+        }
+    }
+
+    pub fn held(&self) -> bool {
+        self.held
     }
 
     /// Set the die down with `face` on top, taking the shortest turn.
@@ -474,7 +506,6 @@ impl World {
         self.nest_under = false;
         let normal = self.pose.rotation * face_normal(face);
         let to = Quat::from_rotation_arc(normal.normalize(), Vec3::Y) * self.pose.rotation;
-        self.tilt = None;
         self.turn = Some(Turn {
             start: self.time,
             duration: 0.35,
@@ -508,7 +539,6 @@ impl World {
 
     /// Seat the die in the Nest, settling into `rot`.
     fn seat(&mut self, rot: Quat) {
-        self.tilt = None;
         self.spin = None;
         self.shake_start = None;
         self.throw_when_ready = false;
@@ -587,9 +617,9 @@ impl World {
     }
 
     /// In a motion that owns the pose: nothing else may start. A lean
-    /// doesn't count: a tip, a spin or setting a face up takes over from it.
+    /// counts, except to turning the die in the hand or leaning it again.
     fn busy(&self) -> bool {
-        self.moving()
+        self.moving() || self.tilt.is_some()
     }
 
     fn moving(&self) -> bool {
@@ -690,7 +720,6 @@ impl World {
                 .into_iter()
                 .max_by(|a, b| toward(*a).total_cmp(&toward(*b)))
                 .unwrap_or(Face::PosZ);
-            self.tilt = None;
             self.turn = Some(Turn {
                 start: self.time,
                 duration: 0.3,
@@ -719,11 +748,17 @@ impl World {
             for i in 0..2 {
                 t.now[i] += (t.target[i] - t.now[i]) * k;
             }
+            // Raising it takes about half a second.
+            let hold_to = if self.held { 1.0 } else { 0.0 };
+            t.hold += (hold_to - t.hold) * (1.0 - (-6.0 * dt as f32).exp());
             let front = self.viewer_right.cross(Vec3::Y);
             let lean =
                 Quat::from_axis_angle(front, -t.now[0]) * Quat::from_axis_angle(self.viewer_right, -t.now[1]);
-            self.pose.rotation = (lean * t.base).normalize();
-            if t.target == [0.0; 2] && t.now.iter().all(|a| a.abs() < 1e-3) {
+            // Top toward the viewer: about the viewer's right.
+            let hold = Quat::from_rotation_y(HOLD_TWIST * t.hold)
+                * Quat::from_axis_angle(t.hold_axis, HOLD_TOWARD * t.hold);
+            self.pose.rotation = (lean * hold * t.base).normalize();
+            if !self.held && t.hold < 1e-3 && t.target == [0.0; 2] && t.now.iter().all(|a| a.abs() < 1e-3) {
                 self.pose.rotation = t.base;
                 self.tilt = None;
             }
@@ -1028,6 +1063,38 @@ mod tests {
         // Let go: level again, and nothing is left leaning.
         w.tilt(0.0, 0.0, Vec3::X);
         run(&mut w, 1.5);
+        assert!(w.tilt.is_none());
+        assert_eq!(w.pose.rotation, Quat::IDENTITY);
+    }
+
+    #[test]
+    fn held_up_to_play_the_top_faces_the_viewer_and_leans_go_on_top() {
+        let mut w = World::new();
+        w.pose.rotation = Quat::IDENTITY;
+        w.viewer_right = Vec3::X;
+        let front = Vec3::X.cross(Vec3::Y);
+        w.set_held(true);
+        let s = *run(&mut w, 2.0).last().unwrap();
+        let top = w.pose.rotation * Vec3::Y;
+        assert!(
+            top.dot(front) > 0.55,
+            "the top screen tips toward the viewer: {top}"
+        );
+        assert!(
+            s.gyro_mdps.iter().all(|g| g.abs() < 1_000),
+            "and is held still: {s:?}"
+        );
+        let held = w.pose.rotation;
+        // A lean goes on top of the hold, and letting go comes back to it.
+        w.tilt(0.35, 0.0, Vec3::X);
+        run(&mut w, 1.0);
+        assert!(w.pose.rotation.angle_between(held) > 0.3);
+        w.tilt(0.0, 0.0, Vec3::X);
+        run(&mut w, 1.5);
+        assert!(w.pose.rotation.angle_between(held) < 0.01);
+        // Set back down: level again.
+        w.set_held(false);
+        run(&mut w, 2.0);
         assert!(w.tilt.is_none());
         assert_eq!(w.pose.rotation, Quat::IDENTITY);
     }

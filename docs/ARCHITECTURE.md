@@ -191,12 +191,18 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   it the time, a seed, and the way the die leans as a way through the maze,
   and turns the `RunEvent`s it returns into haptics and sugar. Cells are
   doubled integer coordinates on the cube's surface, so a step off a face
-  turns the corner onto the next with no lookup tables. The maze is locked
-  to the die (each screen draws its own face of it), so following the runner
-  over an edge means tipping the die. The lean is gravity projected onto the
-  runner's screen, read only while that screen faces up and the die isn't
-  turning fast; it is kept, like a joystick held over. Each life starts on
-  the screen that's up. Lying level and still for 4 s pauses the run. A shake starts a run once it settles; mid-run taps and
+  turns the corner onto the next with no lookup tables. `maze::View` keeps
+  the runner's face on the physical top face: the maze's turn against the die
+  is a signed permutation matrix, and crossing an edge rolls it a quarter turn
+  (animated as slides and turns per screen, since a cube's surface only maps
+  onto itself in quarter turns). The runner's screen is locked for the run
+  (tipping the die over doesn't move it). The lean is measured on that
+  screen from a neutral (how the die was held once it settled, so it can be
+  held tipped toward you), must be held a moment with the die nearly still
+  to steer, and is kept, like a joystick held over; a change of more than
+  about 30° is a new grip and becomes the neutral. Lying level and still
+  for 4 s pauses the run. The simulator holds the die up toward the camera
+  while a run plays (`World::set_held`). A shake starts a run once it settles; mid-run taps and
   holds are the grip and do nothing.
 - **Draft.** The menu works on a `Draft` (`menu.rs`): page, mode, die, count,
   pot count and the Settings item, plus each Settings item's chosen option.
@@ -417,7 +423,7 @@ built by CI's Zephyr image workflow, which reports its memory) uses
   visuals belong there, as another variant, rather than in a field of their
   own: the block costs the biggest of them, not the sum. Sugar Run keeps the
   smoke and needs no buffer of its own: its maze is drawn straight from the
-  game state each frame, and the game (walls, sugar, walkers) is under 700 bytes,
+  game state each frame, and the game (walls, sugar, walkers) is 672 bytes,
   plus about 1.2 KB of stack while a new maze is drawn.
 - **Pigs** are ray-cast once a frame, not once a face: every face shows the
   same pigs, laid onto it turned the way it reads (`pigfx::Canvas`). They

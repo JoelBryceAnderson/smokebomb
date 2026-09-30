@@ -96,18 +96,24 @@ pub const LOCKED_MS: u64 = 12_000;
 pub const HOLD_RING_AFTER_MS: u64 = 220;
 /// The menu closes without saving after this long without a tip.
 pub const MENU_IDLE_MS: u64 = 25_000;
-/// Sugar Run: how far the runner's screen must lean (the sine of the
-/// angle) to steer, and to carry on after a pause, and how little the top
-/// leans when the die lies level.
+/// Sugar Run: how far the die must lean (the sine of the angle) to steer,
+/// to carry on after a pause, and how little it leans when it lies level.
 const RUN_STEER: f32 = 0.2;
 const RUN_RESUME: f32 = 0.3;
 const RUN_LEVEL: f32 = 0.1;
-/// The runner's screen steers once it faces up (within about 35°), has
-/// done so this long, and the die isn't turning faster than this: the tip
-/// that brings a screen up leans it on the way, and that isn't steering.
-const RUN_FACING: f32 = 0.82;
-const RUN_FACING_MS: u64 = 250;
-const RUN_STEADY_DPS: f32 = 200.0;
+/// The way the die is held counts as neutral once it has turned slower
+/// than this for this long after a run starts or carries on: steering is
+/// leaning away from however you hold it, not away from level.
+const RUN_STILL_DPS: f32 = 30.0;
+const RUN_NEUTRAL_MS: u64 = 300;
+/// A lean steers once it has been held this long, one way, with the die
+/// turning slower than this: raising the die to look at it passes through
+/// leans on the way, and those aren't steering.
+const RUN_HOLD_MS: u64 = 100;
+const RUN_HOLD_DPS: f32 = 60.0;
+/// Farther than this from neutral (about 30°) isn't a lean but a new grip:
+/// it doesn't steer, and once the die is still it's the new neutral.
+const RUN_REGRIP: f32 = 0.5;
 /// Lying level and still this long pauses a run: it has been set down.
 pub const RUN_PAUSE_MS: u64 = 4_000;
 /// How long the score shows once the game is over.
@@ -184,14 +190,26 @@ pub struct Firmware<P: Platform> {
     /// The screens' orientation, frozen while a result is up.
     frozen: Option<Frozen>,
     last_roll: Option<SignedRoll>,
-    /// Sugar Run: the game. The maze is locked to the die: each screen shows
-    /// its own face of it.
+    /// Sugar Run: the game, and which maze face each screen shows.
     run: maze::Game,
-    /// The way the runner's screen was last leaned: the runner turns that
+    run_view: maze::View,
+    /// The screen the runner is kept on: the one that was up when the run
+    /// began (or carried on after a pause). It stays that screen however
+    /// far the die is tipped, so leaning hard never moves the runner.
+    run_screen: Face,
+    /// The way the die was last tipped, in die axes: the runner turns that
     /// way at the next opening.
     run_want: Option<Face>,
-    /// Since when the runner's screen has faced up.
-    run_facing_since: Option<u64>,
+    /// Sky (die axes) as the die was held once it settled: the neutral the
+    /// lean steers from. None until it has settled.
+    run_neutral: Option<[f32; 3]>,
+    /// Since when the die has turned slowly enough to take the neutral.
+    run_steady_since: Option<u64>,
+    /// The lean being held, and since when, before it steers.
+    run_lean: Option<(Face, u64)>,
+    /// Sky as the die lay when the run paused: tilting away from it carries
+    /// on.
+    run_paused_sky: [f32; 3],
     /// How fast the die is turning, from the last IMU sample.
     gyro_dps: f32,
     /// Since when the die has lain level and still mid-run, and when the
@@ -286,9 +304,14 @@ impl<P: Platform> Firmware<P> {
             addr_of_mut!((*p).frozen).write(None);
             addr_of_mut!((*p).last_roll).write(None);
             addr_of_mut!((*p).run).write(maze::Game::new(settings.ants));
-            addr_of_mut!((*p).run_facing_since).write(None);
-            addr_of_mut!((*p).gyro_dps).write(0.0);
+            addr_of_mut!((*p).run_view).write(maze::View::new());
+            addr_of_mut!((*p).run_screen).write(Face::PosY);
             addr_of_mut!((*p).run_want).write(None);
+            addr_of_mut!((*p).run_neutral).write(None);
+            addr_of_mut!((*p).run_steady_since).write(None);
+            addr_of_mut!((*p).run_lean).write(None);
+            addr_of_mut!((*p).run_paused_sky).write([0.0, 1.0, 0.0]);
+            addr_of_mut!((*p).gyro_dps).write(0.0);
             addr_of_mut!((*p).run_level_since).write(None);
             addr_of_mut!((*p).run_paused_at).write(0);
             addr_of_mut!((*p).run_armed).write(false);
@@ -335,8 +358,13 @@ impl<P: Platform> Firmware<P> {
                 frozen,
                 last_roll,
                 run,
+                run_view,
+                run_screen,
                 run_want,
-                run_facing_since,
+                run_neutral,
+                run_steady_since,
+                run_lean,
+                run_paused_sky,
                 gyro_dps,
                 run_level_since,
                 run_paused_at,
@@ -447,6 +475,17 @@ impl<P: Platform> Firmware<P> {
     /// The Sugar Run game.
     pub fn run(&self) -> &maze::Game {
         &self.run
+    }
+
+    /// The way Sugar Run's runner was last steered (die axes), if it has
+    /// been since the run started or carried on.
+    pub fn run_want(&self) -> Option<Face> {
+        self.run_want
+    }
+
+    /// Which maze face each screen shows in Sugar Run.
+    pub fn run_view(&self) -> &maze::View {
+        &self.run_view
     }
 
     /// The Hot Potato round in play, if any.
@@ -684,14 +723,18 @@ impl<P: Platform> Firmware<P> {
         Ok(())
     }
 
-    /// A shake settled in Sugar Run: a new run, the runner on the screen
-    /// that's up.
+    /// A shake settled in Sugar Run: a new run, with the runner's face on
+    /// top.
     fn start_run(&mut self, now: u64) -> HalResult<()> {
         self.run_armed = false;
         let seed = self.hw.rng.next_u32()?;
-        let events = self.run.start(now, seed, self.up_face);
+        let events = self.run.start(now, seed);
+        self.run_screen = self.up_face;
+        self.run_view.snap(self.run_screen, maze::START.face());
         self.run_want = None;
-        self.run_facing_since = None;
+        self.run_neutral = None;
+        self.run_steady_since = None;
+        self.run_lean = None;
         self.run_level_since = None;
         self.ui.game_started();
         if let Some(smoke) = self.fx.smoke() {
@@ -705,37 +748,70 @@ impl<P: Platform> Firmware<P> {
         if self.run.phase() == RunPhase::Playing {
             self.run.pause();
             self.run_paused_at = now;
+            self.run_paused_sky = self.gravity.up();
         }
         self.run_level_since = None;
     }
 
-    /// Sugar Run each tick: steer by the lean of the runner's screen once it
-    /// faces up, pause when the die is set down and carry on when it's
-    /// leaned again, and play the run. The maze is locked to the die, so
-    /// when the runner goes over an edge you tip the die to follow it.
+    /// Sugar Run each tick: steer by the lean of the play screen, pause when
+    /// the die is set down and carry on when it's tilted again, keep the
+    /// runner's face on the play screen, and play the run.
+    ///
+    /// The play screen is locked for the run: tipping the die past 45°
+    /// changes which face is up, but not where the runner is. Only the
+    /// runner crossing an edge rolls the map. A pause lets go of the lock,
+    /// so a die set down on another face carries on with that one on top.
+    ///
+    /// The lean is measured from how the die is held (the neutral, taken
+    /// once it settles), not from level: a die held tipped toward you to see
+    /// its top screen isn't steering toward you.
     fn update_run(&mut self, now: u64, dt: f32) -> HalResult<()> {
         let sky = self.gravity.up();
-        let screen = self.run.runner.face();
-        let n = maze::axis(screen);
-        let facing = (0..3).map(|i| sky[i] * n[i] as f32).sum::<f32>();
-        if facing >= RUN_FACING {
-            self.run_facing_since.get_or_insert(now);
+        if self.run.phase() == RunPhase::Paused {
+            self.run_screen = self.up_face;
+            self.run_neutral = None;
+        }
+        let steady = if self.gyro_dps < RUN_STILL_DPS {
+            now.saturating_sub(*self.run_steady_since.get_or_insert(now))
         } else {
-            self.run_facing_since = None;
+            self.run_steady_since = None;
+            0
+        };
+        let screen = self.run_screen;
+        let playing = self.run.phase() != RunPhase::Paused;
+        match self.run_neutral {
+            None if playing && steady >= RUN_NEUTRAL_MS => self.run_neutral = Some(sky),
+            None => {}
+            Some(neutral) => {
+                let (way, lean) = lean_from(neutral, sky, screen);
+                if lean > RUN_REGRIP {
+                    // A new grip, not a lean: once still, it's the neutral.
+                    self.run_lean = None;
+                    if steady >= RUN_NEUTRAL_MS {
+                        self.run_neutral = Some(sky);
+                    }
+                } else if let Some(way) = way.filter(|_| lean >= RUN_STEER && self.gyro_dps < RUN_HOLD_DPS) {
+                    match self.run_lean {
+                        Some((held, since)) if held == way => {
+                            if now.saturating_sub(since) >= RUN_HOLD_MS {
+                                self.run_want = Some(way);
+                            }
+                        }
+                        _ => self.run_lean = Some((way, now)),
+                    }
+                } else {
+                    self.run_lean = None;
+                }
+            }
         }
-        let live = self
-            .run_facing_since
-            .is_some_and(|since| now.saturating_sub(since) >= RUN_FACING_MS)
-            && self.gyro_dps < RUN_STEADY_DPS;
-        let (downhill_way, lean) = downhill(sky, screen);
-        if live && lean >= RUN_STEER {
-            self.run_want = downhill_way;
-        }
-        // Set down means lying level on whatever face.
-        let (_, top_lean) = downhill(sky, self.up_face);
+        // Set down means lying level on whatever face, not only the play
+        // screen.
+        let (_, top_lean) = lean_from(maze::axis(self.up_face).map(|c| c as f32), sky, self.up_face);
+        let (_, moved) = lean_from(self.run_paused_sky, sky, screen);
         match self.run.phase() {
-            RunPhase::Paused if live && lean >= RUN_RESUME => {
+            RunPhase::Paused if moved >= RUN_RESUME => {
                 self.run.resume(now.saturating_sub(self.run_paused_at));
+                self.run_steady_since = None;
             }
             RunPhase::Playing if self.motion.is_still() && top_lean < RUN_LEVEL => {
                 let since = *self.run_level_since.get_or_insert(now);
@@ -745,7 +821,9 @@ impl<P: Platform> Firmware<P> {
             }
             _ => self.run_level_since = None,
         }
-        let events = self.run.step(now, dt, self.run_want, self.up_face);
+        self.run_view.update(now, screen, self.run.runner.face());
+        let want = self.run_want.map(|d| self.run_view.maze_way(d));
+        let events = self.run.step(now, dt, want);
         self.feel_run(&events)
     }
 
@@ -1435,6 +1513,7 @@ impl<P: Platform> Firmware<P> {
             sessions,
             fx,
             run,
+            run_view,
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
@@ -1484,11 +1563,13 @@ impl<P: Platform> Firmware<P> {
                 assets: &mut hw.assets,
             };
 
-            // Sugar Run's maze under everything: this screen's own face of
-            // it, square to the die rather than turned with the text.
+            // Sugar Run's maze under everything: the maze faces this
+            // screen shows (two while the map rolls over it).
             if let Some(rs) = run_face {
-                c.painter.xf = Transform::default();
-                mazefx::draw_face(c.painter, run, face, now, rs.alpha);
+                for (g, xf) in run_view.layers(now, face) {
+                    c.painter.xf = xf;
+                    mazefx::draw_face(c.painter, run, g, now, rs.alpha);
+                }
                 c.painter.xf = Transform::quarter(rot);
             }
 
@@ -1636,12 +1717,16 @@ enum RunOverlay {
     Over(f32, f32),
 }
 
-/// Which way the die leans, as the side face lowest (downhill from the
-/// top), and how far: the sine of the tilt.
-fn downhill(sky: [f32; 3], up: Face) -> (Option<Face>, f32) {
-    let n = maze::axis(up).map(|c| c as f32);
-    let k = sky[0] * n[0] + sky[1] * n[1] + sky[2] * n[2];
-    let down = [0, 1, 2].map(|i| -(sky[i] - n[i] * k));
+/// Which way the die has leaned from `neutral` (the sky, in die axes, as it
+/// was held), as seen on `screen`: the side of the screen that went down,
+/// and how far (about the sine of the angle). From a neutral straight up
+/// the screen's normal, that's the lean from level.
+fn lean_from(neutral: [f32; 3], sky: [f32; 3], screen: Face) -> (Option<Face>, f32) {
+    let n = maze::axis(screen).map(|c| c as f32);
+    // The sky moves away from the side that goes down.
+    let d = [0, 1, 2].map(|i| neutral[i] - sky[i]);
+    let k = d[0] * n[0] + d[1] * n[1] + d[2] * n[2];
+    let down = [0, 1, 2].map(|i| d[i] - n[i] * k);
     let lean = libm::sqrtf(down.iter().map(|c| c * c).sum());
     let (axis, v) = (0..3)
         .map(|i| (i, down[i]))

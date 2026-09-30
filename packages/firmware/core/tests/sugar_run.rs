@@ -65,23 +65,21 @@ impl Rig {
         self.sim.lock().touch_mask = if on { 1 << face.index() } else { 0 };
     }
 
-    /// Lean the die so the side of `way` goes down, as the viewer sees it.
+    /// The die direction a way through the maze stands for, as the map sits.
+    fn die_way(&self, way: Face) -> Face {
+        let v = self.fw.run_view().turn().unapply(maze::axis(way));
+        Face::ALL.into_iter().find(|f| maze::axis(*f) == v).unwrap()
+    }
+
+    /// Lean the die so the side of the maze way `way` goes down, as the
+    /// viewer sees it, from however it's held.
     fn lean_toward(&mut self, way: Face) {
-        let v = self.world.pose().rotation * face_normal(way);
+        let v = self.world.pose().rotation * face_normal(self.die_way(way));
         let right = DEFAULT_VIEWER_RIGHT;
         let front = right.cross(glam::Vec3::Y);
         let (r, a) = (v.dot(right), -v.dot(front));
         let k = LEAN / r.abs().max(a.abs()).max(1e-3);
         self.world.tilt(r * k, a * k, right);
-    }
-
-    /// An open way out of the runner's cell, other than `not`.
-    fn open_way(&self, not: Option<Face>) -> Face {
-        let r = self.fw.run().runner;
-        maze::ways(r.cell.face())
-            .into_iter()
-            .find(|d| self.fw.run().maze().open(r.cell, *d) && Some(*d) != not)
-            .expect("no dead ends")
     }
 
     /// Wait for the runner to stop at a wall, lean toward an open way, and
@@ -90,16 +88,20 @@ impl Rig {
         while self.fw.run().runner.moving && self.phase() == Phase::Playing {
             self.step();
         }
-        let from = self.fw.run().runner.cell;
-        let way = self.open_way(None);
+        let r = self.fw.run().runner;
+        let way = maze::ways(r.cell.face())
+            .into_iter()
+            .find(|d| self.fw.run().maze().open(r.cell, *d))
+            .expect("no dead ends");
         self.lean_toward(way);
         for _ in 0..60 {
             self.step();
-            if self.fw.run().runner.cell != from {
+            if self.fw.run().runner.cell != r.cell {
                 break;
             }
         }
-        self.fw.run().runner.cell == from.step(way).0
+        self.world.tilt(0.0, 0.0, DEFAULT_VIEWER_RIGHT);
+        self.fw.run().runner.cell == r.cell.step(way).0
     }
 
     fn phase(&self) -> Phase {
@@ -124,46 +126,30 @@ impl Rig {
 fn a_run_starts_when_the_shake_settles_and_steers_by_the_lean() {
     let mut rig = Rig::new();
     rig.start();
-    assert_eq!(
-        rig.fw.run().runner.cell.face(),
-        Face::PosY,
-        "on the screen that's up"
-    );
-    while rig.fw.run().runner.moving {
-        rig.step();
-    }
-    assert_eq!(
-        rig.fw.run().runner.face(),
-        Face::PosY,
-        "stopped on the top screen"
-    );
+    rig.run_for(0.5);
     assert!(rig.steers(), "it goes the way the die leans");
 }
 
 #[test]
-fn off_the_top_you_tip_the_die_to_follow() {
+fn held_up_toward_you_it_steers_from_there() {
+    // Held with the top screen tipped about 40° toward you, as to watch it:
+    // that's neutral, not a lean toward you.
     let mut rig = Rig::new();
     rig.start();
-    // Steer it wherever it can go until it leaves the top screen.
-    let mut t = 0.0;
-    while rig.fw.run().runner.face() == Face::PosY && t < 20.0 {
-        if !rig.fw.run().runner.moving {
-            let back = rig.fw.run().runner.dir.opposite();
-            let way = rig.open_way(Some(back));
-            rig.lean_toward(way);
-        }
-        rig.run_for(0.1);
-        t += 0.1;
+    rig.world.set_held(true);
+    rig.run_for(1.5);
+    assert_eq!(rig.fw.run_want(), None, "being held up isn't steering");
+    while rig.fw.run_view().rolling() {
+        rig.step();
     }
-    let side = rig.fw.run().runner.face();
-    assert_ne!(side, Face::PosY, "it ran off the top");
-    // Its screen faces sideways: leaning doesn't steer it there.
-    assert!(!rig.steers(), "no steering on a screen facing sideways");
-    // Tip its screen up, and leaning steers it again.
-    rig.world.place_face_up(rig.fw.run().runner.face());
-    rig.run_for(0.8);
-    assert_eq!(rig.phase(), Phase::Playing);
-    assert!(rig.steers(), "steered on its new screen");
+    assert_eq!(
+        rig.fw.run_view().turn().maze_face(Face::PosY),
+        rig.fw.run().runner.face(),
+        "held up, the runner stays on the screen it started on"
+    );
+    assert!(rig.steers(), "a lean from the held pose steers");
+    rig.run_for(0.5);
+    assert!(rig.steers(), "and again");
 }
 
 #[test]

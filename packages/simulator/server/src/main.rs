@@ -209,6 +209,14 @@ async fn run_firmware(
         }
         menu_was_open = menu_front.is_some();
 
+        // Sugar Run in play: hold the die up with its top screen toward the
+        // viewer, as a hand does to watch it, and set it back down after.
+        state
+            .world
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .set_held(fw.run().running());
+
         let (frames, haptics) = {
             let mut s = state.sim.lock();
             let frames = (s.frame_seq != last_seq).then(|| {
