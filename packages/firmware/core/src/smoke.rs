@@ -37,24 +37,22 @@ const GOLD: usize = 120;
 const GOLD_REDUCED: usize = 40;
 const FIZZLE: usize = 36;
 const FIZZLE_REDUCED: usize = 12;
-/// Bills rained per hundred puffs of smoke.
-const BILLS_PER_PUFF_PCT: usize = 12;
-/// A bill's half-length as a fraction of its particle's size, and its
-/// half-width as a fraction of its length.
-const BILL_LEN: f32 = 1.25;
-const BILL_ASPECT: f32 = 0.5;
-/// A bill's paper (front, lit face-on) and ink, as 0–255 levels. Bills are
-/// drawn solid, over what is behind them, and shaded as they turn.
-const BILL_PAPER: f32 = 250.0;
-const BILL_INK: f32 = 60.0;
-/// The face and shoulders, as a fraction of the paper.
-const BILL_TONE: f32 = 0.62;
-/// A bill's life and landing linger, against smoke's.
-const BILL_LIFE: f32 = 0.55;
-/// Where the corner `$`s sit and how big they are, in half-heights.
-const CORNER_X: f32 = 1.55;
-const CORNER_Y: f32 = 0.6;
-const CORNER_SCALE: f32 = 0.4;
+/// Coins rained per hundred puffs of smoke.
+const COINS_PER_PUFF_PCT: usize = 25;
+/// A coin's radius as a fraction of its particle's size.
+const COIN_RADIUS: f32 = 0.5;
+/// How fast coins spin (rad/s), the slowest and the spread above it.
+const COIN_SPIN: f32 = 7.0;
+const COIN_SPIN_SPREAD: f32 = 5.0;
+/// A coin's face, rim and engraved ring, as 0–255 levels. Coins are drawn
+/// solid, over what is behind them.
+const COIN_FACE: f32 = 215.0;
+const COIN_RIM: f32 = 120.0;
+const COIN_ENGRAVE: f32 = 95.0;
+/// A coin's life and landing linger, against smoke's.
+const COIN_LIFE: f32 = 0.55;
+/// Coins fall faster than smoke drifts.
+const COIN_BUOY: f32 = -2.4;
 /// Held smoke added per frame while shaking, at most.
 const SHAKE_SPAWN_PER_FRAME: usize = 14;
 /// Timing slack at a boundary frame (s): well under a frame, well over f32
@@ -245,8 +243,8 @@ impl Smoke {
         }
     }
 
-    /// Rain banknotes instead of smoke (Pass the Pot). Bills already in the
-    /// air finish falling as they are.
+    /// Rain spinning coins instead of smoke (Pass the Pot). Coins already in
+    /// the air finish falling as they are.
     pub fn set_money(&mut self, on: bool) {
         self.money = on;
     }
@@ -290,10 +288,10 @@ impl Smoke {
         }
     }
 
-    /// Bills are big, so they are gone sooner than smoke.
+    /// Coins drop through, so they are gone sooner than smoke.
     fn life_scale(&self) -> f32 {
         if self.money {
-            BILL_LIFE
+            COIN_LIFE
         } else {
             1.0
         }
@@ -301,9 +299,9 @@ impl Smoke {
 
     fn full(&self) -> usize {
         let puffs = if self.lean() { FULL_REDUCED } else { FULL };
-        // A bill is bigger than a puff: fewer of them.
+        // A coin is solid where a puff is faint: fewer of them.
         if self.money {
-            puffs * BILLS_PER_PUFF_PCT / 100
+            puffs * COINS_PER_PUFF_PCT / 100
         } else {
             puffs
         }
@@ -507,6 +505,7 @@ impl Smoke {
                 match q.kind {
                     SpriteKind::Fizzle | SpriteKind::Gold => 0.0,
                     SpriteKind::Ember => -0.8,
+                    SpriteKind::Smoke if self.money => COIN_BUOY,
                     SpriteKind::Smoke => -1.3,
                 }
             };
@@ -514,7 +513,7 @@ impl Smoke {
                 // Banked over the centre of each screen, where the number
                 // will appear.
                 let t = tangential(q.p, n);
-                // Bills bank more loosely than smoke, or they pile up in a heap.
+                // Coins bank more loosely than smoke, or they pile up in a heap.
                 let pull = if self.money { 0.8 } else { 2.4 };
                 q.v = add(q.v, scale(t, -pull * dt));
             }
@@ -569,7 +568,7 @@ impl Smoke {
 
     fn push(&mut self, mut q: Particle) {
         if self.money && q.kind == SpriteKind::Smoke {
-            q.max *= BILL_LIFE;
+            q.max *= COIN_LIFE;
         }
         if self.amount == Amount::Off && matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember) {
             return;
@@ -690,12 +689,12 @@ impl Smoke {
     /// Stamp every particle onto the faces, over whatever they show.
     pub fn draw(&self, frames: &mut [Framebuffer; 6]) {
         for q in &self.particles {
-            let bill = self.money && q.kind == SpriteKind::Smoke;
+            let coin = self.money && q.kind == SpriteKind::Smoke;
             let Some(sprite) = &self.sprites[q.kind as usize] else {
-                if !bill {
+                if !coin {
                     continue;
                 }
-                self.draw_bill(frames, q);
+                self.draw_coin(frames, q);
                 continue;
             };
             let life_t = q.life / q.max;
@@ -709,8 +708,8 @@ impl Smoke {
                 SpriteKind::Fizzle => 0.3,
                 _ => 0.9,
             };
-            if bill {
-                self.draw_bill(frames, q);
+            if coin {
+                self.draw_coin(frames, q);
                 continue;
             }
             let grows = matches!(q.kind, SpriteKind::Smoke | SpriteKind::Fizzle);
@@ -738,28 +737,23 @@ impl Smoke {
 }
 
 impl Smoke {
-    /// One banknote: a tumbling outlined rectangle, fading in and out over
-    /// its life, wrapping round an edge like the smoke does.
-    fn draw_bill(&self, frames: &mut [Framebuffer; 6], q: &Particle) {
+    /// One coin: a disc spinning about an axis in its face, so it squashes
+    /// to its edge and opens again, flashing as it turns face-on. It wraps
+    /// round an edge like the smoke does.
+    fn draw_coin(&self, frames: &mut [Framebuffer; 6], q: &Particle) {
         let life_t = q.life / q.max;
-        let fade_in = (q.life / 0.12).min(1.0);
-        let alpha = fade_in * powf((1.0 - life_t).max(0.0), 0.5) * 0.9;
-        let len = q.size * BILL_LEN;
-        let angle = q.seed + q.life * (0.8 + q.seed % 1.0);
-        // Tumbling in 3D: it turns about its length (`turn`, negative when
-        // the back faces us) and pitches end over end, so it foreshortens
-        // both ways.
-        let turn = cosf(q.seed * 3.0 + q.life * (2.5 + q.seed % 1.5));
-        let pitch = 0.7 + 0.3 * libm::fabsf(cosf(q.seed * 5.0 + q.life * 1.7));
-        let bill = Bill {
-            len: len * pitch,
-            angle,
-            turn,
+        let fade_in = (q.life / 0.08).min(1.0);
+        let alpha = fade_in * powf((1.0 - life_t).max(0.0), 0.4);
+        let coin = Coin {
+            radius: q.size * COIN_RADIUS,
+            // The spin axis drifts slowly; the spin itself is fast.
+            axis: q.seed + q.life * 0.6,
+            spin: q.seed * 2.0 + q.life * (COIN_SPIN + (q.seed % 1.0) * COIN_SPIN_SPREAD),
             alpha,
         };
-        stamp_bill(&mut frames[q.face.index()], q.face, q.p, &bill);
+        stamp_coin(&mut frames[q.face.index()], q.face, q.p, &coin);
         let (own_axis, own_sign) = axis_sign(q.face);
-        let ru = len / 128.0;
+        let ru = coin.radius / 128.0;
         for g in Face::ALL {
             let (ga, gs) = axis_sign(g);
             if ga == own_axis {
@@ -770,7 +764,7 @@ impl Smoke {
                 let mut t = q.p;
                 t[own_axis] = own_sign * (1.0 + d);
                 t[ga] = gs;
-                stamp_bill(&mut frames[g.index()], g, t, &bill);
+                stamp_coin(&mut frames[g.index()], g, t, &coin);
             }
         }
     }
@@ -847,136 +841,65 @@ fn stamp(fb: &mut Framebuffer, sprite: &Sprite, face: Face, p: [f32; 3], radius:
     }
 }
 
-/// A banknote to stamp: `len` canvas units from the centre to an end, turned
-/// by `angle` in the plane and by `turn` (−1 to 1, the cosine of its roll)
-/// about its length, drawn at `alpha`.
-struct Bill {
-    len: f32,
-    angle: f32,
-    turn: f32,
+/// A coin to stamp: `radius` canvas units, spinning by `spin` (rad) about
+/// an axis in its face at `axis` (rad), drawn at `alpha`.
+struct Coin {
+    radius: f32,
+    axis: f32,
+    spin: f32,
     alpha: f32,
 }
 
-/// Stamp a banknote centred on `p` (cube coordinates) on `face`: solid
-/// paper with dark ink for a frame and a seal, curled a little across its
-/// width and shaded by how squarely it faces us (dimmer edge-on and on its
-/// back), so it reads as a bill in the air rather than a drawing of one.
-fn stamp_bill(fb: &mut Framebuffer, face: Face, p: [f32; 3], bill: &Bill) {
-    if bill.alpha < 0.02 || bill.len <= 0.0 {
+/// Stamp a coin centred on `p` (cube coordinates) on `face`: a solid disc
+/// foreshortened by its spin, with a rim, an engraved ring, light from the
+/// upper left, and a glint that sweeps across it as it turns face-on.
+fn stamp_coin(fb: &mut Framebuffer, face: Face, p: [f32; 3], coin: &Coin) {
+    if coin.alpha < 0.02 || coin.radius <= 0.0 {
         return;
     }
     let b = &BASES[face.index()];
     let (cx, cy) = (dot(p, b.x) * 128.0, -dot(p, b.y) * 128.0);
     let (px, py) = (CENTER + cx * K, CENTER + cy * K);
-    let squareness = libm::fabsf(bill.turn).max(0.12);
-    let (l, w) = (bill.len * K, bill.len * K * BILL_ASPECT * squareness);
-    let (ca, sa) = (cosf(bill.angle), sinf(bill.angle));
-    // Face-on is bright, edge-on dim, and the back is darker than the front.
-    let shade = (0.55 + 0.45 * squareness) * if bill.turn < 0.0 { 0.62 } else { 1.0 };
-    let y0 = libm::floorf(py - l).max(0.0) as usize;
-    let y1 = (libm::ceilf(py + l).max(0.0) as usize).min(PANEL_HEIGHT);
-    let x0 = libm::floorf(px - l).max(0.0) as usize;
-    let x1 = (libm::ceilf(px + l).max(0.0) as usize).min(PANEL_WIDTH);
-    // The bill's unsqueezed half-width: the unit the $ is drawn in, so it
-    // squeezes with the bill as it turns.
-    let w0 = l * BILL_ASPECT;
-    let edge_u = (1.0 / l).max(0.05);
-    let edge_v = (1.0 / w.max(1.0)).max(0.05);
+    let r = coin.radius * K;
+    let open = cosf(coin.spin);
+    // Edge-on it is still a thin bar: the coin has some thickness.
+    let squash = libm::fabsf(open).max(1.2 / r).max(0.1);
+    let (ca, sa) = (cosf(coin.axis), sinf(coin.axis));
+    // Brighter face-on; the glint sweeps across as it opens.
+    let lit = 0.55 + 0.45 * libm::fabsf(open);
+    let glint_at = sinf(coin.spin) * 1.3;
+    let glint = libm::fabsf(open) > 0.6;
+    let rim = (1.3 / r).max(0.14);
+    let y0 = libm::floorf(py - r).max(0.0) as usize;
+    let y1 = (libm::ceilf(py + r).max(0.0) as usize).min(PANEL_HEIGHT);
+    let x0 = libm::floorf(px - r).max(0.0) as usize;
+    let x1 = (libm::ceilf(px + r).max(0.0) as usize).min(PANEL_WIDTH);
     for y in y0..y1 {
         for x in x0..x1 {
             let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
-            let (u, v) = ((dx * ca + dy * sa) / l, (-dx * sa + dy * ca) / w);
-            let (au, av) = (libm::fabsf(u), libm::fabsf(v));
-            if au > 1.0 || av > 1.0 {
+            // Along the spin axis (full size) and across it (squashed).
+            let (u, v) = ((dx * ca + dy * sa) / r, (-dx * sa + dy * ca) / (r * squash));
+            let d = sqrtf(u * u + v * v);
+            if d > 1.0 {
                 continue;
             }
-            // Curl: the bill bows along its length, brighter on the crest.
-            let curl = 1.0 - 0.3 * v * v + 0.12 * u;
-            let ink = match bill_mark(u * l / w0, v * squareness) {
-                _ if au > 1.0 - edge_u || av > 1.0 - edge_v => Mark::Ink,
-                mark => mark,
-            };
-            let level = match ink {
-                Mark::Ink => BILL_INK,
-                Mark::Tone => BILL_PAPER * BILL_TONE,
-                Mark::None => BILL_PAPER * curl,
-            } * shade;
-            fb.blend(x, y, level, bill.alpha);
+            let level = if d > 1.0 - rim / squash.max(0.35) {
+                COIN_RIM
+            } else if (0.58..0.58 + rim).contains(&d) {
+                COIN_ENGRAVE
+            } else {
+                // Light from the upper left of the panel.
+                let light = 1.0 - 0.18 * ((dx + dy) / r);
+                let face = (COIN_FACE * light).min(255.0);
+                if glint && libm::fabsf(u - glint_at) < 0.22 {
+                    255.0
+                } else {
+                    face
+                }
+            } * lit;
+            fb.blend(x, y, level.min(255.0), coin.alpha);
         }
     }
-}
-
-/// What is printed at a point on a bill.
-#[derive(Clone, Copy, PartialEq)]
-enum Mark {
-    None,
-    /// A mid tone (the face).
-    Tone,
-    Ink,
-}
-
-/// What is printed at (`x`, `y`), in units of the bill's half-height with
-/// the bill's centre at the origin and `y` up its short side: a portrait in
-/// the middle, framed by an oval, and a `$` in each corner.
-fn bill_mark(x: f32, y: f32) -> Mark {
-    let corner = dollar(
-        (libm::fabsf(x) - CORNER_X) / CORNER_SCALE,
-        (libm::fabsf(y) - CORNER_Y) * if y < 0.0 { -1.0 } else { 1.0 } / CORNER_SCALE,
-        0.2,
-        0.14,
-    );
-    if corner {
-        Mark::Ink
-    } else {
-        portrait(x, y)
-    }
-}
-
-/// A bust in an oval frame: head, shoulders and a pair of eyes.
-fn portrait(x: f32, y: f32) -> Mark {
-    let ring = sqrtf((x / 0.72) * (x / 0.72) + (y / 0.9) * (y / 0.9));
-    if ring > 1.0 {
-        return Mark::None;
-    }
-    if ring > 0.86 {
-        return Mark::Ink;
-    }
-    // Head: an ellipse above the middle, its outline and its eyes.
-    let (hx, hy) = (x / 0.24, (y - 0.2) / 0.3);
-    let head = sqrtf(hx * hx + hy * hy);
-    let eye = |ex: f32| {
-        let (dx, dy) = (x - ex, y - 0.26);
-        dx * dx + dy * dy < 0.0016
-    };
-    if head < 1.0 {
-        return if eye(-0.09) || eye(0.09) || head > 0.78 {
-            Mark::Ink
-        } else {
-            Mark::Tone
-        };
-    }
-    // Shoulders: the top of a wide ellipse below the head.
-    let (sx, sy) = (x / 0.5, (y + 0.72) / 0.5);
-    let sh = sqrtf(sx * sx + sy * sy);
-    if y < -0.12 && sh < 1.0 {
-        return if sh > 0.75 { Mark::Ink } else { Mark::Tone };
-    }
-    Mark::None
-}
-
-/// Whether (`x`, `y`) is on a `$` of half-height about 0.85, its centre at the
-/// origin: an S of two stacked arcs with a bar through it. `stroke` and `bar`
-/// are half-widths, so a shrunk `$` can keep its lines a pixel wide.
-fn dollar(x: f32, y: f32, stroke: f32, bar: f32) -> bool {
-    const R: f32 = 0.32;
-    let arc = |cy: f32, keep: bool| {
-        let (dx, dy) = (x, y - cy);
-        keep && libm::fabsf(sqrtf(dx * dx + dy * dy) - R) < stroke
-    };
-    // The upper arc is open at the lower right, the lower arc at the upper left.
-    arc(R, !(x > 0.0 && y < R))
-        || arc(-R, !(x < 0.0 && y > -R))
-        || (libm::fabsf(x) < bar && libm::fabsf(y) < 0.85)
 }
 
 // ---------- cube geometry ----------
@@ -1090,7 +1013,7 @@ mod tests {
     }
 
     #[test]
-    fn money_rains_fewer_bills_than_smoke_puffs() {
+    fn money_rains_fewer_coins_than_smoke_puffs() {
         let mut s = smoke();
         s.set_money(true);
         s.shake_start();
@@ -1099,17 +1022,17 @@ mod tests {
         }
         s.throw();
         assert_eq!(s.particles.len(), s.full());
-        assert_eq!(s.full(), 45);
+        assert_eq!(s.full(), 95);
         let mut frames = [Framebuffer::new(); 6];
         s.draw(&mut frames);
         assert!(
             frames.iter().any(|f| f.pixels().iter().any(|&p| p > 0)),
-            "bills are drawn without a sprite pack"
+            "coins are drawn without a sprite pack"
         );
     }
 
     #[test]
-    fn bills_clear_sooner_than_smoke() {
+    fn coins_clear_sooner_than_smoke() {
         let clear_time = |money: bool| {
             let mut s = smoke();
             s.set_money(money);
@@ -1122,9 +1045,9 @@ mod tests {
             }
             t
         };
-        let (smoke_t, bills_t) = (clear_time(false), clear_time(true));
-        assert!(bills_t < smoke_t * 0.7, "{bills_t} vs {smoke_t}");
-        assert!(bills_t < 2.5, "{bills_t}");
+        let (smoke_t, coins_t) = (clear_time(false), clear_time(true));
+        assert!(coins_t < smoke_t * 0.7, "{coins_t} vs {smoke_t}");
+        assert!(coins_t < 2.5, "{coins_t}");
     }
 
     #[test]

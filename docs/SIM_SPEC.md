@@ -529,7 +529,7 @@ The mockup also has "side-face" variants for smoke (life 2.2–3.5, size 20–38
 - **top:** on the up face, bunched within ±0.95, with an outward velocity of 0.15–0.6 (embers 0.6–1.4).
 - **ring:** on side faces, near mid-height (±0.175), with the gold orbit velocity.
 
-**Pass the Pot rains money.** In Pass the Pot the smoke is banknotes instead: the same particles and physics, but 12% as many as puffs (45 for a full cloud, 18 reduced), each much bigger, and gone sooner (55% of a puff's life and landing linger, so they clear in about 2 s). A bill is solid paper with a thin outline, an oval portrait in the middle (a head with eyes over shoulders) and a small `$` in each corner. It is curled a little, turning over and pitching in 3D so it shades brighter face-on and darker edge-on or on its back, and the printing squeezes with it. Bills bank more loosely than smoke. The Smoke setting still applies. Set by `Smoke::set_money`.
+**Pass the Pot rains coins.** In Pass the Pot the smoke is spinning coins instead: the same particles, but 25% as many as puffs (95 for a full cloud, 37 reduced), falling faster (buoyancy −2.4) and gone sooner (55% of a puff's life and landing linger, so they clear in about 2 s). A coin is a solid disc of radius 0.5 × the particle size with a rim and an engraved ring, lit from the upper left. It spins at 7–12 rad/s about an axis in its face that drifts slowly, so it squashes to a thin edge and opens again, and a glint sweeps across it as it turns face-on. Coins bank more loosely than smoke. The Smoke setting still applies. Set by `Smoke::set_money`.
 
 **Boot burst:** 170 smoke particles on the top face.
 - Positions: radius 0.03–0.38 from center.
