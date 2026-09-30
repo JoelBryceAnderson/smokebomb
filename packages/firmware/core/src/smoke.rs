@@ -62,9 +62,9 @@ const CRYSTAL_LIT: f32 = 235.0;
 const CRYSTAL_SHADE: f32 = 150.0;
 /// A crystal's life and landing linger, against smoke's: it drops off the
 /// faces rather than fading in place.
-const CRYSTAL_LIFE: f32 = 0.75;
+const CRYSTAL_LIFE: f32 = 0.65;
 /// Crystals fall faster than smoke drifts, and wander less on the way.
-const CRYSTAL_BUOY: f32 = -2.0;
+const CRYSTAL_BUOY: f32 = -3.2;
 const CRYSTAL_CURL: f32 = 0.35;
 /// Held smoke added per frame while shaking, at most.
 const SHAKE_SPAWN_PER_FRAME: usize = 14;
@@ -1111,10 +1111,10 @@ mod tests {
             t
         };
         let (crystals_t, coins_t) = (clear_time(false), clear_time(true));
-        assert!(coins_t < crystals_t * 0.8, "{coins_t} vs {crystals_t}");
+        assert!(coins_t < crystals_t, "{coins_t} vs {crystals_t}");
         assert!(coins_t < 2.5, "{coins_t}");
         // Crystals drop off the faces rather than hanging like smoke did.
-        assert!(crystals_t < 3.0, "{crystals_t}");
+        assert!(crystals_t < 2.5, "{crystals_t}");
     }
 
     #[test]
