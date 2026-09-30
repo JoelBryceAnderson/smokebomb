@@ -1,7 +1,7 @@
 # Sugarcube
 
-Sugarcube is a smart die with six 96×96 OLED faces. Throw it and a live smoke
-effect plays across the screens, then the result shows on every face. Each roll
+Sugarcube is a smart die with six 96×96 OLED faces. Throw it and a storm of sugar
+crystals plays across the screens, then the result shows on every face. Each roll
 is signed by a secure element inside the die, so a phone app and backend can
 prove that a roll really came from that die and wasn't edited or replayed. That
 is what makes it usable for organised play, where rolls have to be trusted.
@@ -14,16 +14,18 @@ the real firmware, the backend that verifies rolls, and the phone app.
 - **Rolls and shows the result.** Shake, throw, land. The firmware reads the
   gyro, works out the landing face and shows the result on every screen except
   the one facing down. Screens keep their orientation while a result is up.
-- **Live smoke.** A particle simulation in firmware reacts to gravity,
-  shaking and the landing face. Themes ship sprites and parameters, not frames.
+- **Live sugar.** A particle simulation in firmware reacts to gravity,
+  shaking and the landing face: sugar crystals bank up while you shake, spray
+  on the throw and tumble off the faces as the result appears. Themes ship
+  sprites and parameters, not frames.
 - **Game modes.** Dice, Pass the Pot (the menu page is the bills in your
   hand) and Hot Potato (set a fuse length and pass it round),
-  and Pig Toss (two 3D pigs tumble across the screens instead of smoke and land
+  and Pig Toss (two 3D pigs tumble across the screens instead of sugar and land
   in scored poses; set 2–6 players, tap to bank and pass the die).
 - **On-die menu.** Press and hold a screen to open it, tip the die to move
   between pages and values, tap to edit a setting, hold to save. Turning
   several faces in one swipe steps several pages or values. Settings include
-  smoke, sleep timeout and power off.
+  sugar, sleep timeout and power off.
 - **Signed, chained rolls.** Every roll carries a counter, the dice, a digest,
   the previous roll's hash, and a P-256 signature from the secure element.
 - **Verification.** The server checks signatures against a registered device

@@ -338,12 +338,16 @@ memory read; otherwise add a glyph cache.
 ### Smoke
 
 `smoke.rs` is the mockup's particle system (SIM_SPEC part D), ported
-statement for statement.
+statement for statement. It still says "smoke" in code, but the main cloud is
+now **sugar crystals** (coins in Pass the Pot): tiny tumbling rounded squares
+drawn procedurally, heavier than smoke, so they fall off the faces sooner
+(SIM_SPEC D3, "The cloud is sugar").
 - **Particles** live on the unit cube's surface and slide over it: gravity
   pulls them downhill, curl noise stirs them, and at an edge they carry on
-  over the next face. Each frame they're stamped additively with the pack's
-  sprites, and a particle near an edge is also stamped on the neighbouring
-  face, so smoke wraps round the die.
+  over the next face. Each frame embers, gold and fizzle are stamped additively
+  with the pack's sprites and crystals and coins are drawn solid; a particle
+  near an edge is also stamped on the neighbouring face, so the cloud wraps
+  round the die.
 - **The throw** drives it (SIM_SPEC C5): shaking builds a held cloud banked
   over the face centres; the throw tops it up to 380; the landing (the die
   stopping, under 1°/s) lets it drain with a top-up and embers; a max or dud

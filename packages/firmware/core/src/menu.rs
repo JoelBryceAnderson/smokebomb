@@ -53,7 +53,7 @@ impl Item {
 pub const SETTINGS: [Item; 9] = [
     Item::choice("Brightness", &["30%", "50%", "70%", "100%"], 2),
     Item::choice("Haptics", &["Off", "On"], 1),
-    Item::choice("Smoke", &["Off", "Light", "Full"], 2),
+    Item::choice("Sugar", &["Off", "Light", "Full"], 2),
     Item::choice("Sleep after", &["30 s", "1 min", "2 min", "5 min", "Never"], 2),
     Item::choice("Bluetooth", &["Off", "On"], 1),
     Item::fixed("Owner", &["Joel"]),
@@ -809,9 +809,9 @@ mod tests {
         let mut s = Settings::default();
         assert_eq!(s.smoke_amount(), Amount::Full);
         assert_eq!(s.sleep_after_ms(), Some(120_000));
-        // Smoke is the third item, Sleep after the fourth.
+        // Sugar is the third item, Sleep after the fourth.
         let mut d = settings_page().tipped(TipDir::Up).tipped(TipDir::Up);
-        assert_eq!(d.setting().0, "Smoke");
+        assert_eq!(d.setting().0, "Sugar");
         d = d.tapped();
         d.commit(&mut s);
         assert_eq!(s.smoke_amount(), Amount::Off, "Full wraps to Off");
@@ -835,7 +835,7 @@ mod tests {
             [
                 "Brightness",
                 "Haptics",
-                "Smoke",
+                "Sugar",
                 "Sleep after",
                 "Bluetooth",
                 "Owner",

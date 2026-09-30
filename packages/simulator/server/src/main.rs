@@ -1128,7 +1128,7 @@ mod tests {
         rig.tip(TipDir::Up); // Haptics
         rig.tip(TipDir::Up); // Smoke
         rig.tap(Face::PosZ); // Full -> Off
-        assert_eq!(rig.fw.menu_draft().unwrap().setting(), ("Smoke", "Off"));
+        assert_eq!(rig.fw.menu_draft().unwrap().setting(), ("Sugar", "Off"));
         rig.hold(Face::PosZ);
         rig.world.start_shake();
         rig.run(1.5);
