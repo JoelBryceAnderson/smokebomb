@@ -102,6 +102,8 @@ impl SmokeRng {
     }
 }
 
+/// A particle to work on. They are stored [`Packed`], and unpacked only
+/// for the moment they are stepped or drawn.
 #[derive(Clone, Copy, Debug)]
 struct Particle {
     p: [f32; 3],
@@ -116,8 +118,106 @@ struct Particle {
     seed: f32,
     /// Held in the hand: banked over the face centres and not ageing.
     hold: bool,
-    /// Banked like held smoke until this time (s); −∞ for none.
+    /// Banked like held smoke until this age (s); 0 for none.
     linger: f32,
+}
+
+/// A particle as it is kept: half the size of a [`Particle`], since there
+/// are hundreds. A particle always lies on its face and moves along it, so
+/// the face's own axis is left out of its position and velocity; the rest
+/// are fixed-point. Nothing it loses shows on the panel.
+#[derive(Clone, Copy, Debug)]
+struct Packed {
+    /// Position and velocity along the face's other two axes, in order.
+    p: [i16; 2],
+    v: [i16; 2],
+    life: f32,
+    max: u16,
+    size: u16,
+    seed: u16,
+    linger: u16,
+    /// Face (bits 0–2), kind (3–4) and hold (5).
+    bits: u8,
+}
+
+/// Fixed-point steps per unit: position (a face spans ±1), velocity (units
+/// per second; the fastest seen is about 5.5), times (s), size (canvas
+/// units) and seed (0–10).
+const P_ONE: f32 = 32767.0;
+const V_ONE: f32 = 2048.0;
+const T_ONE: f32 = 8192.0;
+const SIZE_ONE: f32 = 1024.0;
+const SEED_ONE: f32 = 4096.0;
+
+fn fixed16(x: f32, one: f32) -> i16 {
+    libm::roundf(x * one).clamp(-32767.0, 32767.0) as i16
+}
+
+fn ufixed16(x: f32, one: f32) -> u16 {
+    libm::roundf(x * one).clamp(0.0, 65535.0) as u16
+}
+
+impl Packed {
+    fn pack(q: &Particle) -> Self {
+        let (a, _) = axis_sign(q.face);
+        let (i, j) = ((a + 1) % 3, (a + 2) % 3);
+        // Just inside the edge, so the face stays the one it's stored on.
+        let at = |x: f32| fixed16(x, P_ONE).clamp(-32766, 32766);
+        Self {
+            p: [at(q.p[i]), at(q.p[j])],
+            v: [fixed16(q.v[i], V_ONE), fixed16(q.v[j], V_ONE)],
+            life: q.life,
+            max: ufixed16(q.max, T_ONE),
+            size: ufixed16(q.size, SIZE_ONE),
+            seed: ufixed16(q.seed, SEED_ONE),
+            linger: ufixed16(q.linger, T_ONE),
+            bits: q.face.index() as u8 | (q.kind as u8) << 3 | (q.hold as u8) << 5,
+        }
+    }
+
+    fn unpack(&self) -> Particle {
+        let face = self.face();
+        let (a, sign) = axis_sign(face);
+        let (i, j) = ((a + 1) % 3, (a + 2) % 3);
+        let mut p = [0.0; 3];
+        let mut v = [0.0; 3];
+        p[a] = sign;
+        p[i] = self.p[0] as f32 / P_ONE;
+        p[j] = self.p[1] as f32 / P_ONE;
+        v[i] = self.v[0] as f32 / V_ONE;
+        v[j] = self.v[1] as f32 / V_ONE;
+        Particle {
+            p,
+            v,
+            face,
+            kind: self.kind(),
+            life: self.life,
+            max: self.max as f32 / T_ONE,
+            size: self.size as f32 / SIZE_ONE,
+            seed: self.seed as f32 / SEED_ONE,
+            hold: self.hold(),
+            linger: self.linger as f32 / T_ONE,
+        }
+    }
+
+    /// Change it through its unpacked form.
+    fn edit(&mut self, f: impl FnOnce(&mut Particle)) {
+        let mut q = self.unpack();
+        f(&mut q);
+        *self = Self::pack(&q);
+    }
+
+    fn face(&self) -> Face {
+        Face::ALL[(self.bits & 7) as usize]
+    }
+
+    fn kind(&self) -> SpriteKind {
+        SpriteKind::ALL[(self.bits >> 3 & 3) as usize]
+    }
+
+    fn hold(&self) -> bool {
+        self.bits & 1 << 5 != 0
+    }
 }
 
 /// Samples of a sprite's opacity by squared distance from its centre.
@@ -182,7 +282,7 @@ pub enum Amount {
 }
 
 pub struct Smoke {
-    particles: Vec<Particle, MAX_PARTICLES>,
+    particles: Vec<Packed, MAX_PARTICLES>,
     sprites: [Option<Sprite>; 4],
     rng: SmokeRng,
     phase: Phase,
@@ -252,7 +352,7 @@ impl Smoke {
         self.amount = amount;
         if amount == Amount::Off {
             self.particles
-                .retain(|q| !matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember));
+                .retain(|q| !matches!(q.kind(), SpriteKind::Smoke | SpriteKind::Ember));
         }
     }
 
@@ -269,7 +369,7 @@ impl Smoke {
 
     /// Particles of one kind.
     pub fn count(&self, kind: SpriteKind) -> usize {
-        self.particles.iter().filter(|q| q.kind == kind).count()
+        self.particles.iter().filter(|q| q.kind() == kind).count()
     }
 
     pub fn len(&self) -> usize {
@@ -284,7 +384,7 @@ impl Smoke {
     pub fn has_smoke(&self) -> bool {
         self.particles
             .iter()
-            .any(|q| matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember))
+            .any(|q| matches!(q.kind(), SpriteKind::Smoke | SpriteKind::Ember))
     }
 
     pub fn clear(&mut self) {
@@ -326,7 +426,7 @@ impl Smoke {
     /// builds from nothing.
     pub fn shake_start(&mut self) {
         if self.phase != Phase::Shaking {
-            self.particles.retain(|q| q.hold);
+            self.particles.retain(|q| q.hold());
             self.charge = 0.0;
         }
         self.charge_cap = 1.0;
@@ -345,15 +445,17 @@ impl Smoke {
 
     /// Thrown: the held smoke rides along, topped up to a full cloud.
     pub fn throw(&mut self) {
-        self.particles.retain(|q| q.hold);
+        self.particles.retain(|q| q.hold());
         let full = self.full();
         let held = self.particles.len();
         if held < full {
             let before = self.particles.len();
             self.spawn(SpriteKind::Smoke, full - held, Where::All);
             for q in &mut self.particles[before..] {
-                q.hold = true;
-                q.life = 0.0;
+                q.edit(|q| {
+                    q.hold = true;
+                    q.life = 0.0;
+                });
             }
         }
         self.charge = 1.0;
@@ -371,23 +473,24 @@ impl Smoke {
     /// Landed: the held smoke drains, lingering over the faces for a moment,
     /// with a top-up and a scatter of embers.
     pub fn land(&mut self) {
-        let now = self.time;
-        let linger = self.life_scale();
+        // Everything that lands starts ageing now, and lingers this long.
+        let linger = 0.6 * self.life_scale();
         for i in 0..self.particles.len() {
-            if self.particles[i].hold {
+            if self.particles[i].hold() {
                 let max = (2.0 + self.rng.r() * 1.4) * self.life_scale();
-                let q = &mut self.particles[i];
-                q.hold = false;
-                q.life = 0.0;
-                q.max = max;
-                q.linger = now + 0.6 * linger;
+                self.particles[i].edit(|q| {
+                    q.hold = false;
+                    q.life = 0.0;
+                    q.max = max;
+                    q.linger = linger;
+                });
             }
         }
         let before = self.particles.len();
         let top_up = libm::roundf(self.full() as f32 * (1.0 - 0.8 * self.charge)) as usize;
         self.spawn(SpriteKind::Smoke, top_up, Where::All);
         for q in &mut self.particles[before..] {
-            q.linger = now + 0.6 * linger;
+            q.edit(|q| q.linger = linger);
         }
         let embers = if self.lean() { EMBERS_REDUCED } else { EMBERS };
         self.spawn(SpriteKind::Ember, embers, Where::All);
@@ -431,7 +534,7 @@ impl Smoke {
                     sinf(now * 11.0 + 1.0) * 2.5,
                 ];
                 let target = libm::roundf(self.full() as f32 * self.charge) as usize;
-                let held = self.particles.iter().filter(|q| q.hold).count();
+                let held = self.particles.iter().filter(|q| q.hold()).count();
                 if held < target {
                     let before = self.particles.len();
                     self.spawn(
@@ -440,18 +543,20 @@ impl Smoke {
                         Where::All,
                     );
                     for q in &mut self.particles[before..] {
-                        q.hold = true;
+                        q.edit(|q| q.hold = true);
                     }
                 }
             }
             Phase::Tumbling => agitate = 5.0,
             Phase::Calm => {
-                if self.particles.iter().any(|q| q.hold) {
+                if self.particles.iter().any(|q| q.hold()) {
                     // Put down without throwing: the smoke settles and fades.
                     for q in &mut self.particles {
-                        if q.hold {
-                            q.hold = false;
-                            q.life = q.max * 0.35;
+                        if q.hold() {
+                            q.edit(|q| {
+                                q.hold = false;
+                                q.life = q.max * 0.35;
+                            });
                         }
                     }
                     self.charge = 0.0;
@@ -462,89 +567,12 @@ impl Smoke {
         let up = self.up;
         let top = face_of(up);
         let rng = &mut self.rng;
-        self.particles.retain_mut(|q| {
-            q.life += dt;
-            if q.hold {
-                q.life = q.life.min(q.max * 0.2);
-            }
-            if q.life > q.max {
-                return false;
-            }
-            let n = normal(q.face);
-            // "At least" the linger: the mockup's clock is a sum of frame
-            // times that falls just short on the boundary frame, so its
-            // lingering smoke gets that frame too.
-            let lingering = now < q.linger + TIME_EPS;
-            let buoy = if q.hold {
-                -0.35
-            } else if lingering {
-                -0.25
-            } else {
-                match q.kind {
-                    SpriteKind::Fizzle | SpriteKind::Gold => 0.0,
-                    SpriteKind::Ember => -0.8,
-                    SpriteKind::Smoke if self.money => COIN_BUOY,
-                    SpriteKind::Smoke => CRYSTAL_BUOY,
-                }
-            };
-            if (q.hold || lingering) && q.kind == SpriteKind::Smoke {
-                // Banked over the centre of each screen, where the number
-                // will appear.
-                let t = tangential(q.p, n);
-                // Coins and crystals bank more loosely than smoke did, or
-                // they pile up in a heap.
-                let pull = if self.money { 0.8 } else { 1.4 };
-                q.v = add(q.v, scale(t, -pull * dt));
-            }
-            if q.hold && agitate > 0.0 {
-                for c in 0..3 {
-                    q.v[c] += (rng.r() - 0.5) * agitate * dt * 6.0;
-                }
-                q.v = add(q.v, scale(slosh, agitate * dt));
-            }
-            q.v = add(q.v, scale(up, buoy * dt));
-            if !q.hold && q.face == top && !matches!(q.kind, SpriteKind::Gold | SpriteKind::Fizzle) {
-                // On the top face the cloud spreads to the edges and pours
-                // over them.
-                let t = tangential(q.p, n);
-                let l2 = dot(t, t);
-                if l2 > 1e-6 {
-                    q.v = add(q.v, scale(t, 0.9 * dt / sqrtf(l2)));
-                }
-            }
-            if q.kind == SpriteKind::Gold {
-                let target = scale(normalize(cross(up, q.p)), 1.6);
-                let k = (2.5 * dt).min(1.0);
-                q.v = add(q.v, scale(sub(target, q.v), k));
-            } else {
-                let (s, t) = (q.seed, now);
-                let curl = if q.kind == SpriteKind::Smoke && !self.money {
-                    CRYSTAL_CURL
-                } else {
-                    0.9
-                };
-                q.v[0] += sinf(3.3 * q.p[1] + 1.7 * t + s) * curl * dt;
-                q.v[1] += sinf(3.1 * q.p[2] + 1.9 * t + s * 1.3) * curl * dt;
-                q.v[2] += sinf(2.9 * q.p[0] + 1.5 * t + s * 0.7) * curl * dt;
-                let damp = if q.kind == SpriteKind::Fizzle {
-                    3.0
-                } else if q.hold {
-                    1.6
-                } else {
-                    0.7
-                };
-                q.v = scale(q.v, 1.0 - damp * dt);
-            }
-            q.v = tangential(q.v, n);
-            q.p = project(add(q.p, scale(q.v, dt)));
-            let nf = face_of(q.p);
-            if nf != q.face {
-                let nn = normal(nf);
-                let c = dot(q.v, nn);
-                q.v = sub(sub(q.v, scale(nn, c)), scale(n, c));
-                q.face = nf;
-            }
-            true
+        let money = self.money;
+        self.particles.retain_mut(|stored| {
+            let mut q = stored.unpack();
+            let alive = step_one(&mut q, dt, now, up, top, agitate, slosh, money, rng);
+            *stored = Packed::pack(&q);
+            alive
         });
     }
 
@@ -557,7 +585,7 @@ impl Smoke {
         if self.amount == Amount::Off && matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember) {
             return;
         }
-        let _ = self.particles.push(q);
+        let _ = self.particles.push(Packed::pack(&q));
     }
 
     fn spawn(&mut self, kind: SpriteKind, n: usize, place: Where) {
@@ -675,6 +703,7 @@ impl Smoke {
     /// a sprite; embers, gold and fizzle stamp the pack's sprites.
     pub fn draw(&self, frames: &mut [Framebuffer; 6]) {
         for q in &self.particles {
+            let q = &q.unpack();
             if q.kind == SpriteKind::Smoke {
                 if self.money {
                     self.draw_coin(frames, q);
@@ -747,6 +776,103 @@ impl Smoke {
     }
 }
 
+/// One particle's step of `dt` seconds, with the clock at `now`. Returns
+/// whether it lives on.
+#[allow(clippy::too_many_arguments)]
+fn step_one(
+    q: &mut Particle,
+    dt: f32,
+    now: f32,
+    up: [f32; 3],
+    top: Face,
+    agitate: f32,
+    slosh: [f32; 3],
+    money: bool,
+    rng: &mut SmokeRng,
+) -> bool {
+    q.life += dt;
+    if q.hold {
+        q.life = q.life.min(q.max * 0.2);
+    }
+    if q.life > q.max {
+        return false;
+    }
+    let n = normal(q.face);
+    // "At least" the linger: the age is a sum of frame times that can
+    // fall just short on the boundary frame, which still lingers.
+    let lingering = q.life < q.linger + TIME_EPS;
+    let buoy = if q.hold {
+        -0.35
+    } else if lingering {
+        -0.25
+    } else {
+        match q.kind {
+            SpriteKind::Fizzle | SpriteKind::Gold => 0.0,
+            SpriteKind::Ember => -0.8,
+            SpriteKind::Smoke if money => COIN_BUOY,
+            SpriteKind::Smoke => CRYSTAL_BUOY,
+        }
+    };
+    if (q.hold || lingering) && q.kind == SpriteKind::Smoke {
+        // Banked over the centre of each screen, where the number
+        // will appear.
+        let t = tangential(q.p, n);
+        // Coins and crystals bank more loosely than smoke did, or
+        // they pile up in a heap.
+        let pull = if money { 0.8 } else { 1.4 };
+        q.v = add(q.v, scale(t, -pull * dt));
+    }
+    if q.hold && agitate > 0.0 {
+        for c in 0..3 {
+            q.v[c] += (rng.r() - 0.5) * agitate * dt * 6.0;
+        }
+        q.v = add(q.v, scale(slosh, agitate * dt));
+    }
+    q.v = add(q.v, scale(up, buoy * dt));
+    if !q.hold && q.face == top && !matches!(q.kind, SpriteKind::Gold | SpriteKind::Fizzle) {
+        // On the top face the cloud spreads to the edges and pours
+        // over them.
+        let t = tangential(q.p, n);
+        let l2 = dot(t, t);
+        if l2 > 1e-6 {
+            q.v = add(q.v, scale(t, 0.9 * dt / sqrtf(l2)));
+        }
+    }
+    if q.kind == SpriteKind::Gold {
+        let target = scale(normalize(cross(up, q.p)), 1.6);
+        let k = (2.5 * dt).min(1.0);
+        q.v = add(q.v, scale(sub(target, q.v), k));
+    } else {
+        let (s, t) = (q.seed, now);
+        let curl = if q.kind == SpriteKind::Smoke && !money {
+            CRYSTAL_CURL
+        } else {
+            0.9
+        };
+        q.v[0] += sinf(3.3 * q.p[1] + 1.7 * t + s) * curl * dt;
+        q.v[1] += sinf(3.1 * q.p[2] + 1.9 * t + s * 1.3) * curl * dt;
+        q.v[2] += sinf(2.9 * q.p[0] + 1.5 * t + s * 0.7) * curl * dt;
+        let damp = if q.kind == SpriteKind::Fizzle {
+            3.0
+        } else if q.hold {
+            1.6
+        } else {
+            0.7
+        };
+        q.v = scale(q.v, 1.0 - damp * dt);
+    }
+    q.v = tangential(q.v, n);
+    q.p = project(add(q.p, scale(q.v, dt)));
+    let nf = face_of(q.p);
+    if nf != q.face {
+        let nn = normal(nf);
+        let c = dot(q.v, nn);
+        q.v = sub(sub(q.v, scale(nn, c)), scale(n, c));
+        q.face = nf;
+    }
+    true
+}
+
 /// Call `stamp` for a particle on its own face and, near an edge, on the
 /// neighbouring face too, as if the cube were unfolded there, so particles
 /// wrap round the die. `reach` is its radius in canvas units.
@@ -788,7 +914,7 @@ impl Particle {
             size,
             seed,
             hold: false,
-            linger: f32::NEG_INFINITY,
+            linger: 0.0,
         }
     }
 }
@@ -1130,7 +1256,7 @@ mod tests {
         for _ in 0..120 {
             s.step(1.0 / 60.0);
         }
-        for q in &s.particles {
+        for q in s.particles.iter().map(Packed::unpack) {
             let m = q.p.map(libm::fabsf).into_iter().fold(0.0, f32::max);
             assert!((m - 1.0).abs() < 1e-4, "on the surface: {:?}", q.p);
             assert_eq!(q.face, face_of(q.p));
@@ -1145,11 +1271,11 @@ mod tests {
         for _ in 0..60 {
             s.step(1.0 / 60.0);
         }
-        let held = s.particles.iter().filter(|q| q.hold).count();
+        let held = s.particles.iter().filter(|q| q.hold()).count();
         // 1 s of a 1.6 s charge: 380 × 0.625 ≈ 238.
         assert!((230..=245).contains(&held), "{held}");
         assert!(
-            s.particles.iter().all(|q| q.face != Face::NegY),
+            s.particles.iter().all(|q| q.face() != Face::NegY),
             "nothing spawns face down"
         );
         s.throw();
@@ -1161,5 +1287,42 @@ mod tests {
             s.step(1.0 / 60.0);
         }
         assert!(!s.has_smoke(), "all drained within 5 s");
+    }
+
+    #[test]
+    fn a_packed_particle_is_half_the_size() {
+        assert_eq!(core::mem::size_of::<Packed>(), 24);
+        assert_eq!(core::mem::size_of::<Particle>(), 48);
+    }
+
+    #[test]
+    fn packing_keeps_particles_where_they_were() {
+        let mut s = smoke();
+        s.shake_start();
+        for _ in 0..90 {
+            s.step(1.0 / 60.0);
+        }
+        s.throw();
+        s.land();
+        s.special(Special::Max);
+        for _ in 0..30 {
+            s.step(1.0 / 60.0);
+        }
+        assert!(!s.particles.is_empty());
+        for stored in &s.particles {
+            let q = stored.unpack();
+            let again = Packed::pack(&q).unpack();
+            for k in 0..3 {
+                // A thousandth of a pixel, and a pixel a second.
+                assert!((q.p[k] - again.p[k]).abs() < 1e-4);
+                assert!((q.v[k] - again.v[k]).abs() < 1e-3);
+            }
+            assert_eq!((q.face, q.kind, q.hold), (again.face, again.kind, again.hold));
+            assert_eq!(q.face, face_of(q.p), "stays on the face it's stored on");
+            assert!((q.max - again.max).abs() < 1e-3);
+            assert!((q.size - again.size).abs() < 1e-3);
+            assert!((q.seed - again.seed).abs() < 1e-3);
+            assert!((q.linger - again.linger).abs() < 1e-3);
+        }
     }
 }
