@@ -48,6 +48,17 @@ class PhoneCodecTest {
     }
 
     @Test
+    fun historySync() {
+        assertEquals("""{"SyncHistory":{"since_counter":0}}""", PhoneCodec.syncHistory(0))
+        assertEquals(DieMessage.HistoryItem(null), PhoneCodec.decode("""{"HistoryItem":null}"""))
+        val zeros = List(32) { 0 }.joinToString(",")
+        val json = """{"HistoryItem":{"record":{"device":[1,1,1,1,1,1,1,1,1],"session":[${List(16) { 0 }.joinToString(",")}],""" +
+            """"counter":2,"uptime_ms":5,"die":"D20","values":[17],"prev_hash":[$zeros]},"signature":[${List(64) { 1 }.joinToString(",")}]}}"""
+        val item = PhoneCodec.decode(json) as DieMessage.HistoryItem
+        assertEquals(17, item.roll?.total)
+    }
+
+    @Test
     fun ignoresWhatItDoesNotKnow() {
         assertNull(PhoneCodec.decode("""{"PublicKey":[1,2]}"""))
         assertNull(PhoneCodec.decode("not json"))

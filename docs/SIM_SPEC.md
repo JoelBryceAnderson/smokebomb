@@ -52,12 +52,12 @@ Face indexing used throughout the mockup: **0 = +X, 1 = −X, 2 = +Y, 3 = −Y, 
 ### A4. Finishes (shell material, PBR metal/rough)
 | Key | Label | Base color | Metalness | Roughness | Extra |
 |---|---|---|---|---|---|
-| stealth (default) | Stealth black | `#232428` | 0.9 | 0.38 | — |
+| stealth | Stealth black | `#232428` | 0.9 | 0.38 | — |
 | chrome | Polished chrome | `#9AA0A8` | 1.0 | 0.04 | — |
 | ceramic | White ceramic | `#F1EFEA` | 0.0 | 0.22 | — |
 | glow | Glow ceramic | `#E6EEE6` | 0.0 | 0.30 | Emissive `#7DFFC4`, intensity 0.05 in day, **1.1 at night**. Selecting it switches to night mode. |
 | gold | Gold | `#D6A847` | 1.0 | 0.16 | — |
-| rainbow | Heat-tinted titanium | `#DCDCDF` | 1.0 | 0.22 | Heat-tint shader (below) |
+| rainbow (default) | Heat-tinted titanium | `#DCDCDF` | 1.0 | 0.22 | Heat-tint shader (below) |
 
 **Heat-tint shader** (seamless, per pixel):
 ```

@@ -62,7 +62,7 @@ export const FINISHES: Finish[] = [
   },
 ];
 
-export const DEFAULT_FINISH: FinishKey = "stealth";
+export const DEFAULT_FINISH: FinishKey = "rainbow";
 
 /** Day and night lighting: tone-mapping exposure, key light and ambient. */
 export const LIGHTING = {

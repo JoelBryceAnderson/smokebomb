@@ -90,7 +90,7 @@ const ETCH_TEXT = {
   /** The wordmark, set in the brand's retro script. */
   top: "Sugarcube",
   /** The tagline, in the same script. */
-  bottom: "Designed in Brooklyn · Shake well before serving",
+  bottom: "Designed in Williamsburg, BK · Shake well before serving",
   left: "REGULATORY INFO IN SETTINGS",
 };
 
