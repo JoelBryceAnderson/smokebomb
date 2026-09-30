@@ -37,6 +37,15 @@ const GOLD: usize = 120;
 const GOLD_REDUCED: usize = 40;
 const FIZZLE: usize = 36;
 const FIZZLE_REDUCED: usize = 12;
+/// Bills rained per hundred puffs of smoke.
+const BILLS_PER_PUFF_PCT: usize = 40;
+/// A bill's half-length as a fraction of its particle's size, and its
+/// half-width as a fraction of its length.
+const BILL_LEN: f32 = 0.42;
+const BILL_ASPECT: f32 = 0.5;
+/// Peak brightness of a bill's edge and body (0–255).
+const BILL_EDGE: f32 = 230.0;
+const BILL_BODY: f32 = 110.0;
 /// Held smoke added per frame while shaking, at most.
 const SHAKE_SPAWN_PER_FRAME: usize = 14;
 /// Timing slack at a boundary frame (s): well under a frame, well over f32
@@ -164,6 +173,8 @@ pub struct Smoke {
     up: [f32; 3],
     reduced: bool,
     amount: Amount,
+    /// Pass the Pot: the smoke is banknotes raining down instead.
+    money: bool,
     /// The smoke's own clock (s): the sum of its steps, like the mockup's
     /// `now`, so lingering and the curl noise run on the same time base.
     time: f32,
@@ -201,6 +212,7 @@ impl Smoke {
             up: [0.0, 1.0, 0.0],
             reduced: false,
             amount: Amount::Full,
+            money: false,
             time: 0.0,
         }
     }
@@ -222,6 +234,12 @@ impl Smoke {
             self.particles
                 .retain(|q| !matches!(q.kind, SpriteKind::Smoke | SpriteKind::Ember));
         }
+    }
+
+    /// Rain banknotes instead of smoke (Pass the Pot). Bills already in the
+    /// air finish falling as they are.
+    pub fn set_money(&mut self, on: bool) {
+        self.money = on;
     }
 
     /// Smaller clouds: reduced motion, or the Light amount.
@@ -264,10 +282,12 @@ impl Smoke {
     }
 
     fn full(&self) -> usize {
-        if self.lean() {
-            FULL_REDUCED
+        let puffs = if self.lean() { FULL_REDUCED } else { FULL };
+        // A bill is bigger than a puff: fewer of them.
+        if self.money {
+            puffs * BILLS_PER_PUFF_PCT / 100
         } else {
-            FULL
+            puffs
         }
     }
 
@@ -646,7 +666,12 @@ impl Smoke {
     /// Stamp every particle onto the faces, over whatever they show.
     pub fn draw(&self, frames: &mut [Framebuffer; 6]) {
         for q in &self.particles {
+            let bill = self.money && q.kind == SpriteKind::Smoke;
             let Some(sprite) = &self.sprites[q.kind as usize] else {
+                if !bill {
+                    continue;
+                }
+                self.draw_bill(frames, q);
                 continue;
             };
             let life_t = q.life / q.max;
@@ -660,6 +685,10 @@ impl Smoke {
                 SpriteKind::Fizzle => 0.3,
                 _ => 0.9,
             };
+            if bill {
+                self.draw_bill(frames, q);
+                continue;
+            }
             let grows = matches!(q.kind, SpriteKind::Smoke | SpriteKind::Fizzle);
             let size = q.size * (1.0 + if grows { life_t * 1.4 } else { 0.0 });
             stamp(&mut frames[q.face.index()], sprite, q.face, q.p, size, alpha);
@@ -679,6 +708,34 @@ impl Smoke {
                     t[ga] = gs;
                     stamp(&mut frames[g.index()], sprite, g, t, size, alpha);
                 }
+            }
+        }
+    }
+}
+
+impl Smoke {
+    /// One banknote: a tumbling outlined rectangle, fading in and out over
+    /// its life, wrapping round an edge like the smoke does.
+    fn draw_bill(&self, frames: &mut [Framebuffer; 6], q: &Particle) {
+        let life_t = q.life / q.max;
+        let fade_in = (q.life / 0.12).min(1.0);
+        let alpha = fade_in * powf((1.0 - life_t).max(0.0), 0.5) * 0.9;
+        let len = q.size * BILL_LEN;
+        let angle = q.seed + q.life * (1.5 + q.seed % 2.0);
+        stamp_bill(&mut frames[q.face.index()], q.face, q.p, len, angle, alpha);
+        let (own_axis, own_sign) = axis_sign(q.face);
+        let ru = len / 128.0;
+        for g in Face::ALL {
+            let (ga, gs) = axis_sign(g);
+            if ga == own_axis {
+                continue;
+            }
+            let d = 1.0 - gs * q.p[ga];
+            if d < ru {
+                let mut t = q.p;
+                t[own_axis] = own_sign * (1.0 + d);
+                t[ga] = gs;
+                stamp_bill(&mut frames[g.index()], g, t, len, angle, alpha);
             }
         }
     }
@@ -750,6 +807,42 @@ fn stamp(fb: &mut Framebuffer, sprite: &Sprite, face: Face, p: [f32; 3], radius:
             let v = sprite.by_d2[i] as f32 * scale;
             if v >= 0.5 {
                 fb.add_pixel(x, y, (v + 0.5) as u8);
+            }
+        }
+    }
+}
+
+/// Stamp a banknote centred on `p` (cube coordinates) on `face`, additively:
+/// a bright edge round a dimmer body, `half_len` canvas units from the centre
+/// to an end, turned by `angle`.
+fn stamp_bill(fb: &mut Framebuffer, face: Face, p: [f32; 3], half_len: f32, angle: f32, alpha: f32) {
+    if alpha * BILL_EDGE < 0.5 || half_len <= 0.0 {
+        return;
+    }
+    let b = &BASES[face.index()];
+    let (cx, cy) = (dot(p, b.x) * 128.0, -dot(p, b.y) * 128.0);
+    let (px, py) = (CENTER + cx * K, CENTER + cy * K);
+    let (l, w) = (half_len * K, half_len * K * BILL_ASPECT);
+    let (ca, sa) = (cosf(angle), sinf(angle));
+    // Pixels within the bill's bounding circle.
+    let y0 = libm::floorf(py - l).max(0.0) as usize;
+    let y1 = (libm::ceilf(py + l).max(0.0) as usize).min(PANEL_HEIGHT);
+    let x0 = libm::floorf(px - l).max(0.0) as usize;
+    let x1 = (libm::ceilf(px + l).max(0.0) as usize).min(PANEL_WIDTH);
+    let edge = (1.2 / l).max(0.12);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
+            // Into the bill's own axes, as fractions of its half-size.
+            let (u, v) = ((dx * ca + dy * sa) / l, (-dx * sa + dy * ca) / w);
+            let (au, av) = (libm::fabsf(u), libm::fabsf(v));
+            if au > 1.0 || av > 1.0 {
+                continue;
+            }
+            let on_edge = au > 1.0 - edge || av > 1.0 - edge * 2.0;
+            let value = if on_edge { BILL_EDGE } else { BILL_BODY } * alpha;
+            if value >= 0.5 {
+                fb.add_pixel(x, y, (value + 0.5) as u8);
             }
         }
     }
@@ -858,10 +951,30 @@ mod tests {
             up: [0.0, 1.0, 0.0],
             reduced: false,
             amount: Amount::Full,
+            money: false,
             time: 0.0,
         };
         s.set_up([0.0, 1000.0, 0.0]);
         s
+    }
+
+    #[test]
+    fn money_rains_fewer_bills_than_smoke_puffs() {
+        let mut s = smoke();
+        s.set_money(true);
+        s.shake_start();
+        for _ in 0..120 {
+            s.step(1.0 / 60.0);
+        }
+        s.throw();
+        assert_eq!(s.particles.len(), s.full());
+        assert_eq!(s.full(), 152);
+        let mut frames = [Framebuffer::new(); 6];
+        s.draw(&mut frames);
+        assert!(
+            frames.iter().any(|f| f.pixels().iter().any(|&p| p > 0)),
+            "bills are drawn without a sprite pack"
+        );
     }
 
     #[test]

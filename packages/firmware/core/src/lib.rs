@@ -217,6 +217,8 @@ impl<P: Platform> Firmware<P> {
     /// The saved mode decides whether throws roll or belong to a game.
     fn apply_settings(&mut self) {
         self.smoke.set_amount(self.settings.smoke_amount());
+        self.smoke
+            .set_money(self.settings.play() == menu::PlayMode::PassThePot);
         self.sm.set_rolls(self.settings.play().rolls());
         self.potato = Potato::new();
     }

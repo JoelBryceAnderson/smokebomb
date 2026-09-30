@@ -529,6 +529,8 @@ The mockup also has "side-face" variants for smoke (life 2.2–3.5, size 20–38
 - **top:** on the up face, bunched within ±0.95, with an outward velocity of 0.15–0.6 (embers 0.6–1.4).
 - **ring:** on side faces, near mid-height (±0.175), with the gold orbit velocity.
 
+**Pass the Pot rains money.** In Pass the Pot the smoke is banknotes instead: the same particles, physics and timing, drawn as tumbling outlined rectangles that don't grow, and 40% as many of them (152 for a full cloud). The Smoke setting still applies. Set by `Smoke::set_money`.
+
 **Boot burst:** 170 smoke particles on the top face.
 - Positions: radius 0.03–0.38 from center.
 - Outward speed 0.3–0.9.
