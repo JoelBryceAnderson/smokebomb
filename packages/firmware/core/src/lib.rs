@@ -47,7 +47,7 @@ use smokebomb_shared::{DieKind, ModeId, ModeSet, SignedRoll};
 use display::Framebuffer;
 use font::Fonts;
 use gfx::{Layer, Painter, Transform};
-use menu::{Draft, PlayMode, Settings};
+use menu::{Draft, Held, PlayMode, Settings};
 use motion::{Motion, MotionDetector};
 use nest::{Nest, NestFace};
 use orientation::TextOrientation;
@@ -371,9 +371,10 @@ impl<P: Platform> Firmware<P> {
         }
         self.sm.set_rolls(self.settings.play().rolls());
         self.potato = Potato::new();
-        // Saving the menu keeps a game going unless the table changed size.
+        // Saving the menu keeps a game going unless it left Pig Toss or the
+        // table changed size.
         self.locked = None;
-        if self.pigs.players() != self.settings.players {
+        if self.settings.play() != PlayMode::PigToss || self.pigs.players() != self.settings.players {
             self.pigs = Pigs::new(self.settings.players);
         }
     }
@@ -928,7 +929,13 @@ impl<P: Platform> Firmware<P> {
             // mockup, whose float clock never quite reaches 0.8 after 48.
             (true, Some(since)) if !self.menu_hold_fired && now.saturating_sub(since) > MENU_HOLD_MS => {
                 self.menu_hold_fired = true;
-                let _ = events.push(Event::LongPress);
+                // In the menu a hold saves, unless the draft has another
+                // step first.
+                let next = self
+                    .menu
+                    .as_ref()
+                    .is_some_and(|m| matches!(m.draft.held(), Held::Next(_)));
+                let _ = events.push(if next { Event::MenuNext } else { Event::LongPress });
             }
             (false, Some(since)) => {
                 self.tap_deliberate = !self.touch_disturbed
@@ -999,8 +1006,9 @@ impl<P: Platform> Firmware<P> {
                 self.potato = Potato::new();
                 self.locked = None;
                 let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
+                let game_live = self.settings.play() == PlayMode::PigToss && self.pigs.in_progress();
                 self.menu = Some(MenuSession {
-                    draft: Draft::new(&self.settings),
+                    draft: Draft::new(&self.settings).with_game(game_live),
                     frame: Frame::new(
                         self.touch_face,
                         up,
@@ -1013,6 +1021,16 @@ impl<P: Platform> Firmware<P> {
                     detent: 0,
                 });
                 self.ui.menu_opened(now);
+            }
+            Command::MenuNext => {
+                if let Some(m) = &mut self.menu {
+                    if let Held::Next(next) = m.draft.held() {
+                        m.draft = next;
+                        m.last_input = now;
+                        // The new page grows in as the menu did opening.
+                        self.ui.menu_opened(now);
+                    }
+                }
             }
             Command::MenuTap => {
                 if let Some(m) = &mut self.menu {
@@ -1111,12 +1129,11 @@ impl<P: Platform> Firmware<P> {
         let quarters = Face::ALL.map(|f| self.display_quarter(f));
         let setup = self.settings.setup();
         let pigs_on = self.settings.play() == PlayMode::PigToss;
-        let label = if pigs_on {
-            // Between throws the label says whose go it is.
-            self.pigs.status()
-        } else {
-            setup.label()
-        };
+        let label = setup.label();
+        // Between throws the Pig Toss label says whose go it is, or who won.
+        let tokens = self.settings.tokens;
+        let pigs_up = self.pigs.winner().unwrap_or(self.pigs.current());
+        let pigs_won = self.pigs.winner().is_some();
         let battery = self.hw.power.battery()?.percent;
         let potato_view = if matches!(mode, Mode::Menu | Mode::Nest) {
             None
@@ -1135,7 +1152,14 @@ impl<P: Platform> Firmware<P> {
         let pig_win = self.pig_win_t(now).and_then(|t| {
             let fade = (LOCKED_MS as f32 / 1000.0 - t).clamp(0.0, 1.5) / 1.5;
             let winner = self.pigs.winner()?;
-            (fade > 0.0).then(|| (winner, self.pigs.scores()[winner as usize], t, fade))
+            (fade > 0.0).then(|| {
+                (
+                    tokens[winner as usize],
+                    self.pigs.scores()[winner as usize],
+                    t,
+                    fade,
+                )
+            })
         });
         let win_up = pig_win.is_some();
         let pig_scene = if !pigs_on || win_up || matches!(mode, Mode::Menu | Mode::Nest | Mode::Off) {
@@ -1253,12 +1277,15 @@ impl<P: Platform> Firmware<P> {
             match content {
                 FaceContent::Blank => {}
                 FaceContent::Boot { t, top } => screens::draw_boot(&mut c, face.index(), top, t),
+                FaceContent::Wake { alpha } if pigs_on => {
+                    screens::draw_pigs_label(&mut c, setup, tokens[pigs_up as usize], pigs_won, alpha)
+                }
                 FaceContent::Wake { alpha } => screens::draw_wake_label(&mut c, setup, &label, alpha),
                 FaceContent::Result { alpha } => {
                     if let Some(t) = pigs_throw {
                         let next = (t.player + 1) % players;
                         let alpha = alpha * screens::pig_win::score_fade(Some(&t), since_landing);
-                        screens::draw_pig_score(&mut c, &t, since_landing, next, alpha);
+                        screens::draw_pig_score(&mut c, &t, since_landing, next, &tokens, alpha);
                     } else if let Some(r) = record {
                         screens::draw_result(&mut c, r, ui.special(), alpha);
                     }
@@ -1293,6 +1320,7 @@ impl<P: Platform> Firmware<P> {
                     screens::draw_locked(
                         &mut c,
                         &l,
+                        tokens[l.next as usize],
                         t,
                         (LOCKED_MS as f32 / 1000.0 - t).clamp(0.0, 1.5) / 1.5,
                     );

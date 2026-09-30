@@ -9,6 +9,7 @@
 //!
 //!   Idle/Reveal ── LongPress ──▶ Menu ── LongPress (save) / MenuTimeout ──▶ Idle
 //!                                 ├──── Tap: change the setting / Power off ──▶ Menu / Off
+//!                                 ├──── MenuNext: a hold that goes on to the next step ──▶ Menu
 //!   Off ── Tap ──▶ Idle (boot)
 //!                                 └──── Shaking / FreeFall (discard) ──▶ Shaking / Airborne
 //!   any ── Docked(true) ──▶ Nest ── Docked(false) ──▶ Idle
@@ -57,6 +58,9 @@ pub enum Event {
     LongPress,
     /// A tap in the menu while Power off is selected.
     PowerOff,
+    /// A hold in the menu that goes on to the next step instead of saving
+    /// (setting up Pig Toss, or asking before ending a game).
+    MenuNext,
     /// A docked state began or ended (the [`crate::nest::Nest`] decides:
     /// seated in the Nest, with the seating settled).
     Docked(bool),
@@ -77,6 +81,8 @@ pub enum Command {
     },
     /// A tap in the menu: change the selected setting.
     MenuTap,
+    /// A hold in the menu that goes on to the draft's next step.
+    MenuNext,
     /// Leave the menu without saving and power the die off.
     MenuPowerOff,
     /// A tap while off: the screens light and the die boots.
@@ -175,6 +181,11 @@ impl StateMachine {
             }
             (Menu, Event::Tap) => {
                 emit(MenuTap);
+                None
+            }
+            (Menu, Event::MenuNext) => {
+                emit(MenuNext);
+                emit(Haptic(HapticEffect::MenuSave));
                 None
             }
             (Menu, Event::PowerOff) => {
@@ -328,6 +339,16 @@ mod tests {
         assert_eq!(*sm.mode(), Mode::Menu);
         assert!(cmds.contains(&Command::MenuTap));
         assert!(!cmds.contains(&Command::MenuClose { save: true }));
+    }
+
+    #[test]
+    fn a_hold_that_goes_on_stays_in_the_menu() {
+        let mut sm = StateMachine::new();
+        feed(&mut sm, &[Event::LongPress]);
+        let cmds = feed(&mut sm, &[Event::MenuNext]);
+        assert_eq!(*sm.mode(), Mode::Menu);
+        assert!(cmds.contains(&Command::MenuNext));
+        assert!(!cmds.iter().any(|c| matches!(c, Command::MenuClose { .. })));
     }
 
     #[test]

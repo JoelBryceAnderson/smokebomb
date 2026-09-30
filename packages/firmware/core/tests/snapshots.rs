@@ -824,6 +824,93 @@ fn menu_modes() {
 }
 
 #[test]
+fn menu_pig_setup() {
+    // Choose Pig Toss on the Mode page and hold: Players. Tip up to three
+    // and hold: Player 1's initial. Tip down from A to the symbols (Star)
+    // and hold; Player 2 goes from B up to C; Player 3 keeps C. The last
+    // hold saves.
+    run_timeline(
+        "menu-pig-setup",
+        Run::with_world_and_modes(),
+        &[11.6, 12.9, 13.7, 14.9, 15.7, 16.9, 17.7, 18.9, 20.4],
+        vec![
+            (8.1, Run::press),
+            (9.3, Run::release),
+            (9.5, |r| r.tip(TipDir::Right)),
+            (10.1, |r| r.tip(TipDir::Up)),
+            (10.6, |r| r.tip(TipDir::Up)),
+            (11.1, |r| r.tip(TipDir::Up)),
+            (11.8, Run::press),
+            (12.75, Run::release),
+            (13.1, |r| r.tip(TipDir::Up)),
+            (13.8, Run::press),
+            (14.75, Run::release),
+            (15.1, |r| r.tip(TipDir::Down)),
+            (15.8, Run::press),
+            (16.75, Run::release),
+            (17.1, |r| r.tip(TipDir::Up)),
+            (17.8, Run::press),
+            (18.75, Run::release),
+            (19.2, Run::press),
+            (20.15, Run::release),
+        ],
+    );
+}
+
+#[test]
+fn menu_pig_end_game() {
+    // A Pig Toss game with points on the board: opening the menu doesn't end
+    // it, but choosing Dice and holding asks first; a tip backs out.
+    use smokebomb_core::pigs::Pose::*;
+    let mut run =
+        Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::PigToss);
+    run.world.as_mut().unwrap().set_next_landing(Face::PosZ);
+    {
+        let mut s = run.sim.lock();
+        for p in [Back, Back] {
+            s.rng_script.push_back(pose_word(p));
+        }
+        s.rng_script.push_back(u32::MAX);
+    }
+    run_timeline(
+        "menu-pig-end-game",
+        run,
+        &[20.2, 21.4, 22.2],
+        vec![
+            (9.0, Run::shake),
+            (10.0, Run::throw_release),
+            (16.1, Run::press),
+            (17.3, Run::release),
+            (17.5, |r| r.tip(TipDir::Right)),
+            (18.1, |r| r.tip(TipDir::Up)),
+            (18.8, Run::press),
+            (19.75, Run::release),
+            (21.6, |r| r.tip(TipDir::Left)),
+        ],
+    );
+}
+
+#[test]
+fn menu_pig_symbols() {
+    // Pig Toss opens on Players; a hold goes to Player 1's initial. Tip
+    // down from A through the six symbols.
+    let mut times: Vec<(f64, &str)> = Vec::new();
+    let names: Vec<String> = (1..=6).map(|i| format!("symbol{i}")).collect();
+    let mut inputs: Vec<(f64, Input)> = vec![
+        (8.1, Run::press),
+        (9.3, Run::release),
+        (9.6, Run::press),
+        (10.55, Run::release),
+    ];
+    for (i, name) in names.iter().enumerate() {
+        inputs.push((11.0 + 0.5 * i as f64, |r| r.tip(TipDir::Down)));
+        times.push((11.0 + 0.5 * i as f64 + 0.45, name));
+    }
+    let run = Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::PigToss);
+    run_scenario("menu-pig-symbols", run, &times, inputs);
+}
+
+#[test]
 fn menu_bills_in_hand() {
     // Pass the Pot: the page counts the bills in your hand, which is how many
     // dice you roll. It starts at three; tip down to two and save.

@@ -15,7 +15,7 @@ use crate::font::{fit_px, Align, Fonts, SCRIPT};
 use crate::gfx::{segment_distance, triangle_distance, Painter, Style};
 use crate::menu::{Draft, Page, Setup};
 use crate::nest::{ChargeView, ClockView, Label, NestFace, Screen};
-use crate::pigs::{throw_label, Locked, Outcome, Throw};
+use crate::pigs::{throw_label, Locked, Outcome, Symbol, Throw, Token};
 use crate::smoke::Special;
 
 /// The lit area's half-size in canvas units.
@@ -338,6 +338,127 @@ fn draw_bills_in_hand<A: AssetStore>(c: &mut Ctx<A>, n: u8, alpha: f32) {
     c.text("tap to change", 0.0, 60.0, 14, Style::new(FG, alpha * 0.6, 0.0));
 }
 
+/// Pig Toss between throws: the pig, and whose go it is (or who won).
+pub fn draw_pigs_label<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, token: Token, won: bool, alpha: f32) {
+    crate::icons::draw_setup_icon(c, setup, 0.0, -21.0, 36.0, alpha);
+    let after = if won { " wins!" } else { " to roll" };
+    tagged(c, "", token, after, 44.0, 28, Style::new(FG, alpha, 8.0));
+}
+
+// ---------- players' tokens ----------
+
+/// A line of text with a player's token in it, centred at `y`: `before`,
+/// the initial or symbol, then `after`, at up to `max_px`.
+#[allow(clippy::too_many_arguments)]
+fn tagged<A: AssetStore>(
+    c: &mut Ctx<A>,
+    before: &str,
+    token: Token,
+    after: &str,
+    y: f32,
+    max_px: u16,
+    style: Style,
+) {
+    let mut line: String<40> = String::new();
+    let _ = write!(line, "{before}{}{after}", token.initial().unwrap_or('W'));
+    let px = fit_px(&line, max_px, 150.0);
+    let Some(symbol) = token.as_symbol() else {
+        c.text(&line, 0.0, y, px, style);
+        return;
+    };
+    // A symbol takes about a capital's room.
+    let h = px as f32 * 0.78;
+    let w = h * 1.15;
+    let wb = c.fonts.measure(c.assets, before, px);
+    let wa = c.fonts.measure(c.assets, after, px);
+    let x0 = -(wb + w + wa) / 2.0;
+    if !before.is_empty() {
+        c.text_left(before, x0, y, px, style);
+    }
+    draw_symbol(c, symbol, x0 + wb + w / 2.0, y, h, style);
+    if !after.is_empty() {
+        c.text_left(after, x0 + wb + w, y, px, style);
+    }
+}
+
+/// A player's symbol, centred on `(cx, cy)`, `h` canvas units tall.
+pub fn draw_symbol<A: AssetStore>(c: &mut Ctx<A>, symbol: Symbol, cx: f32, cy: f32, h: f32, style: Style) {
+    use core::f32::consts::PI;
+    let u = h / 2.0;
+    let p = |x: f32, y: f32| (cx + x * u, cy + y * u);
+    let dark = Style::new(0, style.alpha, 0.0);
+    let painter = &mut *c.painter;
+    let rect = |painter: &mut Painter, x: f32, y: f32, w: f32, hh: f32, st: Style| {
+        painter.fill_rect(cx + x * u, cy + y * u, w * u, hh * u, st)
+    };
+    // A four-sided shape, as two triangles.
+    let quad = |painter: &mut Painter, q: [(f32, f32); 4], st: Style| {
+        painter.fill_triangle([p(q[0].0, q[0].1), p(q[1].0, q[1].1), p(q[2].0, q[2].1)], st);
+        painter.fill_triangle([p(q[0].0, q[0].1), p(q[2].0, q[2].1), p(q[3].0, q[3].1)], st);
+    };
+    match symbol {
+        Symbol::Hat => {
+            rect(painter, -0.62, -0.95, 1.24, 1.55, style);
+            rect(painter, -1.0, 0.55, 2.0, 0.34, style);
+            rect(painter, -0.62, 0.2, 1.24, 0.2, dark);
+        }
+        Symbol::Car => {
+            quad(
+                painter,
+                [(-0.55, -0.1), (-0.3, -0.62), (0.35, -0.62), (0.62, -0.1)],
+                style,
+            );
+            rect(painter, -1.0, -0.12, 2.0, 0.62, style);
+            for x in [-0.55, 0.55] {
+                let (wx, wy) = p(x, 0.52);
+                painter.fill_circle(wx, wy, 0.34 * u, dark);
+                painter.fill_circle(wx, wy, 0.26 * u, style);
+                painter.fill_circle(wx, wy, 0.1 * u, dark);
+            }
+        }
+        Symbol::Boot => {
+            rect(painter, -0.62, -1.0, 0.8, 1.4, style);
+            rect(painter, -0.62, 0.2, 1.3, 0.6, style);
+            let (tx, ty) = p(0.68, 0.5);
+            painter.fill_circle(tx, ty, 0.3 * u, style);
+            rect(painter, -0.62, 0.8, 1.62, 0.18, style);
+            rect(painter, -0.75, -1.0, 1.06, 0.2, style);
+        }
+        Symbol::Boat => {
+            quad(
+                painter,
+                [(-1.0, 0.3), (1.0, 0.3), (0.62, 0.9), (-0.62, 0.9)],
+                style,
+            );
+            rect(painter, -0.05, -1.0, 0.1, 1.3, style);
+            painter.fill_triangle([p(0.12, -0.92), p(0.12, 0.18), p(0.85, 0.18)], style);
+            painter.fill_triangle([p(-0.12, -0.62), p(-0.12, 0.18), p(-0.7, 0.18)], style);
+        }
+        Symbol::Crown => {
+            rect(painter, -0.9, -0.05, 1.8, 0.75, style);
+            painter.fill_triangle([p(-0.9, 0.0), p(-0.9, -0.7), p(-0.3, 0.0)], style);
+            painter.fill_triangle([p(-0.42, 0.0), p(0.0, -0.95), p(0.42, 0.0)], style);
+            painter.fill_triangle([p(0.3, 0.0), p(0.9, -0.7), p(0.9, 0.0)], style);
+            for (x, y) in [(-0.9, -0.7), (0.0, -0.95), (0.9, -0.7)] {
+                let (bx, by) = p(x, y);
+                painter.fill_circle(bx, by, 0.14 * u, style);
+            }
+            rect(painter, -0.9, 0.3, 1.8, 0.14, dark);
+        }
+        Symbol::Star => {
+            let point = |k: i32, r: f32| {
+                let a = -PI / 2.0 + k as f32 * PI / 5.0;
+                p(r * cosf(a), 0.1 + r * sinf(a))
+            };
+            for k in 0..5 {
+                let (tip, l, r) = (point(2 * k, 1.05), point(2 * k - 1, 0.44), point(2 * k + 1, 0.44));
+                painter.fill_triangle([tip, l, r], style);
+                painter.fill_triangle([p(0.0, 0.1), l, r], style);
+            }
+        }
+    }
+}
+
 // ---------- results (C6) ----------
 
 /// Big number size by character count (canvas px).
@@ -589,7 +710,14 @@ fn ramp(t: f32, at: f32, over: f32) -> f32 {
 /// the player's total, and then the screen says what to do next. The pigs themselves are
 /// [`crate::pigfx`]. A bust dims to the dud colour and passes the die by
 /// itself, so it only asks for the next player to shake.
-pub fn draw_pig_score<A: AssetStore>(c: &mut Ctx<A>, throw: &Throw, t: f32, next_player: u8, alpha: f32) {
+pub fn draw_pig_score<A: AssetStore>(
+    c: &mut Ctx<A>,
+    throw: &Throw,
+    t: f32,
+    next_player: u8,
+    tokens: &[Token],
+    alpha: f32,
+) {
     use pig_score::*;
     let smooch = throw.outcome == Outcome::Smooch;
     // A bust and a smooch both lose the turn and pass the die.
@@ -636,8 +764,19 @@ pub fn draw_pig_score<A: AssetStore>(c: &mut Ctx<A>, throw: &Throw, t: f32, next
         );
     }
 
+    let token = |p: u8| tokens.get(p as usize).copied().unwrap_or(Token::default_for(p));
     let turn_a = ramp(t, TURN_AT, 0.25);
-    if turn_a > 0.0 {
+    if turn_a > 0.0 && lost && !(smooch && banked > 0) {
+        tagged(
+            c,
+            "Pass to ",
+            token(next_player),
+            "",
+            36.0,
+            24,
+            style(turn_a, 10.0),
+        );
+    } else if turn_a > 0.0 {
         let mut line: String<24> = String::new();
         let _ = match throw.outcome {
             // The whole banked score counts down to nothing.
@@ -646,7 +785,7 @@ pub fn draw_pig_score<A: AssetStore>(c: &mut Ctx<A>, throw: &Throw, t: f32, next
                 let shown = roundf(banked as f32 * (1.0 - k * k)) as u16;
                 write!(line, "Score {shown}")
             }
-            Outcome::Smooch | Outcome::Bust => write!(line, "Pass to P{}", next_player + 1),
+            Outcome::Smooch | Outcome::Bust => Ok(()),
             Outcome::Score(p) => {
                 // Counts up from what the turn was to what it is now.
                 let k = ramp(t, TURN_AT, COUNT_S);
@@ -663,19 +802,17 @@ pub fn draw_pig_score<A: AssetStore>(c: &mut Ctx<A>, throw: &Throw, t: f32, next
     let prompt = ramp(t, PROMPT_AT, 0.3);
     let who_a = ramp(t, WHO_AT, 0.25) * (1.0 - prompt);
     if who_a > 0.0 && !lost {
-        let mut who: String<24> = String::new();
-        let _ = write!(who, "P{}", throw.player + 1);
-        c.text(&who, 0.0, 66.0, 14, style(who_a * 0.7, 0.0));
+        tagged(c, "", token(throw.player), "", 66.0, 14, style(who_a * 0.7, 0.0));
     }
     if prompt > 0.0 {
         if lost {
-            let mut line: String<24> = String::new();
-            let _ = write!(line, "P{}: shake to roll", next_player + 1);
-            c.text(
-                &line,
-                0.0,
+            tagged(
+                c,
+                "",
+                token(next_player),
+                ": shake to roll",
                 66.0,
-                fit_px(&line, 15, 150.0),
+                15,
                 style(prompt * 0.9, 6.0),
             );
         } else {
@@ -709,7 +846,7 @@ pub mod lock_in {
 /// a flash and a burst of sparks, the banked points turn into the player's
 /// new total and count up, then the screen says who has the die. `fade`
 /// (0–1) takes it away when it has been up a while.
-pub fn draw_locked<A: AssetStore>(c: &mut Ctx<A>, l: &Locked, t: f32, fade: f32) {
+pub fn draw_locked<A: AssetStore>(c: &mut Ctx<A>, l: &Locked, next: Token, t: f32, fade: f32) {
     use core::f32::consts::PI;
     use lock_in::*;
     let alpha = ramp(t, 0.0, 0.15) * fade;
@@ -777,16 +914,16 @@ pub fn draw_locked<A: AssetStore>(c: &mut Ctx<A>, l: &Locked, t: f32, fade: f32)
     let px = roundf(big_size(big.len()).min(52.0) * 0.85 * pulse) as u16;
     c.text(&big, 0.0, 34.0, px, style(1.0, 12.0));
 
-    let next = ramp(t, NEXT_AT, 0.3);
-    if next > 0.0 {
-        let mut line: String<24> = String::new();
-        let _ = write!(line, "P{} · shake to roll", l.next + 1);
-        c.text(
-            &line,
-            0.0,
+    let next_a = ramp(t, NEXT_AT, 0.3);
+    if next_a > 0.0 {
+        tagged(
+            c,
+            "",
+            next,
+            " · shake to roll",
             66.0,
-            fit_px(&line, 16, 150.0),
-            style(next * 0.85, 4.0),
+            16,
+            style(next_a * 0.85, 4.0),
         );
     }
 }
@@ -816,7 +953,7 @@ pub mod pig_win {
 /// The win screen, `t` seconds in: a happy pig face bounces in with a burst
 /// of sparks, then who won, their score, and how to start again. `fade`
 /// (0–1) takes it away when it has been up a while.
-pub fn draw_pig_win<A: AssetStore>(c: &mut Ctx<A>, player: u8, total: u16, t: f32, fade: f32) {
+pub fn draw_pig_win<A: AssetStore>(c: &mut Ctx<A>, winner: Token, total: u16, t: f32, fade: f32) {
     use core::f32::consts::PI;
     let alpha = ramp(t, 0.0, 0.2) * fade;
     let style = |a: f32, glow: f32| Style::new(FG, alpha * a, glow);
@@ -847,9 +984,7 @@ pub fn draw_pig_win<A: AssetStore>(c: &mut Ctx<A>, player: u8, total: u16, t: f3
     let words = ramp(t, 0.6, 0.3);
     if words > 0.0 {
         let breathe = 0.8 + 0.2 * sinf((t - 0.6) * 5.0);
-        let mut line: String<24> = String::new();
-        let _ = write!(line, "P{} WINS!", player + 1);
-        c.text(&line, 0.0, 36.0, 22, style(words * breathe, 10.0));
+        tagged(c, "", winner, " WINS!", 36.0, 22, style(words * breathe, 10.0));
         let mut score: String<16> = String::new();
         let _ = write!(score, "{total} points");
         c.text(&score, 0.0, 56.0, 13, style(words * 0.75, 0.0));
@@ -990,6 +1125,10 @@ pub fn draw_menu<A: AssetStore>(
         c.painter
             .fill_rect(46.0, -69.0, 16.0 * battery.clamp(0.0, 1.0), 6.0, status);
 
+        if m.page == Page::EndGame {
+            draw_end_game(c, alpha);
+            return;
+        }
         c.text(m.page.title(), 0.0, -40.0, 15, Style::new(FG, 0.75 * alpha, 0.0));
         let arrows = Style::new(FG, 0.55 * alpha, 0.0);
         let (w, h) = (4.5, 4.0);
@@ -1024,6 +1163,13 @@ pub fn draw_menu<A: AssetStore>(
                     Style::new(FG, 0.72 * alpha, 0.0),
                 );
             }
+        } else if let Some(symbol) = match m.page {
+            Page::Token(i) => m.tokens[i as usize].as_symbol(),
+            _ => None,
+        } {
+            // A symbol, with its name under it.
+            draw_symbol(c, symbol, 0.0, 2.0, 38.0, Style::new(FG, alpha, 14.0));
+            c.text(symbol.name(), 0.0, 31.0, 12, Style::new(FG, 0.7 * alpha, 0.0));
         } else {
             let value = m.value();
             c.text(
@@ -1043,6 +1189,21 @@ pub fn draw_menu<A: AssetStore>(
                 .fill_circle(x, 66.0, 3.5, Style::new(FG, a * alpha, 0.0));
         }
     });
+}
+
+/// Saving would end the Pig Toss game in play: say so, and how to go on or
+/// back out.
+fn draw_end_game<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
+    c.text("End game?", 0.0, -22.0, 28, Style::new(FG, alpha, 12.0));
+    c.text(
+        "Scores won't be kept",
+        0.0,
+        6.0,
+        14,
+        Style::new(FG, 0.75 * alpha, 0.0),
+    );
+    c.text("Hold to end", 0.0, 38.0, 15, Style::new(FG, 0.9 * alpha, 6.0));
+    c.text("Tip to go back", 0.0, 58.0, 13, Style::new(FG, 0.6 * alpha, 0.0));
 }
 
 /// The hold ring: a rounded square just inside the lit area that fills

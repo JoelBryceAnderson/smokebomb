@@ -41,6 +41,92 @@ pub const MAX_PLAYERS: u8 = 6;
 /// The score that wins the game.
 pub const TARGET: u16 = 100;
 
+/// A small picture a player can take instead of an initial, like a board
+/// game's playing pieces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Symbol {
+    Hat,
+    Car,
+    Boot,
+    Boat,
+    Crown,
+    Star,
+}
+
+impl Symbol {
+    pub const ALL: [Symbol; 6] = [
+        Symbol::Hat,
+        Symbol::Car,
+        Symbol::Boot,
+        Symbol::Boat,
+        Symbol::Crown,
+        Symbol::Star,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Symbol::Hat => "Top hat",
+            Symbol::Car => "Car",
+            Symbol::Boot => "Boot",
+            Symbol::Boat => "Boat",
+            Symbol::Crown => "Crown",
+            Symbol::Star => "Star",
+        }
+    }
+}
+
+/// What marks a player on the faces: an initial, A to Z, or a [`Symbol`].
+/// Scrolling runs through the letters and then the symbols, and wraps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Token(u8);
+
+impl Token {
+    const LETTERS: u8 = 26;
+    /// How many tokens there are to scroll through.
+    pub const COUNT: u8 = Self::LETTERS + Symbol::ALL.len() as u8;
+
+    pub const fn letter(c: char) -> Self {
+        Self((c as u8).wrapping_sub(b'A') % Self::LETTERS)
+    }
+
+    pub const fn symbol(s: Symbol) -> Self {
+        Self(Self::LETTERS + s as u8)
+    }
+
+    /// Player `i`'s token on a fresh die: A, B, C…
+    pub const fn default_for(i: u8) -> Self {
+        Self(i % Self::LETTERS)
+    }
+
+    /// The next token (`by` 1) or the previous one (`by` -1), wrapping.
+    pub fn stepped(self, by: i32) -> Self {
+        Self((self.0 as i32 + by).rem_euclid(Self::COUNT as i32) as u8)
+    }
+
+    /// The initial, if this token is a letter.
+    pub fn initial(self) -> Option<char> {
+        (self.0 < Self::LETTERS).then(|| (b'A' + self.0) as char)
+    }
+
+    /// The symbol, if this token is one.
+    pub fn as_symbol(self) -> Option<Symbol> {
+        Symbol::ALL
+            .get(self.0.checked_sub(Self::LETTERS)? as usize)
+            .copied()
+    }
+}
+
+/// Every player's token on a fresh die.
+pub const DEFAULT_TOKENS: [Token; MAX_PLAYERS as usize] = {
+    let mut t = [Token(0); MAX_PLAYERS as usize];
+    let mut i = 0;
+    while i < t.len() {
+        t[i] = Token::default_for(i as u8);
+        i += 1;
+    }
+    t
+};
+
 /// How a pig can land.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pose {
@@ -333,14 +419,10 @@ impl Pigs {
         self.current = (self.current + 1) % self.players;
     }
 
-    /// The line the faces show while the die is waiting: whose go it is.
-    pub fn status(&self) -> String<24> {
-        let mut s = String::new();
-        let _ = match self.winner {
-            Some(p) => write!(s, "P{} wins!", p + 1),
-            None => write!(s, "P{} to roll", self.current + 1),
-        };
-        s
+    /// A game with something to lose: points scored or thrown, and no
+    /// winner yet.
+    pub fn in_progress(&self) -> bool {
+        self.winner.is_none() && (self.turn > 0 || self.scores().iter().any(|&s| s > 0))
     }
 }
 
@@ -513,7 +595,7 @@ mod tests {
         assert_eq!(g.scores(), &[100, 0], "the turn goes into the score");
         assert_eq!(g.turn(), 0);
         assert_eq!(g.current(), 0, "the die stays with the winner");
-        assert_eq!(g.status().as_str(), "P1 wins!");
+        assert!(!g.in_progress(), "a won game has nothing left to lose");
         g.throw([Back, Feet], false);
         assert_eq!(g.turn(), 0, "no throwing once it's won");
         assert_eq!(g.bank(), Banked::NewGame);
@@ -533,6 +615,31 @@ mod tests {
         g.throw([Nose, Nose], false);
         assert_eq!(g.winner(), Some(0), "60 banked + 40 thrown");
         assert_eq!(g.scores(), &[100, 10]);
+    }
+
+    #[test]
+    fn a_game_is_in_progress_once_anything_is_scored() {
+        let mut g = Pigs::new(2);
+        assert!(!g.in_progress());
+        g.throw([Back, Feet], false);
+        assert!(g.in_progress(), "points thrown but not banked");
+        g.bank();
+        assert!(g.in_progress());
+    }
+
+    #[test]
+    fn tokens_run_through_the_letters_then_the_symbols_and_wrap() {
+        let a = Token::letter('A');
+        assert_eq!(a.initial(), Some('A'));
+        assert_eq!(a.stepped(1).initial(), Some('B'));
+        let z = Token::letter('Z');
+        assert_eq!(z.stepped(1).as_symbol(), Some(Symbol::Hat));
+        assert_eq!(z.stepped(1).initial(), None);
+        assert_eq!(a.stepped(-1).as_symbol(), Some(Symbol::Star), "down from A");
+        assert_eq!(a.stepped(-1).stepped(1), a);
+        assert_eq!(Token::symbol(Symbol::Car).as_symbol(), Some(Symbol::Car));
+        let names = DEFAULT_TOKENS.map(|t| t.initial());
+        assert_eq!(names, ['A', 'B', 'C', 'D', 'E', 'F'].map(Some));
     }
 
     #[test]
