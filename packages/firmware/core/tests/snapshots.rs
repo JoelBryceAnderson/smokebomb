@@ -692,6 +692,17 @@ fn pot_bills() {
     );
 }
 
+/// A throw that moves every bill: ← → P. Its label is too long for one
+/// line, so it wraps.
+#[test]
+fn throw_pot_wrap() {
+    let run =
+        Run::with_world_and_modes().with_settings(|s| s.play = smokebomb_core::menu::PlayMode::PassThePot);
+    // Raw d6 values 1, 3, 2 (x % 6 + 1); the scenario's own 11 goes unused.
+    run.sim.lock().rng_script.extend([0, 2, 1]);
+    throw_smoke_scenario("throw-pot-wrap", run);
+}
+
 #[test]
 fn throw_money() {
     let run =

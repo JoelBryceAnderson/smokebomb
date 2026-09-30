@@ -249,15 +249,16 @@ pub fn draw_result<A: AssetStore>(c: &mut Ctx<A>, record: &RollRecord, special: 
     };
     let value = if special == Some(Special::Dud) { DUD } else { FG };
     if !record.die.is_numeric() {
-        let label = pot_summary(&record.values);
         draw_pot_tokens(c, &record.values, value, alpha);
-        c.text(
-            &label,
-            0.0,
-            54.0,
-            fit_px(&label, 22, 150.0),
-            Style::new(value, alpha, 8.0),
-        );
+        let style = Style::new(value, alpha, 8.0);
+        match pot_summary_lines(&record.values) {
+            (one, None) => c.text(&one, 0.0, 54.0, fit_px(&one, 22, 150.0), style),
+            (top, Some(bottom)) => {
+                let px = fit_px(&top, 22, 150.0).min(fit_px(&bottom, 22, 150.0));
+                c.text(&top, 0.0, 44.0, px, style);
+                c.text(&bottom, 0.0, 44.0 + px as f32 * 1.1, px, style);
+            }
+        }
         return;
     }
 
@@ -297,6 +298,26 @@ pub fn draw_result<A: AssetStore>(c: &mut Ctx<A>, record: &RollRecord, special: 
 /// What a Pass the Pot throw asks for, in words: `1 left · 1 pot`, or
 /// `keep` / `keep all` when every bill stays.
 pub fn pot_summary(values: &[u8]) -> String<32> {
+    let parts = pot_parts(values);
+    join(&parts)
+}
+
+/// [`pot_summary`] on one line, or split over two when one line would have
+/// to shrink below [`POT_LABEL_MIN_PX`]: `1 left · 1 right` over `1 pot`.
+pub fn pot_summary_lines(values: &[u8]) -> (String<32>, Option<String<32>>) {
+    let parts = pot_parts(values);
+    let one = join(&parts);
+    if parts.len() < 2 || fit_px(&one, 22, 150.0) >= POT_LABEL_MIN_PX {
+        return (one, None);
+    }
+    let split = parts.len().div_ceil(2);
+    (join(&parts[..split]), Some(join(&parts[split..])))
+}
+
+/// The smallest the result label gets on one line before it wraps.
+const POT_LABEL_MIN_PX: u16 = 20;
+
+fn pot_parts(values: &[u8]) -> Vec<String<12>, 3> {
     let (mut left, mut right, mut pot) = (0, 0, 0);
     for &v in values {
         match PotFace::from_raw(v) {
@@ -306,14 +327,26 @@ pub fn pot_summary(values: &[u8]) -> String<32> {
             PotFace::Keep => {}
         }
     }
-    let mut s = String::new();
+    let mut parts = Vec::new();
     for (n, word) in [(left, "left"), (right, "right"), (pot, "pot")] {
         if n > 0 {
-            let _ = write!(s, "{}{n} {word}", if s.is_empty() { "" } else { " · " });
+            let mut s = String::new();
+            let _ = write!(s, "{n} {word}");
+            let _ = parts.push(s);
         }
     }
-    if s.is_empty() {
+    if parts.is_empty() {
+        let mut s = String::new();
         let _ = write!(s, "{}", if values.len() > 1 { "keep all" } else { "keep" });
+        let _ = parts.push(s);
+    }
+    parts
+}
+
+fn join(parts: &[String<12>]) -> String<32> {
+    let mut s = String::new();
+    for (i, p) in parts.iter().enumerate() {
+        let _ = write!(s, "{}{p}", if i > 0 { " · " } else { "" });
     }
     s
 }
@@ -1134,6 +1167,23 @@ mod tests {
         assert_eq!(pot_summary(&[2]).as_str(), "1 pot");
         assert_eq!(pot_summary(&[4, 6]).as_str(), "keep all");
         assert_eq!(pot_summary(&[5]).as_str(), "keep");
+    }
+
+    #[test]
+    fn long_pot_results_wrap() {
+        let (top, bottom) = pot_summary_lines(&[1, 3, 2]);
+        assert_eq!(top.as_str(), "1 left · 1 right");
+        assert_eq!(bottom.as_deref(), Some("1 pot"));
+        let (top, bottom) = pot_summary_lines(&[1, 3]);
+        assert_eq!(top.as_str(), "1 left");
+        assert_eq!(bottom.as_deref(), Some("1 right"));
+        let (top, bottom) = pot_summary_lines(&[2, 5, 6]);
+        assert_eq!(top.as_str(), "1 pot");
+        assert!(bottom.is_none());
+        assert!(
+            fit_px("1 left · 1 right", 22, 150.0) >= 16,
+            "wrapped lines stay readable"
+        );
     }
 
     #[test]

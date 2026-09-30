@@ -392,7 +392,7 @@ Mockup input: a swipe of more than 36 px (by dominant direction), or the arrow k
     - Without parts: at y −12 (px 41.1).
   - **Parts line** (pools only, when "a+b+c" is ≤18 characters): 600, 17 (9.8 px), or 14 (8.1 px) if longer than 10 characters; 70% alpha; at y −60 (px 13.3).
   - **Label:** 600, `fitPx(label, 22)` ≤12.7 px, at y +56 with parts or +54 without (px 80.4 / 79.2). The text is the setup label, e.g. `2d20`.
-- **Pass the Pot layout:** glyphs in a row at y −12. The label under them says what to do, not the setup: `1 left · 1 pot`, counting left, right and pot in that order and leaving out the keeps, or `keep` (one bill) / `keep all` when nothing moves.
+- **Pass the Pot layout:** glyphs in a row at y −12. The label under them says what to do, not the setup: `1 left · 1 pot`, counting left, right and pot in that order and leaving out the keeps, or `keep` (one bill) / `keep all` when nothing moves. When one line would be under 20 px it wraps, splitting the parts evenly at the same size on both lines (`1 left` over `1 right`; `1 left · 1 right` over `1 pot`), from y +44 with a line gap of 1.1 × the size.
   - Size per glyph: 64 for 1 die, 50 for 2, 40 for 3 (37 / 29 / 23 px); gap = 1.15 × size.
 
   | Glyph | Drawing |
