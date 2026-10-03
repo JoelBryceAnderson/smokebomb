@@ -15,15 +15,16 @@ use core::ptr::addr_of_mut;
 
 use heapless::Vec;
 use libm::{cosf, powf, sinf, sqrtf};
-use smokebomb_hal::{AssetStore, Face, PANEL_HEIGHT, PANEL_WIDTH};
+use smokebomb_hal::{AssetStore, Color, Face, Target};
 use smokebomb_shared::assets::{
     SectionKind, SpriteEntry, SpriteKind, SPRITES_HEADER_LEN, SPRITE_ENTRY_LEN, SPRITE_PROFILE_LEN,
 };
 
 use crate::display::Framebuffer;
-use crate::gfx::{CENTER, K};
+use crate::gfx::{center_of, k_of};
 use crate::orientation::BASES;
 use crate::pack::PackIndex;
+use crate::target::DisplayTarget;
 
 /// Room for a full shake (380), the landing top-up (76) and embers (36),
 /// with some to spare.
@@ -750,14 +751,15 @@ impl Smoke {
     /// Stamp every particle onto the faces, over whatever they show. The
     /// main cloud is sugar crystals (coins in Pass the Pot), drawn without
     /// a sprite; embers, gold and fizzle stamp the pack's sprites.
-    pub fn draw(&self, frames: &mut [Framebuffer; 6]) {
+    pub fn draw<T: DisplayTarget>(&self, frames: &mut [Framebuffer<T>; 6]) {
         for q in &self.particles {
             let q = &q.unpack();
             if q.kind == SpriteKind::Smoke {
+                let tint = T::smoke_tint(SpriteKind::Smoke, self.money);
                 if self.money {
-                    self.draw_coin(frames, q);
+                    self.draw_coin(frames, q, tint);
                 } else {
-                    self.draw_crystal(frames, q);
+                    self.draw_crystal(frames, q, tint);
                 }
                 continue;
             }
@@ -776,15 +778,16 @@ impl Smoke {
             };
             let grows = q.kind == SpriteKind::Fizzle;
             let size = q.size * (1.0 + if grows { life_t * 1.4 } else { 0.0 });
+            let tint = T::smoke_tint(q.kind, self.money);
             wrapped(q.face, q.p, size, |face, p| {
-                stamp(&mut frames[face.index()], sprite, face, p, size, alpha)
+                stamp(&mut frames[face.index()], sprite, face, p, size, alpha, tint)
             });
         }
     }
 
     /// One coin: a disc spinning about an axis in its face, so it squashes
     /// to its edge and opens again, flashing as it turns face-on.
-    fn draw_coin(&self, frames: &mut [Framebuffer; 6], q: &Particle) {
+    fn draw_coin<T: Target>(&self, frames: &mut [Framebuffer<T>; 6], q: &Particle, tint: Color) {
         let life_t = q.life / q.max;
         let fade_in = (q.life / 0.08).min(1.0);
         let alpha = fade_in * powf((1.0 - life_t).max(0.0), 0.4);
@@ -796,14 +799,14 @@ impl Smoke {
             alpha,
         };
         wrapped(q.face, q.p, coin.radius, |face, p| {
-            stamp_coin(&mut frames[face.index()], face, p, &coin)
+            stamp_coin(&mut frames[face.index()], face, p, &coin, tint)
         });
     }
 
     /// One sugar crystal: a tiny rounded cube tumbling as it falls, its lit
     /// and shaded facets trading places as it turns, now and then catching
     /// the light.
-    fn draw_crystal(&self, frames: &mut [Framebuffer; 6], q: &Particle) {
+    fn draw_crystal<T: Target>(&self, frames: &mut [Framebuffer<T>; 6], q: &Particle, tint: Color) {
         let life_t = q.life / q.max;
         let fade_in = (q.life / 0.08).min(1.0);
         let alpha = fade_in * powf((1.0 - life_t).max(0.0), 0.5);
@@ -820,7 +823,7 @@ impl Smoke {
             alpha,
         };
         wrapped(q.face, q.p, crystal.half * 1.5, |face, p| {
-            stamp_crystal(&mut frames[face.index()], face, p, &crystal)
+            stamp_crystal(&mut frames[face.index()], face, p, &crystal, tint)
         });
     }
 }
@@ -968,8 +971,19 @@ impl Particle {
     }
 }
 
-/// Stamp one sprite centred on `p` (cube coordinates) on `face`, additively.
-fn stamp(fb: &mut Framebuffer, sprite: &Sprite, face: Face, p: [f32; 3], radius: f32, alpha: f32) {
+/// Stamp one sprite centred on `p` (cube coordinates) on `face`, additively,
+/// tinted by `tint` (white leaves the sprite's own grey).
+#[allow(clippy::too_many_arguments)]
+fn stamp<T: Target>(
+    fb: &mut Framebuffer<T>,
+    sprite: &Sprite,
+    face: Face,
+    p: [f32; 3],
+    radius: f32,
+    alpha: f32,
+    tint: Color,
+) {
+    let (k, center) = (k_of::<T>(), center_of::<T>());
     let peak = sprite.value as f32 * alpha;
     if peak < 0.5 || radius <= 0.0 {
         return;
@@ -977,7 +991,7 @@ fn stamp(fb: &mut Framebuffer, sprite: &Sprite, face: Face, p: [f32; 3], radius:
     // Face-local position → canvas units (the face canvas spans ±128) → px.
     let b = &BASES[face.index()];
     let (cx, cy) = (dot(p, b.x) * 128.0, -dot(p, b.y) * 128.0);
-    let (px, py, r) = (CENTER + cx * K, CENTER + cy * K, radius * K);
+    let (px, py, r) = (center + cx * k, center + cy * k, radius * k);
     // Only the part of a faint stamp that adds at least half a level to a
     // pixel shows; the profile falls with radius, so skip the rest.
     let visible = sprite
@@ -990,7 +1004,7 @@ fn stamp(fb: &mut Framebuffer, sprite: &Sprite, face: Face, p: [f32; 3], radius:
     }
     let reach = r * (visible.min(SPRITE_PROFILE_LEN - 1) as f32 / (SPRITE_PROFILE_LEN - 1) as f32);
     let y0 = libm::floorf(py - reach).max(0.0) as usize;
-    let y1 = (libm::ceilf(py + reach).max(0.0) as usize).min(PANEL_HEIGHT);
+    let y1 = (libm::ceilf(py + reach).max(0.0) as usize).min(T::HEIGHT);
     let reach2 = reach * reach;
     let per_d2 = BY_D2 as f32 / (r * r);
     let scale = peak / 255.0;
@@ -1003,13 +1017,19 @@ fn stamp(fb: &mut Framebuffer, sprite: &Sprite, face: Face, p: [f32; 3], radius:
         // This row's span inside the stamp: pixel centres within `half`.
         let half = sqrtf(rem);
         let x0 = libm::ceilf(px - half - 0.5).max(0.0) as usize;
-        let x1 = ((libm::floorf(px + half - 0.5) + 1.0).max(0.0) as usize).min(PANEL_WIDTH);
+        let x1 = ((libm::floorf(px + half - 0.5) + 1.0).max(0.0) as usize).min(T::WIDTH);
         for x in x0..x1 {
             let dx = x as f32 + 0.5 - px;
             let i = (((dx * dx + dy * dy) * per_d2) as usize).min(BY_D2 - 1);
             let v = sprite.by_d2[i] as f32 * scale;
             if v >= 0.5 {
-                fb.add_pixel(x, y, (v + 0.5) as u8);
+                let v = (v + 0.5) as u8;
+                if tint == Color::WHITE {
+                    fb.add_pixel(x, y, v);
+                } else {
+                    let ch = |t: u8| (v as u16 * t as u16 / 255) as u8;
+                    fb.add_color(x, y, Color::rgb(ch(tint.r), ch(tint.g), ch(tint.b)));
+                }
             }
         }
     }
@@ -1027,14 +1047,15 @@ struct Coin {
 /// Stamp a coin centred on `p` (cube coordinates) on `face`: a solid disc
 /// foreshortened by its spin, with a rim, an engraved ring, light from the
 /// upper left, and a glint that sweeps across it as it turns face-on.
-fn stamp_coin(fb: &mut Framebuffer, face: Face, p: [f32; 3], coin: &Coin) {
+fn stamp_coin<T: Target>(fb: &mut Framebuffer<T>, face: Face, p: [f32; 3], coin: &Coin, tint: Color) {
+    let (k, center) = (k_of::<T>(), center_of::<T>());
     if coin.alpha < 0.02 || coin.radius <= 0.0 {
         return;
     }
     let b = &BASES[face.index()];
     let (cx, cy) = (dot(p, b.x) * 128.0, -dot(p, b.y) * 128.0);
-    let (px, py) = (CENTER + cx * K, CENTER + cy * K);
-    let r = coin.radius * K;
+    let (px, py) = (center + cx * k, center + cy * k);
+    let r = coin.radius * k;
     let open = cosf(coin.spin);
     // Edge-on it is still a thin bar: the coin has some thickness.
     let squash = libm::fabsf(open).max(1.2 / r).max(0.1);
@@ -1045,9 +1066,9 @@ fn stamp_coin(fb: &mut Framebuffer, face: Face, p: [f32; 3], coin: &Coin) {
     let glint = libm::fabsf(open) > 0.6;
     let rim = (1.3 / r).max(0.14);
     let y0 = libm::floorf(py - r).max(0.0) as usize;
-    let y1 = (libm::ceilf(py + r).max(0.0) as usize).min(PANEL_HEIGHT);
+    let y1 = (libm::ceilf(py + r).max(0.0) as usize).min(T::HEIGHT);
     let x0 = libm::floorf(px - r).max(0.0) as usize;
-    let x1 = (libm::ceilf(px + r).max(0.0) as usize).min(PANEL_WIDTH);
+    let x1 = (libm::ceilf(px + r).max(0.0) as usize).min(T::WIDTH);
     for y in y0..y1 {
         for x in x0..x1 {
             let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
@@ -1071,7 +1092,7 @@ fn stamp_coin(fb: &mut Framebuffer, face: Face, p: [f32; 3], coin: &Coin) {
                     face
                 }
             } * lit;
-            fb.blend(x, y, level.min(255.0), coin.alpha);
+            fb.blend_rgb(x, y, tint.tint(level.min(255.0)), coin.alpha);
         }
     }
 }
@@ -1089,23 +1110,24 @@ struct Crystal {
 
 /// Stamp a crystal centred on `p` (cube coordinates) on `face`: a rounded
 /// square split into a lit and a shaded facet along its diagonal.
-fn stamp_crystal(fb: &mut Framebuffer, face: Face, p: [f32; 3], c: &Crystal) {
+fn stamp_crystal<T: Target>(fb: &mut Framebuffer<T>, face: Face, p: [f32; 3], c: &Crystal, tint: Color) {
+    let (k, center) = (k_of::<T>(), center_of::<T>());
     if c.alpha < 0.02 || c.half <= 0.0 {
         return;
     }
     let b = &BASES[face.index()];
     let (cx, cy) = (dot(p, b.x) * 128.0, -dot(p, b.y) * 128.0);
-    let (px, py) = (CENTER + cx * K, CENTER + cy * K);
+    let (px, py) = (center + cx * k, center + cy * k);
     // At least a pixel across, so the smallest still read as grains.
-    let h = (c.half * K).max(0.7);
+    let h = (c.half * k).max(0.7);
     let (hu, hv) = (h, (h * c.open).max(0.6));
     let round = h * 0.3;
     let (ca, sa) = (cosf(c.angle), sinf(c.angle));
     let reach = h * 1.5 + 1.0;
     let y0 = libm::floorf(py - reach).max(0.0) as usize;
-    let y1 = (libm::ceilf(py + reach).max(0.0) as usize).min(PANEL_HEIGHT);
+    let y1 = (libm::ceilf(py + reach).max(0.0) as usize).min(T::HEIGHT);
     let x0 = libm::floorf(px - reach).max(0.0) as usize;
-    let x1 = (libm::ceilf(px + reach).max(0.0) as usize).min(PANEL_WIDTH);
+    let x1 = (libm::ceilf(px + reach).max(0.0) as usize).min(T::WIDTH);
     for y in y0..y1 {
         for x in x0..x1 {
             let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
@@ -1124,7 +1146,7 @@ fn stamp_crystal(fb: &mut Framebuffer, face: Face, p: [f32; 3], c: &Crystal) {
                 CRYSTAL_SHADE
             };
             let level = facet + (255.0 - facet) * c.glint;
-            fb.blend(x, y, level, c.alpha * cover);
+            fb.blend_rgb(x, y, tint.tint(level), c.alpha * cover);
         }
     }
 }
@@ -1250,7 +1272,7 @@ mod tests {
         s.throw();
         assert_eq!(s.particles.len(), s.full());
         assert_eq!(s.full(), 95);
-        let mut frames = [Framebuffer::new(); 6];
+        let mut frames = [Framebuffer::<smokebomb_hal::Grey96>::new(); 6];
         s.draw(&mut frames);
         assert!(
             frames.iter().any(|f| f.pixels().iter().any(|&p| p > 0)),
@@ -1266,7 +1288,7 @@ mod tests {
         for _ in 0..10 {
             s.step(1.0 / 60.0);
         }
-        let mut frames = [Framebuffer::new(); 6];
+        let mut frames = [Framebuffer::<smokebomb_hal::Grey96>::new(); 6];
         s.draw(&mut frames);
         assert!(frames.iter().any(|f| f.pixels().iter().any(|&p| p > 0)));
     }

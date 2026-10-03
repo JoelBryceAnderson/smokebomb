@@ -84,9 +84,15 @@ impl Quarter {
         }
     }
 
-    /// Where content pixel `(x, y)` lands on the panel.
+    /// Where content pixel `(x, y)` lands on the 96×96 panel.
     pub fn map(self, x: usize, y: usize) -> (usize, usize) {
-        let m = PANEL_WIDTH - 1;
+        self.map_in(x, y, PANEL_WIDTH)
+    }
+
+    /// Where content pixel `(x, y)` lands on a square panel `side` pixels
+    /// across.
+    pub fn map_in(self, x: usize, y: usize, side: usize) -> (usize, usize) {
+        let m = side - 1;
         match self {
             Quarter::R0 => (x, y),
             Quarter::R90 => (m - y, x),

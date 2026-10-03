@@ -10,6 +10,7 @@ pub mod imu_script;
 pub mod world;
 
 use std::collections::VecDeque;
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
@@ -20,12 +21,20 @@ use smokebomb_hal::*;
 
 /// Everything the outside world can see or poke.
 pub struct SimState {
-    /// Frames as last flushed to the "panels".
-    pub faces: [FrameBytes; FACE_COUNT],
+    /// The panels' target, set when the firmware first writes a frame.
+    pub target: Option<TargetId>,
+    /// Frames as last flushed to the "panels", packed the way the target's
+    /// panel takes them (4 bpp grey, or RGB565 high byte first).
+    pub faces: [Vec<u8>; FACE_COUNT],
     /// Frames written but not yet flushed.
-    pending: [FrameBytes; FACE_COUNT],
+    pending: [Vec<u8>; FACE_COUNT],
     /// Bumped on every flush so observers can skip unchanged frames.
     pub frame_seq: u64,
+    /// Bytes the firmware has sent to the panels, as a real bus would carry
+    /// them (a region's rows, not the whole frame), per face.
+    pub panel_bytes: [u64; FACE_COUNT],
+    /// Region writes per face.
+    pub panel_writes: [u64; FACE_COUNT],
     pub brightness: [u8; FACE_COUNT],
     pub display_on: bool,
     /// The 12 V panel supply is paused (for a magnetometer reading).
@@ -84,9 +93,12 @@ pub struct SimState {
 impl Default for SimState {
     fn default() -> Self {
         Self {
-            faces: [[0; FRAME_BYTES]; FACE_COUNT],
-            pending: [[0; FRAME_BYTES]; FACE_COUNT],
+            target: None,
+            faces: core::array::from_fn(|_| Vec::new()),
+            pending: core::array::from_fn(|_| Vec::new()),
             frame_seq: 0,
+            panel_bytes: [0; FACE_COUNT],
+            panel_writes: [0; FACE_COUNT],
             brightness: [255; FACE_COUNT],
             display_on: false,
             supply_paused: false,
@@ -165,10 +177,17 @@ impl SimHandle {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Build the full peripheral set wired to this state.
+    /// Build the full peripheral set wired to this state, with the 34 mm
+    /// die's 96×96 grey panels.
     pub fn peripherals(&self) -> Peripherals<SimPlatform> {
+        self.peripherals_for::<Grey96>()
+    }
+
+    /// Build the full peripheral set wired to this state, with panels of
+    /// target `T`.
+    pub fn peripherals_for<T: Target>(&self) -> Peripherals<SimPlatform<T>> {
         Peripherals {
-            display: SimDisplay(self.clone()),
+            display: SimDisplay(self.clone(), PhantomData),
             imu: SimImu(self.clone()),
             mag: SimMagnetometer(self.clone()),
             touch: SimTouch(self.clone()),
@@ -187,10 +206,12 @@ impl SimHandle {
     }
 }
 
-pub struct SimPlatform;
+/// The simulated board, with panels of target `T` (the 34 mm die's by
+/// default).
+pub struct SimPlatform<T: Target = Grey96>(PhantomData<T>);
 
-impl Platform for SimPlatform {
-    type Display = SimDisplay;
+impl<T: Target> Platform for SimPlatform<T> {
+    type Display = SimDisplay<T>;
     type Imu = SimImu;
     type Magnetometer = SimMagnetometer;
     type Touch = SimTouch;
@@ -204,18 +225,66 @@ impl Platform for SimPlatform {
     type Clock = SimClock;
 }
 
-pub struct SimDisplay(SimHandle);
+pub struct SimDisplay<T: Target = Grey96>(SimHandle, PhantomData<T>);
 
-impl Display for SimDisplay {
-    fn write_frame(&mut self, face: Face, frame: &FrameBytes) -> HalResult<()> {
-        self.0.lock().pending[face.index()] = *frame;
+impl<T: Target> SimDisplay<T> {
+    /// The pending frame for `face`, sized for `T` (a fresh panel is black).
+    fn pending(s: &mut SimState, face: Face) -> &mut Vec<u8> {
+        s.target = Some(T::ID);
+        let n = core::mem::size_of::<T::Panel>();
+        let p = &mut s.pending[face.index()];
+        if p.len() != n {
+            *p = vec![0; n];
+        }
+        p
+    }
+}
+
+impl<T: Target> Display for SimDisplay<T> {
+    type Target = T;
+
+    fn write_frame(&mut self, face: Face, frame: &T::Panel) -> HalResult<()> {
+        self.write_region(face, Region::full::<T>(), frame)
+    }
+
+    /// Copies only the region's pixels, the way a panel's address window
+    /// takes them, so a missed dirty tile shows as a stale one.
+    fn write_region(&mut self, face: Face, region: Region, frame: &T::Panel) -> HalResult<()> {
+        if region.is_empty() || region.x1 as usize > T::WIDTH || region.y1 as usize > T::HEIGHT {
+            return Err(HalError::InvalidArgument);
+        }
+        let mut s = self.0.lock();
+        let src = frame.as_ref();
+        let dst = Self::pending(&mut s, face);
+        let bytes = match T::ID {
+            TargetId::Grey96 => {
+                // 4 bpp, two pixels a byte: a window starts and ends on
+                // whole bytes.
+                let (x0, x1) = (region.x0 as usize / 2, (region.x1 as usize).div_ceil(2));
+                for y in region.y0 as usize..region.y1 as usize {
+                    let row = y * T::WIDTH / 2;
+                    dst[row + x0..row + x1].copy_from_slice(&src[row + x0..row + x1]);
+                }
+                (x1 - x0) * region.height()
+            }
+            TargetId::Rgb64 => {
+                let (x0, x1) = (region.x0 as usize * 2, region.x1 as usize * 2);
+                for y in region.y0 as usize..region.y1 as usize {
+                    let row = y * T::WIDTH * 2;
+                    dst[row + x0..row + x1].copy_from_slice(&src[row + x0..row + x1]);
+                }
+                (x1 - x0) * region.height()
+            }
+        };
+        s.panel_bytes[face.index()] += bytes as u64;
+        s.panel_writes[face.index()] += 1;
         Ok(())
     }
 
     fn flush(&mut self) -> HalResult<()> {
         let mut s = self.0.lock();
         if s.faces != s.pending {
-            s.faces = s.pending;
+            s.faces = s.pending.clone();
             s.frame_seq += 1;
         }
         Ok(())

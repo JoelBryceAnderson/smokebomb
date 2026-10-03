@@ -1,4 +1,4 @@
-//! Drawing primitives for the 96×96 panels, in the mockup's canvas units.
+//! Drawing primitives for the panels, in the mockup's canvas units.
 //!
 //! The mockup draws each face on a 256×256 canvas whose lit area is ±83 units
 //! around the centre, then downsamples it to 96×96 (SIM_SPEC B1). Screens here
@@ -7,21 +7,40 @@
 //! them to panel pixels with the same order the mockup uses:
 //! `translate(centre + offset); rotate(angle); scale(s)`.
 //!
+//! The same code draws on every display target ([`smokebomb_hal::Target`]):
+//! a [`Transform`] carries its target's scale, centre and size, the
+//! [`Layer`] its scratch planes, and [`Style`] a colour that each target's
+//! pixel type reduces (grey: brightest channel; RGB565: top bits). On the
+//! 96×96 target this is exactly the original grey pipeline.
+//!
 //! Every draw call rasterizes anti-aliased coverage into a scratch layer, then
 //! composites it with source-over blending. A non-zero `glow` reproduces the
 //! canvas `shadowBlur` halo: the layer is blurred (three box passes ≈ a
 //! Gaussian with σ = blur / 2) and composited underneath first.
 
 use libm::{cosf, fabsf, floorf, roundf, sinf, sqrtf};
-use smokebomb_hal::{PANEL_HEIGHT, PANEL_WIDTH};
+use smokebomb_hal::{Color, Grey96, Target};
 
-use crate::display::{Framebuffer, PIXELS};
+use crate::display::Framebuffer;
 use crate::orientation::Quarter;
 
-/// Panel pixels per canvas unit: the lit ±83 units span 96 pixels.
+/// Panel pixels per canvas unit on the 96×96 target: the lit ±83 units span
+/// 96 pixels.
 pub const K: f32 = 96.0 / 166.0;
-/// Panel centre, in pixel coordinates (pixel `i` covers `[i, i + 1)`).
+/// Panel centre on the 96×96 target, in pixel coordinates (pixel `i` covers
+/// `[i, i + 1)`).
 pub const CENTER: f32 = 48.0;
+
+/// Panel pixels per canvas unit on `T`: the lit ±83 canvas units span the
+/// panel, whatever its size.
+pub const fn k_of<T: Target>() -> f32 {
+    T::WIDTH as f32 / 166.0
+}
+
+/// Panel centre on `T`.
+pub const fn center_of<T: Target>() -> f32 {
+    T::WIDTH as f32 / 2.0
+}
 
 /// Canvas units (face-centred, y down) → panel pixels.
 #[derive(Clone, Copy, Debug)]
@@ -33,6 +52,11 @@ pub struct Transform {
     /// mockup's `translate(S/2 + ox, …)`).
     ox: f32,
     oy: f32,
+    /// The target: panel px per canvas unit, its centre, and its size.
+    k: f32,
+    center: f32,
+    width: usize,
+    height: usize,
 }
 
 impl Default for Transform {
@@ -42,30 +66,57 @@ impl Default for Transform {
 }
 
 impl Transform {
+    /// Rotated by `angle` on the 96×96 target.
     pub fn rotated(angle: f32) -> Self {
-        Self {
-            cos: cosf(angle),
-            sin: sinf(angle),
-            scale: 1.0,
-            ox: 0.0,
-            oy: 0.0,
-        }
+        Self::rotated_on::<Grey96>(angle)
     }
 
+    /// Rotated by `angle` on target `T`.
+    pub fn rotated_on<T: Target>(angle: f32) -> Self {
+        Self::new::<T>(cosf(angle), sinf(angle))
+    }
+
+    /// A quarter turn on the 96×96 target.
     pub fn quarter(q: Quarter) -> Self {
+        Self::quarter_on::<Grey96>(q)
+    }
+
+    /// A quarter turn on target `T`.
+    pub fn quarter_on<T: Target>(q: Quarter) -> Self {
         let (cos, sin) = match q {
             Quarter::R0 => (1.0, 0.0),
             Quarter::R90 => (0.0, 1.0),
             Quarter::R180 => (-1.0, 0.0),
             Quarter::R270 => (0.0, -1.0),
         };
+        Self::new::<T>(cos, sin)
+    }
+
+    fn new<T: Target>(cos: f32, sin: f32) -> Self {
         Self {
             cos,
             sin,
             scale: 1.0,
             ox: 0.0,
             oy: 0.0,
+            k: k_of::<T>(),
+            center: center_of::<T>(),
+            width: T::WIDTH,
+            height: T::HEIGHT,
         }
+    }
+
+    /// The same orientation and offset, with one unit a whole panel pixel
+    /// instead of a canvas unit: for layouts drawn pixel by pixel (the
+    /// 64×64 screens). Origin stays at the panel centre.
+    pub fn in_pixels(mut self) -> Self {
+        self.scale = 1.0 / self.k;
+        self
+    }
+
+    /// The panel's size in pixels.
+    pub fn panel(&self) -> (usize, usize) {
+        (self.width, self.height)
     }
 
     /// Scale about the (offset) centre, after rotation.
@@ -76,27 +127,27 @@ impl Transform {
 
     /// Move the centre by canvas units in unrotated face space.
     pub fn offset(mut self, dx: f32, dy: f32) -> Self {
-        self.ox += dx * K;
-        self.oy += dy * K;
+        self.ox += dx * self.k;
+        self.oy += dy * self.k;
         self
     }
 
     /// Panel pixels per canvas unit.
     pub fn px_per_unit(&self) -> f32 {
-        self.scale * K
+        self.scale * self.k
     }
 
     pub fn forward(&self, x: f32, y: f32) -> (f32, f32) {
         let s = self.px_per_unit();
         (
-            CENTER + self.ox + (x * self.cos - y * self.sin) * s,
-            CENTER + self.oy + (x * self.sin + y * self.cos) * s,
+            self.center + self.ox + (x * self.cos - y * self.sin) * s,
+            self.center + self.oy + (x * self.sin + y * self.cos) * s,
         )
     }
 
     pub fn inverse(&self, px: f32, py: f32) -> (f32, f32) {
         let s = self.px_per_unit();
-        let (dx, dy) = ((px - CENTER - self.ox) / s, (py - CENTER - self.oy) / s);
+        let (dx, dy) = ((px - self.center - self.ox) / s, (py - self.center - self.oy) / s);
         (dx * self.cos + dy * self.sin, -dx * self.sin + dy * self.cos)
     }
 
@@ -115,7 +166,7 @@ impl Transform {
             hx = hx.max(x);
             hy = hy.max(y);
         }
-        Rect::clip(lx - pad, ly - pad, hx + pad, hy + pad)
+        Rect::clip_to(lx - pad, ly - pad, hx + pad, hy + pad, self.width, self.height)
     }
 }
 
@@ -129,13 +180,19 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// Clipped to the 96×96 panel.
     pub fn clip(x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
+        Self::clip_to(x0, y0, x1, y1, Grey96::WIDTH, Grey96::HEIGHT)
+    }
+
+    /// Clipped to a `width` × `height` panel.
+    pub fn clip_to(x0: f32, y0: f32, x1: f32, y1: f32, width: usize, height: usize) -> Rect {
         let c = |v: f32, max: usize| -> usize { (floorf(v).max(0.0) as usize).min(max) };
         Rect {
-            x0: c(x0, PANEL_WIDTH),
-            y0: c(y0, PANEL_HEIGHT),
-            x1: c(x1 + 1.0, PANEL_WIDTH),
-            y1: c(y1 + 1.0, PANEL_HEIGHT),
+            x0: c(x0, width),
+            y0: c(y0, height),
+            x1: c(x1 + 1.0, width),
+            y1: c(y1 + 1.0, height),
         }
     }
 
@@ -158,12 +215,13 @@ impl Rect {
         }
     }
 
-    pub fn grow(self, r: usize) -> Rect {
+    /// Grown by `r` on every side, within a `width` × `height` panel.
+    pub fn grow_in(self, r: usize, width: usize, height: usize) -> Rect {
         Rect {
             x0: self.x0.saturating_sub(r),
             y0: self.y0.saturating_sub(r),
-            x1: (self.x1 + r).min(PANEL_WIDTH),
-            y1: (self.y1 + r).min(PANEL_HEIGHT),
+            x1: (self.x1 + r).min(width),
+            y1: (self.y1 + r).min(height),
         }
     }
 }
@@ -171,8 +229,9 @@ impl Rect {
 /// How a shape is painted.
 #[derive(Clone, Copy, Debug)]
 pub struct Style {
-    /// Grey value (the brightest channel of the mockup's colour).
-    pub value: u8,
+    /// The colour. A grey panel shows its brightest channel, which is how
+    /// the mockup's quantiser reads its colours.
+    pub color: Color,
     /// Canvas `globalAlpha`, 0–1.
     pub alpha: f32,
     /// Canvas `shadowBlur` in canvas units; 0 for none.
@@ -180,31 +239,48 @@ pub struct Style {
 }
 
 impl Style {
+    /// Grey `value` (the brightest channel of the mockup's colour).
     pub const fn new(value: u8, alpha: f32, glow: f32) -> Self {
-        Self { value, alpha, glow }
+        Self {
+            color: Color::grey(value),
+            alpha,
+            glow,
+        }
+    }
+
+    pub const fn color(color: Color, alpha: f32, glow: f32) -> Self {
+        Self { color, alpha, glow }
+    }
+
+    /// The same, at `alpha` times its opacity.
+    pub fn faded(self, alpha: f32) -> Self {
+        Self {
+            alpha: self.alpha * alpha,
+            ..self
+        }
     }
 }
 
 /// Scratch buffers shared by all faces: coverage, blurred copy, temp.
-pub struct Layer {
-    cov: [u8; PIXELS],
-    blur: [u8; PIXELS],
-    tmp: [u8; PIXELS],
+pub struct Layer<T: Target = Grey96> {
+    cov: T::Plane,
+    blur: T::Plane,
+    tmp: T::Plane,
     dirty: Rect,
 }
 
-impl Default for Layer {
+impl<T: Target> Default for Layer<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Layer {
+impl<T: Target> Layer<T> {
     pub const fn new() -> Self {
         Self {
-            cov: [0; PIXELS],
-            blur: [0; PIXELS],
-            tmp: [0; PIXELS],
+            cov: T::BLANK_PLANE,
+            blur: T::BLANK_PLANE,
+            tmp: T::BLANK_PLANE,
             dirty: Rect {
                 x0: 0,
                 y0: 0,
@@ -215,27 +291,35 @@ impl Layer {
     }
 }
 
-pub struct Painter<'a> {
-    fb: &'a mut Framebuffer,
-    layer: &'a mut Layer,
+pub struct Painter<'a, T: Target = Grey96> {
+    fb: &'a mut Framebuffer<T>,
+    layer: &'a mut Layer<T>,
     pub xf: Transform,
 }
 
-impl<'a> Painter<'a> {
-    pub fn new(fb: &'a mut Framebuffer, layer: &'a mut Layer, xf: Transform) -> Self {
+impl<'a, T: Target> Painter<'a, T> {
+    /// `xf` should be made for `T` ([`Transform::quarter_on`]).
+    pub fn new(fb: &'a mut Framebuffer<T>, layer: &'a mut Layer<T>, xf: Transform) -> Self {
+        debug_assert_eq!(
+            xf.panel(),
+            (T::WIDTH, T::HEIGHT),
+            "transform made for another target"
+        );
         Self { fb, layer, xf }
     }
 
     /// The framebuffer, for code that still draws directly (placeholders).
-    pub fn framebuffer(&mut self) -> &mut Framebuffer {
+    pub fn framebuffer(&mut self) -> &mut Framebuffer<T> {
         self.fb
     }
 
     /// Start a draw call: clear what the previous one left in the layer.
     pub fn begin(&mut self) {
         let d = self.layer.dirty;
+        let w = T::WIDTH;
+        let cov = self.layer.cov.as_mut();
         for y in d.y0..d.y1 {
-            self.layer.cov[y * PANEL_WIDTH + d.x0..y * PANEL_WIDTH + d.x1].fill(0);
+            cov[y * w + d.x0..y * w + d.x1].fill(0);
         }
         self.layer.dirty = Rect::default();
     }
@@ -246,7 +330,7 @@ impl<'a> Painter<'a> {
             return;
         }
         let v = (c.min(1.0) * 255.0 + 0.5) as u8;
-        let p = &mut self.layer.cov[y * PANEL_WIDTH + x];
+        let p = &mut self.layer.cov.as_mut()[y * T::WIDTH + x];
         if v > *p {
             *p = v;
         }
@@ -263,19 +347,59 @@ impl<'a> Painter<'a> {
             return;
         }
         if style.glow > 0.0 {
-            let sigma = style.glow * 0.5 * K;
+            // The glow is in canvas units, scaled like everything else on
+            // this target (the 96×96 target's own K there).
+            let sigma = style.glow * 0.5 * k_of::<T>();
             let r = box_radius(sigma);
-            let region = d.grow(3 * r);
+            let region = d.grow_in(3 * r, T::WIDTH, T::HEIGHT);
             box_blur3(
-                &self.layer.cov,
-                &mut self.layer.blur,
-                &mut self.layer.tmp,
+                self.layer.cov.as_ref(),
+                self.layer.blur.as_mut(),
+                self.layer.tmp.as_mut(),
+                T::WIDTH,
                 region,
                 r,
             );
-            composite(self.fb, &self.layer.blur, region, style);
+            composite(self.fb, self.layer.blur.as_ref(), region, style);
         }
-        composite(self.fb, &self.layer.cov, d, style);
+        composite(self.fb, self.layer.cov.as_ref(), d, style);
+    }
+
+    /// Blit a 1-bit bitmap (rows of `w` bits, MSB first, `stride` bytes a
+    /// row) with its top-left at `(x, y)`, each bit `scale` units square.
+    /// Sampled nearest, so in pixel units ([`Transform::in_pixels`]) at
+    /// whole-pixel positions and quarter turns it lands exactly on the
+    /// panel grid, with no smoothing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn blit_bits(
+        &mut self,
+        bits: &[u8],
+        stride: usize,
+        w: usize,
+        h: usize,
+        x: f32,
+        y: f32,
+        scale: f32,
+        style: Style,
+    ) {
+        self.begin();
+        let (x1, y1) = (x + w as f32 * scale, y + h as f32 * scale);
+        let r = self.xf.bounds(x, y, x1, y1, 0.0);
+        for py in r.y0..r.y1 {
+            for px in r.x0..r.x1 {
+                let (cx, cy) = self.xf.inverse(px as f32 + 0.5, py as f32 + 0.5);
+                let (bx, by) = (floorf((cx - x) / scale), floorf((cy - y) / scale));
+                if bx < 0.0 || by < 0.0 || bx >= w as f32 || by >= h as f32 {
+                    continue;
+                }
+                let (bx, by) = (bx as usize, by as usize);
+                if bits[by * stride + bx / 8] & (0x80 >> (bx % 8)) != 0 {
+                    self.cover(px, py, 1.0);
+                }
+            }
+        }
+        self.mark(r);
+        self.finish(style);
     }
 
     /// Rasterize coverage from a signed distance function over canvas-space
@@ -455,10 +579,11 @@ fn box_radius(sigma: f32) -> usize {
     roundf((w - 1.0) / 2.0).max(0.0) as usize
 }
 
-/// Three horizontal then three vertical box passes over `region`.
-fn box_blur3(src: &[u8; PIXELS], dst: &mut [u8; PIXELS], tmp: &mut [u8; PIXELS], region: Rect, r: usize) {
+/// Three horizontal then three vertical box passes over `region` of planes
+/// `width` pixels across.
+fn box_blur3(src: &[u8], dst: &mut [u8], tmp: &mut [u8], width: usize, region: Rect, r: usize) {
     for y in region.y0..region.y1 {
-        let row = y * PANEL_WIDTH;
+        let row = y * width;
         dst[row + region.x0..row + region.x1].copy_from_slice(&src[row + region.x0..row + region.x1]);
     }
     if r == 0 {
@@ -466,16 +591,16 @@ fn box_blur3(src: &[u8; PIXELS], dst: &mut [u8; PIXELS], tmp: &mut [u8; PIXELS],
     }
     // Three horizontal passes (dst → tmp → dst → tmp), then three vertical
     // (tmp → dst → tmp → dst): the result ends in `dst`.
-    box_pass(dst, tmp, region, r, true);
-    box_pass(tmp, dst, region, r, true);
-    box_pass(dst, tmp, region, r, true);
-    box_pass(tmp, dst, region, r, false);
-    box_pass(dst, tmp, region, r, false);
-    box_pass(tmp, dst, region, r, false);
+    box_pass(dst, tmp, width, region, r, true);
+    box_pass(tmp, dst, width, region, r, true);
+    box_pass(dst, tmp, width, region, r, true);
+    box_pass(tmp, dst, width, region, r, false);
+    box_pass(dst, tmp, width, region, r, false);
+    box_pass(tmp, dst, width, region, r, false);
 }
 
 /// One box pass (window 2r+1, zero outside the region) from `src` to `dst`.
-fn box_pass(src: &[u8; PIXELS], dst: &mut [u8; PIXELS], region: Rect, r: usize, horizontal: bool) {
+fn box_pass(src: &[u8], dst: &mut [u8], width: usize, region: Rect, r: usize, horizontal: bool) {
     let w = (2 * r + 1) as u32;
     let (outer, inner) = if horizontal {
         ((region.y0, region.y1), (region.x0, region.x1))
@@ -487,9 +612,9 @@ fn box_pass(src: &[u8; PIXELS], dst: &mut [u8; PIXELS], region: Rect, r: usize, 
     }
     let idx = |o: usize, i: usize| {
         if horizontal {
-            o * PANEL_WIDTH + i
+            o * width + i
         } else {
-            i * PANEL_WIDTH + o
+            i * width + o
         }
     };
     for o in outer.0..outer.1 {
@@ -510,16 +635,16 @@ fn box_pass(src: &[u8; PIXELS], dst: &mut [u8; PIXELS], region: Rect, r: usize, 
     }
 }
 
-fn composite(fb: &mut Framebuffer, cov: &[u8; PIXELS], region: Rect, style: Style) {
-    let value = style.value as f32;
+fn composite<T: Target>(fb: &mut Framebuffer<T>, cov: &[u8], region: Rect, style: Style) {
+    let color = style.color.to_f32();
     for y in region.y0..region.y1 {
         for x in region.x0..region.x1 {
-            let c = cov[y * PANEL_WIDTH + x];
+            let c = cov[y * T::WIDTH + x];
             if c == 0 {
                 continue;
             }
             let a = c as f32 / 255.0 * style.alpha;
-            fb.blend(x, y, value, a);
+            fb.blend_rgb(x, y, color, a);
         }
     }
 }
@@ -549,7 +674,7 @@ mod tests {
 
     #[test]
     fn circle_is_antialiased_and_centred() {
-        let mut fb = Framebuffer::new();
+        let mut fb = Framebuffer::<Grey96>::new();
         let mut layer = Layer::new();
         let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
         p.fill_circle(0.0, 0.0, 12.45, Style::new(255, 1.0, 0.0));
@@ -562,7 +687,7 @@ mod tests {
     #[test]
     fn glow_spreads_beyond_the_shape() {
         let draw = |glow| {
-            let mut fb = Framebuffer::new();
+            let mut fb = Framebuffer::<Grey96>::new();
             let mut layer = Layer::new();
             Painter::new(&mut fb, &mut layer, Transform::default()).fill_circle(
                 0.0,
@@ -578,14 +703,16 @@ mod tests {
 
     #[test]
     fn box_blur_preserves_mass() {
+        use crate::display::PIXELS;
         let mut src = [0u8; PIXELS];
-        src[48 * PANEL_WIDTH + 48] = 255;
+        src[48 * 96 + 48] = 255;
         let mut dst = [0u8; PIXELS];
         let mut tmp = [0u8; PIXELS];
         box_blur3(
             &src,
             &mut dst,
             &mut tmp,
+            96,
             Rect {
                 x0: 0,
                 y0: 0,

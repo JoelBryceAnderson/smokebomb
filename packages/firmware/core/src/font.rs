@@ -12,6 +12,10 @@
 //! Glyphs are sampled bilinearly through the painter's transform, so text
 //! rotates, scales and slides like any other shape.
 //!
+//! Glyphs are rasterised at the 96×96 panel's scale ([`K`] panel px per
+//! canvas px); on a smaller panel the painter's transform samples them down.
+//! The 64×64 screens use their own bitmap fonts instead (`font64`).
+//!
 //! Hardware note: every glyph is read from the `AssetStore` when drawn. On
 //! the nRF54L15 the QSPI flash can be memory-mapped (XIP), which makes that a
 //! plain memory read; otherwise add a glyph cache.
@@ -21,7 +25,7 @@ use core::ptr::addr_of_mut;
 
 use heapless::Vec;
 use libm::floorf;
-use smokebomb_hal::{AssetStore, PANEL_WIDTH};
+use smokebomb_hal::{AssetStore, Target, PANEL_WIDTH};
 use smokebomb_shared::assets::{
     FontHeader, GlyphEntry, KernEntry, SectionKind, FONT_HEADER_LEN, GLYPH_ENTRY_LEN, KERN_ENTRY_LEN, Q6,
 };
@@ -213,10 +217,10 @@ impl Fonts {
     /// Draw `text` at canvas position `(x, y)` with the mockup's
     /// `font = "700 {canvas_px}px Space Grotesk"`, `textBaseline = middle`.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw<A: AssetStore>(
+    pub fn draw<A: AssetStore, T: Target>(
         &mut self,
         assets: &mut A,
-        painter: &mut Painter,
+        painter: &mut Painter<T>,
         text: &str,
         x: f32,
         y: f32,
@@ -231,10 +235,10 @@ impl Fonts {
     /// on from the left: only the first `reveal` (0–1) of its width shows,
     /// behind a soft pen edge.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_script<A: AssetStore>(
+    pub fn draw_script<A: AssetStore, T: Target>(
         &mut self,
         assets: &mut A,
-        painter: &mut Painter,
+        painter: &mut Painter<T>,
         text: &str,
         x: f32,
         y: f32,
@@ -256,10 +260,10 @@ impl Fonts {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_in<A: AssetStore>(
+    fn draw_in<A: AssetStore, T: Target>(
         &mut self,
         assets: &mut A,
-        painter: &mut Painter,
+        painter: &mut Painter<T>,
         weight: u16,
         text: &str,
         (x, y): (f32, f32),

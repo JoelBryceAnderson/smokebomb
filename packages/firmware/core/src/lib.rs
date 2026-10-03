@@ -31,6 +31,7 @@ pub mod screens;
 pub mod session;
 pub mod smoke;
 pub mod state;
+pub mod target;
 pub mod tips;
 pub mod ui;
 
@@ -39,8 +40,8 @@ use core::ptr::addr_of_mut;
 
 use heapless::Vec;
 use smokebomb_hal::{
-    Ble, Clock, Display, Face, FrameBytes, HalResult, Haptics, Imu, Magnetometer, Peripherals, Platform,
-    Power, Rng, SecureElement, Touch,
+    Ble, Clock, Display, Face, HalResult, Haptics, Imu, Magnetometer, Peripherals, Platform, Power, Rng,
+    SecureElement, Target, TargetOf, Touch,
 };
 use smokebomb_shared::protocol::Inventory;
 use smokebomb_shared::types::MAX_POT_DICE;
@@ -61,6 +62,7 @@ use screens::Ctx;
 use session::Sessions;
 use smoke::{Smoke, Special};
 use state::{Command, Event, Mode, StateMachine};
+use target::DisplayTarget;
 use tips::{Frame, TipDir, TipTracker, TipUpdate};
 use ui::{FaceContent, Ui};
 
@@ -137,10 +139,10 @@ pub struct Firmware<P: Platform> {
     last_tick_ms: Option<u64>,
     fonts: Fonts,
     ui: Ui,
-    frames: [Framebuffer; smokebomb_hal::FACE_COUNT],
-    layer: Layer,
-    /// Packed 4bpp scratch for the panel.
-    panel: FrameBytes,
+    frames: [Framebuffer<TargetOf<P>>; smokebomb_hal::FACE_COUNT],
+    layer: Layer<TargetOf<P>>,
+    /// A frame packed for the panel (4 bpp grey, or RGB565).
+    panel: <TargetOf<P> as Target>::Panel,
     /// Filtered gravity-up direction in die coordinates (milli-g); `None`
     /// until the first IMU sample.
     up: Option<[f32; 3]>,
@@ -177,7 +179,10 @@ pub struct Firmware<P: Platform> {
     asleep: bool,
 }
 
-impl<P: Platform> Firmware<P> {
+impl<P: Platform> Firmware<P>
+where
+    TargetOf<P>: DisplayTarget,
+{
     /// Boots the firmware and returns it by value. At ~150 KB that suits the
     /// simulator and tests; on the board use [`Firmware::init`].
     pub fn new(hw: Peripherals<P>) -> HalResult<Self> {
@@ -398,7 +403,7 @@ impl<P: Platform> Firmware<P> {
         self.last_roll.as_ref()
     }
 
-    pub fn frames(&self) -> &[Framebuffer; smokebomb_hal::FACE_COUNT] {
+    pub fn frames(&self) -> &[Framebuffer<TargetOf<P>>; smokebomb_hal::FACE_COUNT] {
         &self.frames
     }
 
@@ -1264,7 +1269,7 @@ impl<P: Platform> Firmware<P> {
                 content
             };
             let rot = quarters[face.index()];
-            let mut painter = Painter::new(fb, layer, Transform::quarter(rot));
+            let mut painter = Painter::new(fb, layer, Transform::quarter_on::<TargetOf<P>>(rot));
             let mut c = Ctx {
                 painter: &mut painter,
                 fonts,
@@ -1277,7 +1282,7 @@ impl<P: Platform> Firmware<P> {
                 screens::draw_flash(&mut c, ui.flash(now));
             }
             if let Some((draft, u)) = ui.menu_fade(now, face) {
-                screens::draw_menu(
+                TargetOf::<P>::draw_menu(
                     &mut c,
                     &draft,
                     battery as f32 / 100.0,
@@ -1298,22 +1303,24 @@ impl<P: Platform> Firmware<P> {
 
             match content {
                 FaceContent::Blank => {}
-                FaceContent::Boot { t, top } => screens::draw_boot(&mut c, face.index(), top, t),
+                FaceContent::Boot { t, top } => TargetOf::<P>::draw_boot(&mut c, face.index(), top, t),
                 FaceContent::Wake { alpha } if pigs_on => {
                     screens::draw_pigs_label(&mut c, setup, tokens[pigs_up as usize], pigs_won, alpha)
                 }
-                FaceContent::Wake { alpha } => screens::draw_wake_label(&mut c, setup, &label, alpha),
+                FaceContent::Wake { alpha } => {
+                    TargetOf::<P>::draw_wake_label(&mut c, setup, &label, alpha, face.index())
+                }
                 FaceContent::Result { alpha } => {
                     if let Some(t) = pigs_throw {
                         let next = (t.player + 1) % players;
                         let alpha = alpha * screens::pig_win::score_fade(Some(&t), since_landing);
                         screens::draw_pig_score(&mut c, &t, since_landing, next, &tokens, alpha);
                     } else if let Some(r) = record {
-                        screens::draw_result(&mut c, r, ui.special(), alpha);
+                        TargetOf::<P>::draw_result(&mut c, r, ui.special(), alpha);
                     }
                 }
                 FaceContent::Success { t, setup } => {
-                    screens::draw_success(&mut c, &setup.label(), setup.nudge(), t);
+                    TargetOf::<P>::draw_success(&mut c, &setup.label(), setup.nudge(), t);
                 }
                 FaceContent::Menu => {
                     if let Some(m) = menu {
@@ -1331,11 +1338,11 @@ impl<P: Platform> Firmware<P> {
                 }
                 FaceContent::Nest => {
                     if let Some(nf) = nest_faces[face.index()].filter(|nf| nf.dim > 0.0) {
-                        screens::draw_nest(&mut c, &nf);
+                        TargetOf::<P>::draw_nest(&mut c, &nf);
                         fb_of(c.painter).scale(nf.dim);
                     }
                 }
-                FaceContent::LowBattery { alpha } => screens::draw_bolt(&mut c, alpha),
+                FaceContent::LowBattery { alpha } => TargetOf::<P>::draw_bolt(&mut c, alpha),
             }
             if let Some((l, t)) = locked {
                 if face != up.opposite() {
@@ -1376,7 +1383,7 @@ impl<P: Platform> Firmware<P> {
             smoke.draw(&mut self.frames);
         }
         for face in Face::ALL {
-            self.frames[face.index()].quantize(&mut self.panel);
+            TargetOf::<P>::pack(&self.frames[face.index()], &mut self.panel);
             self.hw.display.write_frame(face, &self.panel)?;
         }
         self.hw.display.flush()
@@ -1407,8 +1414,8 @@ enum PotatoView {
 /// bottom would otherwise keep the orientation it had there until it
 /// counted as a side face, and flip mid-turn.
 #[allow(clippy::too_many_arguments)]
-fn draw_menu_face<A: smokebomb_hal::AssetStore>(
-    c: &mut Ctx<A>,
+fn draw_menu_face<A: smokebomb_hal::AssetStore, T: DisplayTarget>(
+    c: &mut Ctx<A, T>,
     m: &MenuSession,
     ui: &Ui,
     orientation: &TextOrientation,
@@ -1421,7 +1428,7 @@ fn draw_menu_face<A: smokebomb_hal::AssetStore>(
     let Some(page) = page_frame(m, face) else {
         return;
     };
-    c.painter.xf = Transform::quarter(page_quarter(&page, face, orientation));
+    c.painter.xf = Transform::quarter_on::<T>(page_quarter(&page, face, orientation));
     if let Some((dir, progress)) = m.turning {
         // `k` whole faces passed, and `u` of the way to the next.
         let k = libm::floorf(progress);
@@ -1430,18 +1437,18 @@ fn draw_menu_face<A: smokebomb_hal::AssetStore>(
         let (mx, my) = frame.motion_dir(face, dir);
         let d = screens::TIP_SLIDE;
         if face == frame.front_face() {
-            screens::draw_menu(c, &draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
+            T::draw_menu(c, &draft, battery, -mx * u * d, -my * u * d, 1.0 - u, 1.0);
         } else {
             let next = draft.tipped(dir);
             let (ox, oy) = (mx * (1.0 - u) * d, my * (1.0 - u) * d);
-            screens::draw_menu(c, &next, battery, ox, oy, u, 1.0);
+            T::draw_menu(c, &next, battery, ox, oy, u, 1.0);
         }
         return;
     }
     {
         let intro = ui.menu_intro(now);
         screens::draw_hold_ring(c, 1.0, intro.ring_alpha, intro.ring_grow);
-        screens::draw_menu(c, &m.draft, battery, 0.0, 0.0, intro.alpha, intro.scale);
+        T::draw_menu(c, &m.draft, battery, 0.0, 0.0, intro.alpha, intro.scale);
         if let Some(p) = hold {
             screens::draw_hold_ring(c, p, 1.0, 0.0);
         }
@@ -1478,7 +1485,7 @@ fn ease_inout(u: f32) -> f32 {
     u * u * (3.0 - 2.0 * u)
 }
 
-fn fb_of<'a>(painter: &'a mut Painter<'_>) -> &'a mut Framebuffer {
+fn fb_of<'a, T: Target>(painter: &'a mut Painter<'_, T>) -> &'a mut Framebuffer<T> {
     painter.framebuffer()
 }
 

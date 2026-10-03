@@ -78,6 +78,8 @@ fn todo<T>(stand_in: impl FnOnce() -> T) -> HalResult<T> {
 
 pub struct Ssd1317Array;
 impl Display for Ssd1317Array {
+    type Target = Grey96;
+
     fn write_frame(&mut self, _face: Face, _frame: &FrameBytes) -> HalResult<()> {
         todo(|| ()) // DMA frame into the back buffer for this CS line
     }
