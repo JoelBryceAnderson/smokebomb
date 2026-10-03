@@ -67,7 +67,8 @@ Screen code has no target checks.
 
 **Pig Toss.** The 96×96 layout puts the pigs, the throw, the turn score, the total and the hints on screen at once. At 64×64 that was unreadable, so the 64×64 design uses time instead of space:
 
-- The pigs land full size and pink, hold, then fade out. The 96×96 die shrinks them into a corner instead.
+- The pigs are about twice as big as the 96×96 table's pigs drawn onto 64×64. The face takes the middle of the picture 1:1 and zooms in, with the pigs' tumble pulled in to stay on the face. Landed side by side, two pigs that big wouldn't fit, so the pair turns toward the viewer and the view zooms to fit it (a test checks the landed pigs span at least 50 px and stay on the face).
+- They land pink, hold, then fade out. The 96×96 die shrinks them into a corner instead.
 - Then the throw: a big "+10" (gold from 20), a red "OOPS", or a red heart for a smooch. Under it go the pose name and what it cost ("Lost 12", "Nothing lost").
 - Then the resting screen: "A's turn", the turn's points in the result numerals, and two icon hints, shake to roll and a mint lock with the banked total.
 - Lock-in: the shackle drops and snaps mint with sparks, the points count into the total, then "[next] to roll".

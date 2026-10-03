@@ -68,6 +68,11 @@ pub trait DisplayTarget: Target {
         Color::WHITE
     }
 
+    /// Pig Toss: how the faces frame the pigs.
+    fn pig_lens() -> crate::pigfx::Lens {
+        crate::pigfx::Lens::WHOLE
+    }
+
     /// Pig Toss: how the settled pigs make way for the score, `s` seconds
     /// after landing: `(shrink, alpha)`. The 96×96 die shrinks them to the
     /// top of the face; a smaller panel can fade them instead.
@@ -221,6 +226,24 @@ impl DisplayTarget for Rgb64 {
 
     fn pig_tint() -> Color {
         crate::palette64::PINK
+    }
+
+    /// Shrunk onto 64×64 the 96×96 table's pigs are a few pixels long, so
+    /// the 64×64 face takes the middle of the picture 1:1 (×1.5) and zooms
+    /// in again, with the pigs' wandering pulled in to stay on the face.
+    /// Landed side by side they wouldn't fit that big, so the pair turns
+    /// toward the viewer and the view fits it to the face. Design values,
+    /// tuned on the contact sheet.
+    fn pig_lens() -> crate::pigfx::Lens {
+        crate::pigfx::Lens {
+            zoom: 1.3,
+            spread: 0.5,
+            hop: 0.35,
+            drop: -3.0,
+            turn: 0.9,
+            fit: 60.0,
+            crop: true,
+        }
     }
 
     /// Shrunk to the top of a 64×64 face the pigs are specks, so they stay

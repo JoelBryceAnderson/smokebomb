@@ -1261,7 +1261,7 @@ where
         // Every face shows the same pigs: cast them once for all of them.
         if let Some(scene) = pig_scene.filter(|_| !blackout) {
             if let Some(pigs) = fx.pigs() {
-                pigs.draw(scene);
+                pigs.draw_through(scene, TargetOf::<P>::pig_lens());
             }
         }
 
