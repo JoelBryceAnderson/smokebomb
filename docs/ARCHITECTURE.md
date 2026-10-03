@@ -77,9 +77,10 @@ smokebomb/
 | Function | Part | Bus | HAL trait |
 |---|---|---|---|
 | MCU + BLE + NFC | nRF54L15 (Cortex-M33, 256 KB RAM, 188 KB of it the app core's; see Memory) | — | — |
-| Six faces | 6× SSD1317 96×96 OLED, 4-bit grey | SPIM, shared clock/data, 6 CS | `Display` |
-| Motion | LSM6DSx 6-axis IMU | TWIM | `Imu` |
-| Touch | Capacitive pad per face | GPIO/COMP | `Touch` |
+| Six faces | 6× SSD1317 96×96 OLED (a 1-bit controller, though the firmware draws 4-bit grey: see `packages/firmware/zephyr/BENCH.md`) | SPIM00, shared clock/data, 6 CS | `Display` |
+| Motion | LSM6DSOX 6-axis IMU | TWIM | `Imu` |
+| Nest sensing | MMC5603 or LIS2MDL magnetometer | TWIM | `Magnetometer` |
+| Touch | CAP1188, a capacitive pad per face | TWIM | `Touch` |
 | Identity + signing | ATECC608B | TWIM | `SecureElement` |
 | Randomness | nRF54L15 CRACEN TRNG, mixed with ATECC608 RNG | — | `Rng` |
 | Haptics | DRV2605L + LRA | TWIM | `Haptics` |
@@ -107,8 +108,9 @@ pub struct Peripherals<P: Platform> { pub display: P::Display, pub imu: P::Imu, 
 
 The core is generic over `P: Platform`. Each board is monomorphised, so there
 is no dynamic dispatch on the device. All trait methods return
-`HalResult<T>`; the nRF54L15 stub returns `HalError::NotImplemented`
-everywhere until drivers land.
+`HalResult<T>`. On the nRF54L15 the panels, IMU and touch have drivers. The
+rest return `HalError::NotImplemented` until theirs land. The bench's
+wiring and the bring-up image are in `packages/firmware/zephyr/BENCH.md`.
 
 ### Build variants
 
@@ -385,8 +387,8 @@ The nRF54L15's app core has **188 KB** of RAM: the rest of the chip's 256 KB
 is the FLPR core's. Zephyr, Bluetooth, NFC and the stacks take about 51 KB
 of it. The board image for the nRF54L15 DK (`packages/firmware/zephyr`,
 built by CI's Zephyr image workflow, which reports its memory) uses
-**167,524 B of RAM (87%)** and **256,500 B of the app's 682 KB flash slot
-(37%)**; MCUboot, for updates, splits the internal flash into two slots.
+**169,500 B of RAM (88%)** and **268,812 B of the app's 682 KB flash slot
+(38%)**; MCUboot, for updates, splits the internal flash into two slots.
 
 - **The firmware lives in a static.** `Firmware` is built in place in `.bss`
   (`Firmware::init`), never on the 8 KB main stack.

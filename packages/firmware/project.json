@@ -27,7 +27,7 @@
       "executor": "nx:run-commands",
       "inputs": ["rust"],
       "options": {
-        "command": "cargo test -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-firmware --features smokebomb-firmware/simulator",
+        "command": "cargo test -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-hal-nrf54l15 -p smokebomb-firmware --features smokebomb-firmware/simulator",
         "cwd": "{workspaceRoot}"
       }
     },

@@ -1,6 +1,6 @@
 [package]
 name = "smokebomb-zephyr"
-description = "The firmware as a static library for the Zephyr app: panic handler, Zephyr calls and the frame benchmark"
+description = "The firmware as a static library for the Zephyr app: panic handler, Zephyr calls, the frame benchmark and the bench bring-up"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,6 +14,8 @@ crate-type = ["staticlib"]
 default = []
 # Export `smokebomb_bench` for the Zephyr app's benchmark build (bench.conf).
 bench = []
+# Export `smokebomb_bringup` for the bench bring-up build (bringup.conf).
+bringup = []
 
 # Only on the board: on the host this crate is empty, so workspace builds
 # don't pull in the board firmware alongside the simulator's.
@@ -21,4 +23,5 @@ bench = []
 smokebomb-firmware = { workspace = true, features = ["nrf54l15"] }
 smokebomb-core.workspace = true
 smokebomb-hal.workspace = true
+smokebomb-hal-nrf54l15.workspace = true
 heapless.workspace = true

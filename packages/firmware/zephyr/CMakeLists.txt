@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(smokebomb)
 
-target_sources(app PRIVATE src/main.c src/shim.c)
+target_sources(app PRIVATE src/main.c src/shim.c src/board.c)
 
 set(SMOKEBOMB_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
 set(SMOKEBOMB_RUST_TARGET thumbv8m.main-none-eabihf)
@@ -13,6 +13,8 @@ set(SMOKEBOMB_RUST_LIB
     ${SMOKEBOMB_ROOT}/target/${SMOKEBOMB_RUST_TARGET}/firmware/libsmokebomb_zephyr.a)
 if(CONFIG_SMOKEBOMB_BENCH)
   set(SMOKEBOMB_RUST_FEATURES --features bench)
+elseif(CONFIG_SMOKEBOMB_BRINGUP)
+  set(SMOKEBOMB_RUST_FEATURES --features bringup)
 endif()
 
 # Cargo decides what needs rebuilding, so run it on every build.

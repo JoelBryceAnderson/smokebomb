@@ -1,7 +1,8 @@
 name: CI · Zephyr image
 
 # Builds the board image: the Zephyr app with MCUboot and the Rust firmware
-# linked in, and the frame benchmark (bench.conf). It needs the nRF Connect
+# linked in, the frame benchmark (bench.conf) and the bench bring-up
+# (bringup.conf). It needs the nRF Connect
 # SDK (a few GB), so it runs on changes to the board side, on main, and by
 # hand, rather than on every pull request.
 
@@ -91,9 +92,16 @@ jobs:
             -d "$GITHUB_WORKSPACE/build/bench" "$GITHUB_WORKSPACE/packages/firmware/zephyr" \
             -- -DEXTRA_CONF_FILE=bench.conf \
             | tee "$GITHUB_WORKSPACE/build/bench.log"
+      - name: Build the bring-up image
+        run: |
+          cd "$NCS"
+          ZEPHYR_SDK_INSTALL_DIR=~/zephyr-sdk west build -p always -b "$BOARD" \
+            -d "$GITHUB_WORKSPACE/build/bringup" "$GITHUB_WORKSPACE/packages/firmware/zephyr" \
+            -- -DEXTRA_CONF_FILE=bringup.conf \
+            | tee "$GITHUB_WORKSPACE/build/bringup.log"
       - name: Memory report
         run: |
-          for image in firmware bench; do
+          for image in firmware bench bringup; do
             echo "### $image image" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             grep -E "Memory region|FLASH:|RAM:" "build/$image.log" >> "$GITHUB_STEP_SUMMARY"
@@ -104,3 +112,8 @@ jobs:
         with:
           name: bench-nrf54l15dk
           path: build/bench/merged.hex
+      - name: Upload the bring-up image
+        uses: actions/upload-artifact@v4
+        with:
+          name: bringup-nrf54l15dk
+          path: build/bringup/merged.hex

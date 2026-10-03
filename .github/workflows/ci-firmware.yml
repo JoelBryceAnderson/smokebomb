@@ -42,12 +42,13 @@ jobs:
         run: cargo clippy -p smokebomb-firmware --features simulator -- -D warnings
       - name: Clippy (firmware, nRF54L15 board)
         run: cargo clippy -p smokebomb-firmware --no-default-features --features nrf54l15 --target thumbv8m.main-none-eabihf -- -D warnings
-      - name: Clippy (Zephyr static library, and its benchmark build)
+      - name: Clippy (Zephyr static library, and its benchmark and bring-up builds)
         run: |
           cargo clippy -p smokebomb-zephyr --target thumbv8m.main-none-eabihf -- -D warnings
           cargo clippy -p smokebomb-zephyr --target thumbv8m.main-none-eabihf --features bench -- -D warnings
-      - name: Test (includes the screen snapshots)
-        run: cargo test -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-assets-build
+          cargo clippy -p smokebomb-zephyr --target thumbv8m.main-none-eabihf --features bringup -- -D warnings
+      - name: Test (includes the screen snapshots and the panel driver's bytes)
+        run: cargo test -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-hal-nrf54l15 -p smokebomb-assets-build
       - name: Upload snapshot differences
         if: failure()
         uses: actions/upload-artifact@v4

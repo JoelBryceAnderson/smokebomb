@@ -1,0 +1,212 @@
+/*
+ * The bench: an nRF54L15 DK wired to six SSD1317 panels and the STEMMA QT
+ * chain of breakouts. The pin map, and why each pin, is in
+ * packages/firmware/zephyr/BENCH.md; keep the two in step.
+ *
+ *   Panels  SPIM00  SCK P2.06  MOSI P2.08  D/C P1.09  RESET P1.08
+ *                   CS +X P2.10  -X P2.09  +Y P2.07  -Y P1.10  +Z P1.14  -Z P1.13
+ *   STEMMA  TWIM22  SDA P1.11  SCL P1.12
+ *   IMU INT1        P0.04
+ *
+ * The CS, D/C and reset lines take over the DK's LEDs and buttons 0-2:
+ * those nodes are deleted so nothing else drives them. Don't press buttons
+ * 0-2 while the panels run.
+ */
+
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/sensor/lsm6dso.h>
+
+/ {
+	aliases {
+		/delete-property/ led0;
+		/delete-property/ led1;
+		/delete-property/ led2;
+		/delete-property/ led3;
+		/delete-property/ pwm-led0;
+		/delete-property/ sw0;
+		/delete-property/ sw1;
+		/delete-property/ sw2;
+		/delete-property/ sw3;
+		/delete-property/ mcuboot-button0;
+		/delete-property/ mcuboot-led0;
+	};
+};
+
+/delete-node/ &led0;	/* P2.09: CS -X */
+/delete-node/ &led1;	/* P1.10: CS -Y */
+/delete-node/ &led2;	/* P2.07: CS +Y */
+/delete-node/ &led3;	/* P1.14: CS +Z */
+/delete-node/ &pwm_led1;	/* PWM on P1.10 */
+/delete-node/ &button0;	/* P1.13: CS -Z */
+/delete-node/ &button1;	/* P1.09: D/C */
+/delete-node/ &button2;	/* P1.08: RESET */
+/delete-node/ &button3;	/* P0.04: IMU INT1 */
+
+&pwm20 {
+	status = "disabled";
+};
+
+&pinctrl {
+	/* SPIM00 is the only SPIM that runs past 8 MHz (to 32). Its clock and
+	 * data pins are on P2, the MCU domain's port, at extra-high drive. The
+	 * panels only listen: no MISO.
+	 */
+	spi00_panels_default: spi00_panels_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 2, 6)>,
+				<NRF_PSEL(SPIM_MOSI, 2, 8)>;
+			nordic,drive-mode = <NRF_DRIVE_E0E1>;
+		};
+	};
+
+	spi00_panels_sleep: spi00_panels_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 2, 6)>,
+				<NRF_PSEL(SPIM_MOSI, 2, 8)>;
+			low-power-enable;
+		};
+	};
+
+	i2c22_default: i2c22_default {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SDA, 1, 11)>,
+				<NRF_PSEL(TWIM_SCL, 1, 12)>;
+		};
+	};
+
+	i2c22_sleep: i2c22_sleep {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SDA, 1, 11)>,
+				<NRF_PSEL(TWIM_SCL, 1, 12)>;
+			low-power-enable;
+		};
+	};
+};
+
+/* The DK's own flash sits on SPIM00's default pins. The panels take SPIM00
+ * on other pins, so the flash isn't reachable in this build.
+ */
+/delete-node/ &mx25r64;
+
+&spi00 {
+	status = "okay";
+	pinctrl-0 = <&spi00_panels_default>;
+	pinctrl-1 = <&spi00_panels_sleep>;
+	pinctrl-names = "default", "sleep";
+	cs-gpios = <&gpio2 10 GPIO_ACTIVE_LOW>,	/* +X */
+		   <&gpio2 9 GPIO_ACTIVE_LOW>,	/* -X */
+		   <&gpio2 7 GPIO_ACTIVE_LOW>,	/* +Y */
+		   <&gpio1 10 GPIO_ACTIVE_LOW>,	/* -Y */
+		   <&gpio1 14 GPIO_ACTIVE_LOW>,	/* +Z */
+		   <&gpio1 13 GPIO_ACTIVE_LOW>;	/* -Z */
+
+	/* faceN is Face index N (PosX, NegX, PosY, NegY, PosZ, NegZ). The
+	 * SSD1317's serial clock cycle is 100 ns at the least: 8 MHz is the
+	 * rate u8g2 drives it at.
+	 */
+	face0: panel@0 {
+		compatible = "solomon,ssd1317";
+		reg = <0>;
+		spi-max-frequency = <DT_FREQ_M(8)>;
+		dc-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
+	};
+
+	face1: panel@1 {
+		compatible = "solomon,ssd1317";
+		reg = <1>;
+		spi-max-frequency = <DT_FREQ_M(8)>;
+		dc-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
+	};
+
+	face2: panel@2 {
+		compatible = "solomon,ssd1317";
+		reg = <2>;
+		spi-max-frequency = <DT_FREQ_M(8)>;
+		dc-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
+	};
+
+	face3: panel@3 {
+		compatible = "solomon,ssd1317";
+		reg = <3>;
+		spi-max-frequency = <DT_FREQ_M(8)>;
+		dc-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
+	};
+
+	face4: panel@4 {
+		compatible = "solomon,ssd1317";
+		reg = <4>;
+		spi-max-frequency = <DT_FREQ_M(8)>;
+		dc-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
+	};
+
+	face5: panel@5 {
+		compatible = "solomon,ssd1317";
+		reg = <5>;
+		spi-max-frequency = <DT_FREQ_M(8)>;
+		dc-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
+	};
+};
+
+/* The STEMMA QT chain. The breakouts carry their own pull-ups. Each node is
+ * the part's default address on its Adafruit board; a driver whose part
+ * isn't on the chain fails its init and the rest carry on, so both
+ * magnetometer candidates are listed.
+ */
+&i2c22 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_FAST>;
+	pinctrl-0 = <&i2c22_default>;
+	pinctrl-1 = <&i2c22_sleep>;
+	pinctrl-names = "default", "sleep";
+
+	/* LSM6DSOX: Zephyr's LSM6DSO driver (same registers, WHO_AM_I 0x6C). */
+	imu: lsm6dsox@6a {
+		compatible = "st,lsm6dso";
+		reg = <0x6a>;
+		irq-gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+		int-pin = <1>;
+		accel-range = <LSM6DSO_DT_FS_16G>;
+		accel-odr = <LSM6DSO_DT_ODR_208Hz>;
+		gyro-range = <LSM6DSO_DT_FS_2000DPS>;
+		gyro-odr = <LSM6DSO_DT_ODR_208Hz>;
+	};
+
+	/* CAP1188: Zephyr's CAP12xx input driver, polled; pads 1-6 are the
+	 * faces in Face order, reported as keys 0-5.
+	 */
+	touch: cap1188@29 {
+		compatible = "microchip,cap12xx";
+		reg = <0x29>;
+		input-codes = <INPUT_KEY_0 INPUT_KEY_1 INPUT_KEY_2
+			       INPUT_KEY_3 INPUT_KEY_4 INPUT_KEY_5>;
+		signal-guard = <0 0 0 0 0 0>;
+		calib-sensitivity = <1 1 1 1 1 1>;
+	};
+
+	haptics: drv2605l@5a {
+		compatible = "ti,drv2605";
+		reg = <0x5a>;
+		actuator-mode = "LRA";
+	};
+
+	mag_mmc5603: mmc5603@30 {
+		compatible = "memsic,mmc56x3";
+		reg = <0x30>;
+		/* One-shot: the firmware measures with the panel supply paused.
+		 * Zephyr's driver needs it set even though the binding doesn't.
+		 */
+		magn-odr = <0>;
+	};
+
+	mag_lis2mdl: lis2mdl@1e {
+		compatible = "st,lis2mdl";
+		reg = <0x1e>;
+		single-mode;
+	};
+};

@@ -1,0 +1,20 @@
+# One face's SSD1317 OLED panel. The Rust firmware drives it
+# (packages/firmware/hal/nrf54l15/src/ssd1317.rs) through the app's shim;
+# there is no Zephyr display driver for it. The six faces share the bus,
+# D/C and reset, so each node names the same D/C and reset pins.
+
+description: Solomon SSD1317 OLED controller, one panel on a shared SPI bus
+
+compatible: "solomon,ssd1317"
+
+include: spi-device.yaml
+
+properties:
+  dc-gpios:
+    type: phandle-array
+    required: true
+    description: Data/command line, shared by every face. High for display RAM.
+
+  reset-gpios:
+    type: phandle-array
+    description: Reset line, shared by every face. Active low.

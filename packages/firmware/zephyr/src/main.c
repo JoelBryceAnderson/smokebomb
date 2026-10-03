@@ -14,6 +14,14 @@ int main(void)
 	smokebomb_bench();
 	return 0;
 }
+#elif defined(CONFIG_SMOKEBOMB_BRINGUP)
+extern void smokebomb_bringup(void);
+
+int main(void)
+{
+	smokebomb_bringup();
+	return 0;
+}
 #else
 extern int smokebomb_main(void);
 

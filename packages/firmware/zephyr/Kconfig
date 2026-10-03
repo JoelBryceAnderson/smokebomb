@@ -7,4 +7,13 @@ config SMOKEBOMB_BENCH
 	  work (sugar, pigs, dithering) on the board, prints the results and
 	  stops. It needs no drivers. Turned on by bench.conf.
 
+config SMOKEBOMB_BRINGUP
+	bool "Run the bench bring-up instead of the firmware"
+	depends on !SMOKEBOMB_BENCH
+	help
+	  Build the image that checks the bench's wiring: it lists what
+	  answers on the I2C bus, cycles test patterns across the panels one
+	  at a time, and streams the IMU and touch readings to the console.
+	  Turned on by bringup.conf.
+
 source "Kconfig.zephyr"
