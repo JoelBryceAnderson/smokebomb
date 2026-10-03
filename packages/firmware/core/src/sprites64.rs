@@ -330,6 +330,70 @@ pub static SHAKE: Glyph<5> = glyph(' ', "....##### .#..#...# ....#.#.# ##..#...#
 /// Tap, 7×7.
 pub static TAP: Glyph<7> = glyph(' ', "..###.. .#...#. #..#..# #.###.# #..#..# .#...#. ..###..");
 
+/// Hot Potato's bomb, 15×15: `#` body, `h` its shine, `c` the cap, `f` the
+/// fuse running up to the right, its tip at (11, 0).
+const BOMB: &str = "
+...........f...
+..........f....
+..........f....
+.........f.....
+......ccc......
+....#######....
+...#########...
+..##hh#######..
+.##hh#########.
+.##h##########.
+.#############.
+.#############.
+..###########..
+...#########...
+....#######....
+";
+pub static BOMB_BODY: Glyph<15> = layer(' ', BOMB, b'#');
+pub static BOMB_SHINE: Glyph<15> = layer(' ', BOMB, b'h');
+pub static BOMB_CAP: Glyph<15> = layer(' ', BOMB, b'c');
+pub static BOMB_FUSE: Glyph<15> = layer(' ', BOMB, b'f');
+/// Where the fuse's tip is in [`BOMB`], pixels from its top left.
+pub const BOMB_TIP: (f32, f32) = (11.0, 0.0);
+
+/// A spark, 5×5, in two shapes to flicker between.
+pub static SPARK_X: Glyph<5> = glyph(' ', "#...# .#.#. ..#.. .#.#. #...#");
+pub static SPARK_PLUS: Glyph<5> = glyph(' ', "..#.. ..#.. ##.## ..#.. ..#..");
+
+/// A banknote, 17×9: a border, a dot in each corner and the middle's oval.
+pub static BILL: Glyph<9> = glyph(
+    ' ',
+    "################# #...............# #.#....###....#.# #.....#...#.....# \
+     #.....#.#.#.....# #.....#...#.....# #.#....###....#.# #...............# \
+     #################",
+);
+
+/// Pass the Pot's faces, 13 wide: pass a bill left or right, feed the pot
+/// (`#` the cauldron, `o` its inside), or keep it.
+pub static PASS_RIGHT: Glyph<9> = glyph(
+    ' ',
+    ".......#..... .......##.... .......###... ############. ############# \
+     ############. .......###... .......##.... .......#.....",
+);
+pub static PASS_LEFT: Glyph<9> = glyph(
+    ' ',
+    ".....#....... ....##....... ...###....... .############ ############# \
+     .############ ...###....... ....##....... .....#.......",
+);
+const POT: &str = "
+#############
+.#ooooooooo#.
+##ooooooooo##
+##ooooooooo##
+.#ooooooooo#.
+..#ooooooo#..
+...#######...
+..##.....##..
+";
+pub static POT_RIM: Glyph<8> = layer(' ', POT, b'#');
+pub static POT_INSIDE: Glyph<8> = layer(' ', POT, b'o');
+pub static KEEP: Glyph<5> = glyph(' ', ".###. ##### ##### ##### .###.");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +427,14 @@ mod tests {
             assert!(symmetric(g));
         }
         assert!(symmetric(&HEART) && symmetric(&TAP) && symmetric(&SHACKLE) && symmetric(&LOCK_BODY));
+        assert!(symmetric(&BILL) && symmetric(&POT_RIM) && symmetric(&POT_INSIDE) && symmetric(&KEEP));
+        assert!(symmetric(&SPARK_X) && symmetric(&SPARK_PLUS));
+        // The arrows mirror each other.
+        for y in 0..9 {
+            let w = PASS_LEFT.width as u32;
+            let l = PASS_LEFT.rows[y] >> (32 - w);
+            assert_eq!(l.reverse_bits() >> (32 - w), PASS_RIGHT.rows[y] >> (32 - w));
+        }
         for y in 0..16 {
             assert_eq!(PIG_FACE.rows[y] & (PIG_SNOUT.rows[y] | PIG_DARK.rows[y]), 0);
         }

@@ -16,7 +16,7 @@ use core::fmt::Write as _;
 use heapless::{String, Vec};
 use libm::{floorf, roundf, sinf};
 use smokebomb_hal::{AssetStore, Color, Target};
-use smokebomb_shared::{DieKind, RollRecord};
+use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
 use crate::font64::{draw_centered, draw_glyph, Align, BitFont, Glyph, NUM_L, NUM_M, NUM_S, TAG, TEXT};
 use crate::gfx::{Painter, Style};
@@ -216,8 +216,8 @@ pub fn parts_line(values: &[u8]) -> Option<(String<48>, bool)> {
 
 /// A roll's result. One or two digits fill most of the face; the setup
 /// sits under it in grey. A max turns the number gold with a gold `MAX`
-/// tag; a fumble (every die a 1) turns it red with `DUD`. Pass the Pot keeps
-/// the 96×96 layout for now.
+/// tag; a fumble (every die a 1) turns it red with `DUD`. Pass the Pot shows
+/// its dice as sprites ([`draw_pot_result`]).
 pub fn draw_result<A: AssetStore, T: Target>(
     c: &mut Ctx<A, T>,
     record: &RollRecord,
@@ -225,7 +225,7 @@ pub fn draw_result<A: AssetStore, T: Target>(
     alpha: f32,
 ) {
     if !record.die.is_numeric() {
-        screens::draw_result(c, record, special, alpha);
+        draw_pot_result(c, record, special == Some(Special::Dud), alpha);
         return;
     }
     let mut total: String<8> = String::new();
@@ -286,7 +286,8 @@ pub fn face_number(face: usize) -> u8 {
 }
 
 /// The die at rest: its solid in violet, the setup under it, and which face
-/// this is in a small tag. Games keep the 96×96 label for now.
+/// this is in a small tag. Pass the Pot shows the bills in hand, and Hot
+/// Potato its bomb; Pig Toss has its own label ([`draw_pigs_label`]).
 pub fn draw_idle<A: AssetStore, T: Target>(
     c: &mut Ctx<A, T>,
     setup: Setup,
@@ -296,6 +297,14 @@ pub fn draw_idle<A: AssetStore, T: Target>(
 ) {
     let die = match setup {
         Setup::Roll(die, _) if die.is_numeric() => die,
+        Setup::Roll(DieKind::PassThePot, n) => {
+            draw_bills(c, n, alpha);
+            return;
+        }
+        Setup::HotPotato => {
+            draw_potato_label(c, alpha);
+            return;
+        }
         _ => {
             screens::draw_wake_label(c, setup, label, alpha);
             return;
@@ -1168,6 +1177,392 @@ pub fn draw_pig_win<A: AssetStore, T: Target>(
                 Align::Left,
                 style(pal::WHITE, alpha * prompt),
             );
+        }
+    });
+}
+
+// ---------- Hot Potato ----------
+//
+// The 96×96 die draws a glow and a small "PASS IT". At 64×64 the glow alone
+// says little, so the bomb itself is the screen: it heats from grey through
+// ember to red as the fuse runs (the ticks' pace, not the time left: nobody
+// can count it down), its fuse sparks on each tick, and "PASS IT!" is set
+// in the 5×7 text.
+
+/// `a` to `b` by `t` (0–1).
+fn mix(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t + 0.5) as u8;
+    Color::rgb(m(a.r, b.r), m(a.g, b.g), m(a.b, b.b))
+}
+
+/// The bomb at `scale`, centred on `(cx, cy)`, its body in `body`; a spark
+/// on the fuse's tip if `spark` (0 none, else its brightness), the `+`
+/// shape if `plus`.
+#[allow(clippy::too_many_arguments)]
+fn draw_bomb<T: Target>(
+    p: &mut Painter<T>,
+    cx: f32,
+    cy: f32,
+    scale: f32,
+    body: Color,
+    spark: f32,
+    plus: bool,
+    alpha: f32,
+) {
+    let (x, y) = (cx - 7.0 * scale, cy - 7.0 * scale);
+    draw_glyph(p, &spr::BOMB_BODY, x, y, scale, style(body, alpha));
+    draw_glyph(
+        p,
+        &spr::BOMB_SHINE,
+        x,
+        y,
+        scale,
+        style(mix(body, pal::WHITE, 0.6), alpha),
+    );
+    draw_glyph(p, &spr::BOMB_CAP, x, y, scale, style(pal::DIM, alpha));
+    draw_glyph(p, &spr::BOMB_FUSE, x, y, scale, style(pal::EMBER, alpha));
+    if spark > 0.0 {
+        let g = if plus { &spr::SPARK_PLUS } else { &spr::SPARK_X };
+        let (tx, ty) = spr::BOMB_TIP;
+        let (sx, sy) = (x + tx * scale + floorf(scale / 2.0), y + ty * scale);
+        draw_centered(p, g, sx + 1.0, sy - 1.0, 1.0, style(pal::GOLD, alpha * spark));
+    }
+}
+
+/// Hot Potato at rest: the bomb, its name, and that a shake lights it.
+pub fn draw_potato_label<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, alpha: f32) {
+    in_pixels(c, |p| {
+        draw_bomb(p, -1.0, -11.0, 2.0, pal::DIM, 1.0, false, alpha);
+        TEXT.draw(
+            p,
+            "Hot Potato",
+            0.0,
+            8.0,
+            1.0,
+            Align::Center,
+            style(pal::WHITE, alpha),
+        );
+        let w = spr::SHAKE.width as usize + 2 + TEXT.measure("light");
+        let x = -floorf(w as f32 / 2.0);
+        draw_glyph(p, &spr::SHAKE, x, 20.0, 1.0, style(pal::DIM, alpha));
+        TEXT.draw(
+            p,
+            "light",
+            x + (spr::SHAKE.width + 2) as f32,
+            19.0,
+            1.0,
+            Align::Left,
+            style(pal::WHITE, alpha),
+        );
+    });
+}
+
+/// A lit fuse: the bomb heating up with `heat` (0–1), flaring and sparking
+/// on each tick (`pulse`, 0–1), and the nudge to pass it.
+pub fn draw_fuse<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, heat: f32, pulse: f32) {
+    // The glow behind it swells with the heat, as on the 96×96 die.
+    let k = crate::gfx::k_of::<T>();
+    let glow = (9.0 + 9.0 * heat) / k;
+    c.painter.fill_circle(
+        -1.0 / k,
+        -6.0 / k,
+        glow,
+        Style::color(pal::EMBER, 0.12 + 0.28 * heat, 8.0 + 10.0 * heat),
+    );
+    in_pixels(c, |p| {
+        let hot = if heat < 0.5 {
+            mix(pal::DIM, pal::EMBER, heat * 2.0)
+        } else {
+            mix(pal::EMBER, pal::RED, heat * 2.0 - 1.0)
+        };
+        let body = mix(hot, pal::WHITE, 0.35 * pulse);
+        draw_bomb(p, -1.0, -7.0, 2.0, body, pulse, pulse < 0.5, 1.0);
+        TEXT.draw(
+            p,
+            "PASS IT!",
+            0.0,
+            15.0,
+            1.0,
+            Align::Center,
+            style(pal::WHITE, 1.0),
+        );
+    });
+}
+
+/// The fuse ran out, `t` seconds ago: a ring of fire bursts out with
+/// debris, BOOM shakes in, then a tap resets it. Fades as the 96×96 one.
+pub fn draw_boom<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
+    let fade = (1.0 - (t - 4.6) / 1.0).clamp(0.0, 1.0);
+    in_pixels(c, |p| {
+        let u = (t / 0.7).clamp(0.0, 1.0);
+        let e = 1.0 - (1.0 - u) * (1.0 - u) * (1.0 - u);
+        if u < 1.0 {
+            // The shockwave: a ring a pixel or two thick, gold to ember.
+            // It stops short of the glass's corners: they'd hide it.
+            let r = 4.0 + 26.0 * e;
+            let ring = style(mix(pal::GOLD, pal::EMBER, u), 1.0 - u);
+            for k in 0..48 {
+                let a = k as f32 * core::f32::consts::TAU / 48.0;
+                let (x, y) = (roundf(libm::cosf(a) * r), roundf(libm::sinf(a) * r));
+                p.fill_rect(x - 1.0, y - 1.0, 2.0, 2.0, ring);
+            }
+            // Debris flying out.
+            for k in 0..10 {
+                let a = k as f32 * 0.63 + 0.3;
+                let d = 6.0 + (14.0 + 4.0 * (k % 3) as f32) * e;
+                let (x, y) = (roundf(libm::cosf(a) * d), roundf(libm::sinf(a) * d));
+                p.fill_rect(x, y, 1.0, 1.0, style(pal::EMBER, 1.0 - u));
+            }
+        }
+        // BOOM lands with a shake.
+        let a = (t / 0.12).min(1.0) * fade;
+        let jolt = if t < 0.45 {
+            let k = floorf(t * 30.0) as i32;
+            [(1.0, 0.0), (-1.0, 1.0), (0.0, -1.0), (1.0, 1.0)][(k & 3) as usize]
+        } else {
+            (0.0, 0.0)
+        };
+        TEXT.draw(
+            p,
+            "BOOM",
+            jolt.0,
+            -12.0 + jolt.1,
+            2.0,
+            Align::Center,
+            style(pal::RED, a),
+        );
+        if t > 1.2 {
+            let a = ((t - 1.2) / 0.4).min(1.0) * fade;
+            let w = spr::TAP.width as usize + 2 + TEXT.measure("reset");
+            let x = -floorf(w as f32 / 2.0);
+            draw_glyph(p, &spr::TAP, x, 12.0, 1.0, style(pal::DIM, a));
+            TEXT.draw(
+                p,
+                "reset",
+                x + (spr::TAP.width + 2) as f32,
+                12.0,
+                1.0,
+                Align::Left,
+                style(pal::WHITE, a),
+            );
+        }
+    });
+}
+
+// ---------- Pass the Pot ----------
+//
+// The bills in hand are banknotes in mint (money you hold), the ones you
+// don't roll faint, with the count beside the word and a tap hint. A
+// result shows each die as a sprite: arrows pass a bill left or right
+// (white), the pot takes one (gold, like the coins), a dot keeps it
+// (mint). Under them, one short line per kind in the same colour, so no
+// line runs off the face however the dice fall.
+
+/// Pass the Pot between rolls: three bills with the ones you roll lit, how
+/// many that is, and that a tap changes it.
+pub fn draw_bills<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, n: u8, alpha: f32) {
+    in_pixels(c, |p| {
+        let max = smokebomb_shared::types::MAX_POT_DICE;
+        let (w, gap) = (spr::BILL.width as f32, 3.0);
+        let x0 = -floorf((max as f32 * w + (max as f32 - 1.0) * gap) / 2.0);
+        for i in 0..max {
+            let colour = if i < n as usize { pal::MINT } else { pal::FAINT };
+            draw_glyph(
+                p,
+                &spr::BILL,
+                x0 + i as f32 * (w + gap),
+                -27.0,
+                1.0,
+                style(colour, alpha),
+            );
+        }
+        // "3 bills": the count in the result numerals, the word beside it on
+        // their baseline.
+        let mut digits: String<2> = String::new();
+        let _ = write!(digits, "{n}");
+        let word = if n == 1 { "bill" } else { "bills" };
+        let wd = NUM_M.measure(&digits);
+        let total = wd + 3 + TEXT.measure(word);
+        let x = -floorf(total as f32 / 2.0);
+        NUM_M.draw(
+            p,
+            &digits,
+            x + floorf(wd as f32 / 2.0),
+            -14.0,
+            style(pal::WHITE, alpha),
+        );
+        TEXT.draw(
+            p,
+            word,
+            x + (wd + 3) as f32,
+            9.0,
+            1.0,
+            Align::Left,
+            style(pal::WHITE, alpha),
+        );
+        let w = spr::TAP.width as usize + 2 + TEXT.measure("change");
+        let x = -floorf(w as f32 / 2.0);
+        draw_glyph(p, &spr::TAP, x, 21.0, 1.0, style(pal::DIM, alpha));
+        TEXT.draw(
+            p,
+            "change",
+            x + (spr::TAP.width + 2) as f32,
+            21.0,
+            1.0,
+            Align::Left,
+            style(pal::WHITE, alpha),
+        );
+    });
+}
+
+/// What a Pass the Pot die says, and its colour.
+fn pot_face(v: u8) -> (PotFace, Color) {
+    let f = PotFace::from_raw(v);
+    let colour = match f {
+        PotFace::Left | PotFace::Right => pal::WHITE,
+        PotFace::Pot => pal::GOLD,
+        PotFace::Keep => pal::MINT,
+    };
+    (f, colour)
+}
+
+/// A Pass the Pot die's sprite, 13 wide at scale 1, centred on `(cx, cy)`.
+fn draw_pot_face<T: Target>(
+    p: &mut Painter<T>,
+    v: u8,
+    cx: f32,
+    cy: f32,
+    scale: f32,
+    colour: Color,
+    alpha: f32,
+) {
+    match PotFace::from_raw(v) {
+        PotFace::Left => draw_centered(p, &spr::PASS_LEFT, cx, cy, scale, style(colour, alpha)),
+        PotFace::Right => draw_centered(p, &spr::PASS_RIGHT, cx, cy, scale, style(colour, alpha)),
+        PotFace::Pot => {
+            draw_centered(p, &spr::POT_INSIDE, cx, cy, scale, style(colour, alpha * 0.3));
+            draw_centered(p, &spr::POT_RIM, cx, cy, scale, style(colour, alpha));
+        }
+        PotFace::Keep => draw_centered(p, &spr::KEEP, cx, cy, scale, style(colour, alpha)),
+    }
+}
+
+/// The lines under a Pass the Pot result: one per kind that came up, in
+/// its colour ("2 left", "1 pot"), or "keep" / "keep all".
+pub fn pot_lines(values: &[u8]) -> Vec<(String<12>, Color), 3> {
+    let mut counts = [0u8; 3];
+    for &v in values {
+        match PotFace::from_raw(v) {
+            PotFace::Left => counts[0] += 1,
+            PotFace::Right => counts[1] += 1,
+            PotFace::Pot => counts[2] += 1,
+            PotFace::Keep => {}
+        }
+    }
+    let mut lines = Vec::new();
+    for (n, (word, colour)) in
+        counts
+            .iter()
+            .zip([("left", pal::WHITE), ("right", pal::WHITE), ("pot", pal::GOLD)])
+    {
+        if *n > 0 {
+            let mut s = String::new();
+            let _ = write!(s, "{n} {word}");
+            let _ = lines.push((s, colour));
+        }
+    }
+    if lines.is_empty() {
+        let mut s = String::new();
+        let _ = s.push_str(if values.len() > 1 { "keep all" } else { "keep" });
+        let _ = lines.push((s, pal::MINT));
+    }
+    lines
+}
+
+/// A Pass the Pot result: the dice as sprites (bigger the fewer there
+/// are), and under them what to do, a line per kind. A dud greys it all.
+fn draw_pot_result<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, record: &RollRecord, dud: bool, alpha: f32) {
+    let values = record.values.as_slice();
+    let n = values.len().max(1);
+    let scale = match n {
+        1 => 3.0,
+        2 => 2.0,
+        _ => 1.0,
+    };
+    let lines = pot_lines(values);
+    let glyph_h = 9.0 * scale;
+    let block = glyph_h + 6.0 + lines.len() as f32 * LINE_PITCH - 2.0;
+    let top = -floorf(block / 2.0) - 2.0;
+    in_pixels(c, |p| {
+        let pitch = 13.0 * scale + 6.0;
+        let cy = top + floorf(glyph_h / 2.0);
+        for (i, &v) in values.iter().enumerate() {
+            let x = roundf((i as f32 - (n as f32 - 1.0) / 2.0) * pitch);
+            let colour = if dud { pal::DIM } else { pot_face(v).1 };
+            draw_pot_face(p, v, x, cy, scale, colour, alpha);
+        }
+        let mut y = top + glyph_h + 6.0;
+        for (line, colour) in &lines {
+            let colour = if dud { pal::DIM } else { *colour };
+            TEXT.draw(p, line, 0.0, y, 1.0, Align::Center, style(colour, alpha));
+            y += LINE_PITCH;
+        }
+    });
+}
+
+// ---------- the hold ring ----------
+
+/// The hold ring: a rounded square two pixels wide, set in from the panel's
+/// edge and round its corners with the glass's own radius, so it sits
+/// evenly inside the lit area. It fills clockwise from 12 o'clock as a hold
+/// progresses (`p`, 0–1), in whole pixels: a 96×96 ring's anti-aliased
+/// line goes soft at this size. `grow` (canvas units) pushes it outward as
+/// it flashes away.
+pub fn draw_hold_ring<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, p: f32, alpha: f32, grow: f32) {
+    if alpha <= 0.0 || p <= 0.0 {
+        return;
+    }
+    let grow = grow * crate::gfx::k_of::<T>();
+    let half = T::WIDTH as f32 / 2.0;
+    // The centreline, from the middle; its corners' radius.
+    let h = half - 2.0 + grow;
+    let r = (T::MASK_RADIUS_PX - 2.0 + grow).max(2.0);
+    let a = h - r;
+    let quarter = core::f32::consts::FRAC_PI_2 * r;
+    let total = 8.0 * a + 4.0 * quarter;
+    let lit = p.min(1.0) * total;
+    in_pixels(c, |pt| {
+        let st = style(pal::WHITE, alpha);
+        let n = T::WIDTH as i32;
+        for j in 0..n {
+            for i in 0..n {
+                // This pixel's centre.
+                let (x, y) = (i as f32 - half + 0.5, j as f32 - half + 0.5);
+                let (qx, qy) = (x.clamp(-a, a), y.clamp(-a, a));
+                let (dx, dy) = (x - qx, y - qy);
+                let d = libm::sqrtf(dx * dx + dy * dy) - r;
+                if !(-1.0..1.0).contains(&d) {
+                    continue;
+                }
+                let th = libm::atan2f(dy, dx);
+                use core::f32::consts::PI;
+                // How far round the centreline, clockwise from 12 o'clock.
+                let s = match (x > a, x < -a, y > a, y < -a) {
+                    (true, _, _, true) => a + r * (th + PI / 2.0),
+                    (true, _, true, _) => 3.0 * a + quarter + r * th,
+                    (_, true, true, _) => 5.0 * a + 2.0 * quarter + r * (th - PI / 2.0),
+                    (_, true, _, true) => 7.0 * a + 3.0 * quarter + r * (th + PI),
+                    (true, _, _, _) => a + quarter + (y + a),
+                    (_, _, true, _) => 3.0 * a + 2.0 * quarter + (a - x),
+                    (_, true, _, _) => 5.0 * a + 3.0 * quarter + (a - y),
+                    _ if x >= 0.0 => x,
+                    _ => total + x,
+                };
+                if s <= lit {
+                    pt.fill_rect(x - 0.5, y - 0.5, 1.0, 1.0, st);
+                }
+            }
         }
     });
 }

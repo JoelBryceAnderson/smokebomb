@@ -1307,12 +1307,12 @@ where
                     1.0 - u,
                     1.0 + 0.12 * u,
                 );
-                screens::draw_hold_ring(&mut c, 1.0, 1.0 - u, u * 3.0);
+                TargetOf::<P>::draw_hold_ring(&mut c, 1.0, 1.0 - u, u * 3.0);
             }
             if menu.is_none() {
                 if let Some((f, p)) = hold {
                     if f == face {
-                        screens::draw_hold_ring(&mut c, p, 1.0, 0.0);
+                        TargetOf::<P>::draw_hold_ring(&mut c, p, 1.0, 0.0);
                     }
                 }
             }
@@ -1388,8 +1388,8 @@ where
                 }
             }
             match potato_face {
-                Some(PotatoView::Fuse(heat, pulse)) => screens::draw_fuse(&mut c, heat, pulse),
-                Some(PotatoView::Boom(t)) => screens::draw_boom(&mut c, t),
+                Some(PotatoView::Fuse(heat, pulse)) => TargetOf::<P>::draw_fuse(&mut c, heat, pulse),
+                Some(PotatoView::Boom(t)) => TargetOf::<P>::draw_boom(&mut c, t),
                 None => {}
             }
         }
@@ -1498,10 +1498,10 @@ fn draw_menu_face<A: smokebomb_hal::AssetStore, T: DisplayTarget>(
     }
     {
         let intro = ui.menu_intro(now);
-        screens::draw_hold_ring(c, 1.0, intro.ring_alpha, intro.ring_grow);
+        T::draw_hold_ring(c, 1.0, intro.ring_alpha, intro.ring_grow);
         T::draw_menu(c, &m.draft, battery, 0.0, 0.0, intro.alpha, intro.scale);
         if let Some(p) = hold {
-            screens::draw_hold_ring(c, p, 1.0, 0.0);
+            T::draw_hold_ring(c, p, 1.0, 0.0);
         }
     }
 }

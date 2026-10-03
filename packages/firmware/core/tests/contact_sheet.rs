@@ -595,3 +595,74 @@ fn screens_stay_inside_the_rounded_lit_area() {
         }
     }
 }
+
+/// The game screens drawn only on the 64×64 die (Hot Potato, Pass the Pot,
+/// the hold ring): their sheet is `games64`, from whole games. Here, each
+/// at the moments that reach furthest out.
+fn game_screens64() -> Vec<(String, Draw64)> {
+    let mut v: Vec<(String, Draw64)> = Vec::new();
+    for n in 1..=3u8 {
+        v.push((
+            format!("bills {n}"),
+            Box::new(move |c| screens64::draw_bills(c, n, 1.0)),
+        ));
+    }
+    v.push((
+        "potato label".into(),
+        Box::new(|c| screens64::draw_potato_label(c, 1.0)),
+    ));
+    for heat in [0.0, 0.5, 1.0] {
+        v.push((
+            format!("fuse {heat}"),
+            Box::new(move |c| screens64::draw_fuse(c, heat, 1.0)),
+        ));
+    }
+    for t in [0.05, 0.2, 0.4, 0.65, 1.0, 2.0] {
+        v.push((format!("boom {t}"), Box::new(move |c| screens64::draw_boom(c, t))));
+    }
+    // Every Pass the Pot throw of up to three dice (raw 1 ←, 2 pot, 3 →, 4 keep).
+    for n in 1..=3usize {
+        for k in 0..4usize.pow(n as u32) {
+            let values: Vec<u8> = (0..n).map(|i| (k / 4usize.pow(i as u32) % 4) as u8 + 1).collect();
+            v.push((
+                format!("pot {values:?}"),
+                Box::new(move |c| {
+                    screens64::draw_result(c, &record(DieKind::PassThePot, &values), None, 1.0)
+                }),
+            ));
+        }
+    }
+    for (p, grow) in [(0.5, 0.0), (1.0, 0.0), (1.0, 3.0)] {
+        v.push((
+            format!("hold ring {p} {grow}"),
+            Box::new(move |c| screens64::draw_hold_ring(c, p, 1.0, grow)),
+        ));
+    }
+    v
+}
+
+#[test]
+fn game_screens_stay_inside_the_rounded_lit_area() {
+    let mut kit = Kit::new();
+    for (name, d64) in game_screens64() {
+        let fb = kit.draw::<Rgb64>(&*d64);
+        let r = Rgb64::MASK_RADIUS_PX;
+        let mut lit = 0;
+        for y in 0..64 {
+            for x in 0..64 {
+                if fb.pixel(x, y).color() == Color::BLACK {
+                    continue;
+                }
+                lit += 1;
+                let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+                let dx = (r - fx).max(fx - (64.0 - r)).max(0.0);
+                let dy = (r - fy).max(fy - (64.0 - r)).max(0.0);
+                assert!(
+                    dx * dx + dy * dy <= r * r,
+                    "{name}: pixel ({x}, {y}) is under the glass's corner"
+                );
+            }
+        }
+        assert!(lit > 0, "{name} drew nothing");
+    }
+}

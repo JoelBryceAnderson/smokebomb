@@ -7,11 +7,11 @@
 //! on a target goes through a hook here, and the 96×96 layout is the
 //! default.
 //!
-//! On the 64×64 target, screens without a 64×64 design yet (Pig Toss, Hot
-//! Potato, Pass the Pot's bills, the Nest's clock and guidance, the hold
-//! ring and save flash) fall back to the 96×96 layout drawn through the
-//! 64×64 transform: everything at two thirds of the size, in white. That is
-//! a stopgap, not a design; see the README's 30 mm section.
+//! On the 64×64 target, screens without a 64×64 design yet (the Nest's
+//! clock and guidance, and the save flash, a plain wash) fall back to the
+//! 96×96 layout drawn through the 64×64 transform: everything at two thirds
+//! of the size, in white. That is a stopgap, not a design; see the README's
+//! 30 mm section.
 
 use smokebomb_hal::{AssetStore, Color, Grey96, Rgb64, Target};
 use smokebomb_shared::assets::SpriteKind;
@@ -66,6 +66,21 @@ pub trait DisplayTarget: Target {
     /// shades).
     fn pig_tint() -> Color {
         Color::WHITE
+    }
+
+    /// The hold ring, filled `p` (0–1) clockwise from 12 o'clock.
+    fn draw_hold_ring<A: AssetStore>(c: &mut Ctx<A, Self>, p: f32, alpha: f32, grow: f32) {
+        screens::draw_hold_ring(c, p, alpha, grow);
+    }
+
+    /// Hot Potato's lit fuse.
+    fn draw_fuse<A: AssetStore>(c: &mut Ctx<A, Self>, heat: f32, pulse: f32) {
+        screens::draw_fuse(c, heat, pulse);
+    }
+
+    /// Hot Potato going off, `t` seconds ago.
+    fn draw_boom<A: AssetStore>(c: &mut Ctx<A, Self>, t: f32) {
+        screens::draw_boom(c, t);
     }
 
     /// Pig Toss: how the faces frame the pigs.
@@ -325,6 +340,18 @@ impl DisplayTarget for Rgb64 {
 
     fn draw_bolt<A: AssetStore>(c: &mut Ctx<A, Self>, alpha: f32) {
         screens64::draw_low_battery(c, alpha);
+    }
+
+    fn draw_hold_ring<A: AssetStore>(c: &mut Ctx<A, Self>, p: f32, alpha: f32, grow: f32) {
+        screens64::draw_hold_ring(c, p, alpha, grow);
+    }
+
+    fn draw_fuse<A: AssetStore>(c: &mut Ctx<A, Self>, heat: f32, pulse: f32) {
+        screens64::draw_fuse(c, heat, pulse);
+    }
+
+    fn draw_boom<A: AssetStore>(c: &mut Ctx<A, Self>, t: f32) {
+        screens64::draw_boom(c, t);
     }
 }
 

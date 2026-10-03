@@ -4,7 +4,7 @@ Branch `poc/30mm-64-colour`. A 30 mm die with six 0.6" 64×64 RGB PMOLEDs (SSD13
 
 ![Contact sheet, page 1](contact-sheet-1.png)
 
-Contact sheets: [page 1](contact-sheet-1.png), [page 2](contact-sheet-2.png), and [Pig Toss](contact-sheet-pigs.png). On each row of pages 1 and 2:
+Contact sheets: [page 1](contact-sheet-1.png), [page 2](contact-sheet-2.png), [Pig Toss](contact-sheet-pigs.png), and [Hot Potato, Pass the Pot and the hold ring](contact-sheet-games.png). On each row of pages 1 and 2:
 
 - the 64×64 screen at 1:1 and at 8×,
 - its 96×96 counterpart at 1:1 and at 5× (the same shown size),
@@ -45,11 +45,11 @@ Screen code has no target checks.
 
   | Colour | Means |
   |---|---|
-  | gold | max |
-  | red | fumble and low battery |
+  | gold | max, and Pass the Pot's pot |
+  | red | fumble, low battery, Hot Potato's BOOM |
   | violet | the die and the menu's arrows |
-  | mint | charging, saved, a + modifier |
-  | ember | embers, a − modifier |
+  | mint | charging, saved, a + modifier, bills in hand, a die that keeps |
+  | ember | embers, a − modifier, a heating fuse |
   | pink | Pig Toss: the pigs and whose turn it is |
   | grey | secondary text |
 
@@ -62,8 +62,9 @@ Screen code has no target checks.
   - saved,
   - a modifier screen (`1d20 + 5 = 17`) and a wrapped text block,
   - charging and low battery,
-  - Pig Toss (below).
-- **Fallback screens.** Hot Potato, Pass the Pot's bills and the Nest's clock and guidance still use the 96×96 layout drawn through the 64×64 transform. It works, but it's the "shrunk 96" look, and those screens need their own 64×64 design.
+  - Pig Toss, Hot Potato and Pass the Pot (below),
+  - the hold ring, drawn in whole pixels: two pixels wide, rounding its corners with the glass so it sits evenly inside the lit area.
+- **Fallback screens.** The Nest's clock and guidance still use the 96×96 layout drawn through the 64×64 transform. It works, but it's the "shrunk 96" look, and those screens need their own 64×64 design.
 
 **Pig Toss.** The 96×96 layout puts the pigs, the throw, the turn score, the total and the hints on screen at once. At 64×64 that was unreadable, so the 64×64 design uses time instead of space:
 
@@ -74,6 +75,14 @@ Screen code has no target checks.
 - Lock-in: the shackle drops and snaps mint with sparks, the points count into the total, then "[next] to roll".
 - Win: the pig bounces in gold sparks over "A wins!" and "[tap] new game". The "100 points" line is dropped.
 - Player tokens (initials A–Z and the hat, car, boot, boat, crown and star) are hand-drawn sprites, also used in the menu.
+
+**Hot Potato.** The 96×96 die's fuse is a glow with a small "PASS IT". At 64×64 the bomb is the screen. It heats from grey through ember to red as the ticks speed up: that's their pace, not the time left, so nobody can count it down. Its fuse sparks on each tick, under "PASS IT!" in 5×7 text. BOOM lands in red with a shake, a ring of fire and debris that stop short of the glass's corners, then "[tap] reset". At rest the label is the bomb, "Hot Potato" and "[shake] light".
+
+**Pass the Pot.**
+- **Bills screen:** three banknotes, mint when you roll them, faint when you don't. Then the count in the result numerals with "bills" beside it, and "[tap] change".
+- **Results:** each die is a sprite, bigger the fewer there are (×3 for one, ×2 for two, ×1 for three): white arrows pass a bill left or right, a gold pot takes one, a mint dot keeps it. Under them is one short line per kind in the same colour ("1 left", "1 right", "1 pot", or "keep all"). The 96×96 summary ran off the face at 64×64 with three dice, and these lines can't.
+
+Both have a whole-game sheet, [contact-sheet-games.png](contact-sheet-games.png), with the hold ring. A test draws every throw of up to three dice, the fuse and boom at their widest, and the ring, and checks nothing reaches under the glass's corners.
 
 **What fits.** Tests walk every case:
 
@@ -137,6 +146,6 @@ The 30 mm geometry follows the mockup's 30 mm option:
 | SPI buses on the board (2), bus efficiency (85 %) | **Estimates** | A 30 mm board |
 | The board's SPI bus (`ZephyrPanels`) | **Stub**, like the crate's other drivers | Pins, SPIM instance, VCC enable |
 | Palette | Design values | Tuning on a real panel |
-| Hot Potato, Pass the Pot bills, Nest clock and guidance at 64×64 | **96×96 fallback** | A 64×64 design |
+| Nest clock and guidance at 64×64 | **96×96 fallback** | A 64×64 design |
 | Modifier screen | Drawn and on the contact sheet; **not reachable** on the die (the firmware has no modifiers) | A modifier feature |
 | Motion of a smaller die | The simulator's world model has no size or mass: both dice tumble alike | Only if rolling feel matters |

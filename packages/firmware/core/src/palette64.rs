@@ -9,11 +9,11 @@
 //! |---|---|
 //! | [`WHITE`] | the thing to read: a result, a value |
 //! | [`DIM`] | secondary: the setup under a result, titles, units |
-//! | [`GOLD`] | the best roll: max / crit, and the gold ring of sparks |
-//! | [`RED`] | the worst roll: fumble / min, and a battery that needs charging |
+//! | [`GOLD`] | the best roll: max / crit, and the gold ring of sparks; Pass the Pot's pot, like its coins |
+//! | [`RED`] | the worst roll: fumble / min, a battery that needs charging, Hot Potato's BOOM |
 //! | [`VIOLET`] | the die itself: its icon, the menu's arrows, the sugar |
-//! | [`MINT`] | good news that isn't a roll: charging, saved, a + modifier |
-//! | [`EMBER`] | warmth and warning: embers, a − modifier, the low-battery bolt |
+//! | [`MINT`] | good news that isn't a roll: charging, saved, a + modifier, bills in hand, a die that keeps |
+//! | [`EMBER`] | warmth and warning: embers, a − modifier, the low-battery bolt, a heating fuse |
 //! | [`PINK`] | Pig Toss: the pigs, and its players' turn |
 //!
 //! Values are sRGB as the panel is driven (RGB565 keeps 5/6/5 bits of them).
