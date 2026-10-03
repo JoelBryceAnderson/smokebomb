@@ -13,9 +13,15 @@ and CI builds it, so keep the two in step.
   The DK can run its GPIOs at 1.8 V. The breakouts pull SDA and SCL up to
   their own 3.3 V, which is too much for 1.8 V pins.
 - Power the breakouts' VIN from the DK's VDD (3.3 V) and share ground.
-- The panels need their own 12 V VCC and the support parts from their
-  datasheet (IREF resistor, capacitors). This page only covers their logic
-  signals.
+- The panels need their own 12 V VCC and the support parts from the
+  SSD1317 datasheet's application example (section 10): its two 2.2 µF
+  capacitors, 1 µF close to VDD, and a ~530 kΩ resistor from IREF to ground (18.75 µA at 12 V).
+  Without the IREF resistor the panel stays dark, unless the init sequence
+  switches to the internal reference (`0xAD 0x10`). This page only covers
+  their logic signals.
+- Power up in the datasheet's order (6.8): VDD first, then the 12 V
+  after reset has been pulsed. Power down the other way round: never VDD
+  before VCC.
 
 ## Pin map
 
@@ -71,16 +77,14 @@ run it.
 - **The SPIMs.** SPIM00 runs at up to 32 MHz, with its clock and data on
   P2. SPIM20, SPIM21, SPIM22 and SPIM30 top out at 8 MHz. (SPIM20 also
   shares its registers with UARTE20, the DK's console.)
-- **The panels' limit.** The SSD1306-family SPI cycle time is 100 ns, so
-  10 MHz at most. u8g2 drives the SSD1317 at 8 MHz. That ceiling applies on
-  every SPIM, so the overlay runs the panels at 8 MHz.
+- **The panels' limit.** The SSD1317's 4-wire SPI clock cycle is 100 ns at
+  the least (datasheet table 9-4), so 10 MHz at most. That ceiling applies
+  on every SPIM. The overlay runs the panels at 8 MHz, as u8g2 does.
 - **What the SSD1317 actually needs.** It is a 1-bit controller
-  ([below](#the-ssd1317-is-one-bit)): 1152 bytes a frame, plus 3 address
-  bytes for each of the 12 pages. That's 1188 B × 6 faces × 60 Hz =
-  3.4 Mbit/s, 43% of an 8 MHz bus. On top of that come the gaps around
-  each transfer: 24 per face per frame, 8640 a second. Writing a whole face
-  in horizontal addressing mode would make that 2 per face; it's worth
-  doing once the page writes are proven on glass.
+  ([below](#the-ssd1317-is-one-bit)): 1152 bytes a frame, plus a 6-byte
+  address window. That's 1158 B × 6 faces × 60 Hz = 3.3 Mbit/s, 42% of an
+  8 MHz bus. On top of that come the gaps around each transfer: 13 per face
+  per frame (the window, then a page at a time), 4680 a second.
 - **What 4bpp would need.** 4608 B × 6 × 60 = 13.3 Mbit/s before overhead,
   more than a 10 MHz panel clock allows on one bus. A grey panel would need
   two buses (SPIM00 for three faces and SPIM21 for the other three, each
@@ -100,16 +104,18 @@ for the panels' SCK and MOSI. Check that before laying out the board.
 
 The panel is 96×96. Its controller, the SSD1317, can drive up to 128×96,
 and the panel is wired to 96 of its 128 columns (16–111, the driver's
-`COLUMN_OFFSET`). Solomon lists the SSD1317 as a **monochrome**
-controller, and u8g2's SSD1317 96×96 driver treats it as one:
-SSD1306-style pages, a bit a pixel. The firmware draws 16 grey levels (`FRAME_BYTES` = 4608, SIM_SPEC's "16 gray
-levels" for the ER-OLED0.96-6W).
+`COLUMN_OFFSET`). The datasheet says it plainly
+(6.6): "The GDDRAM is a bit mapped static RAM … 128 x 96 bits … used for
+monochrome 128x96 dot matrix display". There are no grey-scale commands,
+only contrast for the whole panel. The firmware draws 16 grey levels
+(`FRAME_BYTES` = 4608, SIM_SPEC's "16 gray levels" for the
+ER-OLED0.96-6W), which this panel can't show.
 
-Until that's settled, the driver (`hal/nrf54l15/src/ssd1317.rs`) reduces
-each 4bpp frame to 1 bit, lighting levels 8 and up, so bring-up can light
-glass either way. Check the datasheet's command table, then pick one: a
-grey controller for 96×96 (the SSD1327 drives 16 levels, and 96×96 SSD1327
-modules exist), or design the faces for one bit.
+For now the driver (`hal/nrf54l15/src/ssd1317.rs`) reduces each 4bpp frame
+to 1 bit, lighting levels 8 and up, so bring-up can light glass. The open
+choice: a grey controller for 96×96 (the SSD1327 drives 16 levels, and
+96×96 SSD1327 modules exist), or design the faces for one bit (a 1-bit
+dither of the grey frames, or art drawn for one bit).
 
 ## Bring-up
 
@@ -147,7 +153,7 @@ What it tells you:
 |---|---|
 | A part `MISSING` in the scan | wiring: power, SDA/SCL swapped, or a STEMMA cable not seated |
 | A part answers but its driver `FAILED its init` | code or the overlay: a wrong address, or Zephyr's driver and the part disagree |
-| No panel lights, every write `Ok` | the panel's 12 V supply or RESET, or the init sequence |
+| No panel lights, every write `Ok` | the panel's 12 V supply, its IREF resistor, or RESET |
 | One panel stays dark | its CS wire |
 | A face shows another face's bars | CS wires swapped |
 | The corner block isn't top left | the remap (`0xA0`/`0xC8` in the init sequence) |

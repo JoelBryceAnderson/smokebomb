@@ -1,22 +1,23 @@
 //! SSD1317 OLED driver: six 96x96 panels on one SPI bus, sharing clock,
 //! data, D/C and reset, each with its own chip-select.
 //!
-//! The SSD1317 is Solomon's 128x96 controller, with the SSD1306 family's
-//! command set: one bit a pixel, in 12 pages of 8 rows, each byte a column
-//! of 8 pixels, least significant bit on top. A 96-column panel is wired to
-//! segments 16-111, so its columns start at [`COLUMN_OFFSET`].
+//! The SSD1317 drives up to 128x96 pixels, a bit each: its RAM is 12 pages
+//! of 8 rows, each byte a column of 8 pixels, least significant bit on top
+//! (datasheet 6.6). The 96x96 panel is wired to columns 16-111, so its
+//! columns start at [`COLUMN_OFFSET`].
 //!
 //! The firmware draws 4bpp frames (16 levels); [`pack_page`] reduces them to
 //! the panel's one bit at [`LIT_LEVEL`]. That keeps the controller lit and
 //! testable while how the faces show grey is still open.
 //!
-//! The commands and values follow u8g2's SSD1317 96x96 driver
-//! (`u8x8_d_ssd1317.c`), the one known to light this panel, except that
-//! this one uses page addressing (u8g2 sets horizontal, then addresses
-//! pages anyway) and leaves out u8g2's SSD1306 charge-pump command: the
-//! panels get their 12 V from outside. Check them against the SSD1317
-//! datasheet on the bench: the remap (`0xA0`/`0xC8`) sets which way up a
-//! face is.
+//! The commands are the datasheet's (Rev 1.2 command table), with u8g2's
+//! values for this panel (`u8x8_d_ssd1317.c`). The SSD1317 has no charge
+//! pump: the panels get their 12 V from outside. Which way up a face reads
+//! is set by the remap (`0xA0`/`0xC8`): check it on the bench.
+//!
+//! RAM is written in horizontal addressing mode, windowed to the panel's
+//! columns, so the pointer runs on from one page to the next by itself: a
+//! frame is one address command and twelve page writes.
 //!
 //! The driver only builds byte streams; [`PanelBus`] moves them. On the
 //! board that is the Zephyr shim, and in the tests a recording mock, so the
@@ -59,13 +60,13 @@ pub const INIT: &[u8] = &[
     0xA8, 0x5F, // multiplex ratio: 96 rows
     0xD3, 0x00, // display offset 0
     0xA2, 0x00, // display start line 0
-    0x20, 0x02, // page addressing
+    0x20, 0x00, // horizontal addressing
     0xA0, // segment remap: column 0 on SEG0
     0xC8, // COM scan: reversed
-    0xDA, 0x12, // COM pins: alternative, no left/right remap
+    0xDA, 0x12, // SEG pins: alternative (odd/even), no left/right remap
     0x81, 0x9F, // contrast
     0xD9, 0xF1, // pre-charge: phase 1 = 1, phase 2 = 15 clocks
-    0xDB, 0xFF, // VCOMH deselect level
+    0xDB, 0x38, // VCOMH deselect level: 0.84 x VCC
     0x2E, // scrolling off
     0xA4, // show RAM (not all-on)
     0xA6, // normal, not inverted
@@ -75,10 +76,16 @@ pub const DISPLAY_OFF: u8 = 0xAE;
 pub const DISPLAY_ON: u8 = 0xAF;
 pub const CONTRAST: u8 = 0x81;
 
-/// Commands that point the RAM at the start of `page`, column 0 of the panel.
-pub fn page_address(page: u8) -> [u8; 3] {
-    [0xB0 | page, COLUMN_OFFSET & 0x0F, 0x10 | (COLUMN_OFFSET >> 4)]
-}
+/// Window the RAM to the panel (its 96 columns, all 12 pages) and point at
+/// its top-left byte.
+pub const FRAME_WINDOW: [u8; 6] = [
+    0x21,
+    COLUMN_OFFSET,
+    COLUMN_OFFSET + PANEL_WIDTH as u8 - 1, // columns
+    0x22,
+    0,
+    PAGES as u8 - 1, // pages
+];
 
 /// One page (8 rows) of a 4bpp frame as the panel's bytes: a byte a column,
 /// row `8 * page` in bit 0.
@@ -139,9 +146,9 @@ impl<B: PanelBus> Ssd1317<B> {
 
     /// Send a whole frame to one panel, a page at a time.
     pub fn write_frame(&mut self, panel: u8, frame: &FrameBytes) -> HalResult<()> {
+        self.bus.write(panel, Dc::Command, &FRAME_WINDOW)?;
         for page in 0..PAGES {
             pack_page(frame, page, &mut self.page);
-            self.bus.write(panel, Dc::Command, &page_address(page as u8))?;
             self.bus.write(panel, Dc::Data, &self.page)?;
         }
         Ok(())
@@ -231,22 +238,24 @@ mod tests {
     }
 
     #[test]
-    fn page_address_starts_at_the_panels_first_column() {
-        assert_eq!(page_address(0), [0xB0, 0x00, 0x11]);
-        assert_eq!(page_address(11), [0xBB, 0x00, 0x11]);
+    fn init_addresses_horizontally() {
+        let mode = INIT.iter().position(|&b| b == 0x20).unwrap();
+        assert_eq!(INIT[mode + 1], 0x00);
     }
 
     #[test]
-    fn a_frame_is_twelve_pages_of_96_bytes() {
+    fn the_window_is_the_panels_columns_and_every_page() {
+        assert_eq!(FRAME_WINDOW, [0x21, 16, 111, 0x22, 0, 11]);
+    }
+
+    #[test]
+    fn a_frame_is_the_window_then_twelve_pages_of_96_bytes() {
         let frame = [0xFF; FRAME_BYTES];
         let ops = ops(|d| d.write_frame(4, &frame).unwrap());
-        assert_eq!(ops.len(), 2 * PAGES);
-        for (page, pair) in ops.chunks(2).enumerate() {
-            assert_eq!(
-                pair[0],
-                Op::Write(4, Dc::Command, page_address(page as u8).to_vec())
-            );
-            assert_eq!(pair[1], Op::Write(4, Dc::Data, vec![0xFF; PANEL_WIDTH]));
+        assert_eq!(ops.len(), 1 + PAGES);
+        assert_eq!(ops[0], Op::Write(4, Dc::Command, FRAME_WINDOW.to_vec()));
+        for op in &ops[1..] {
+            assert_eq!(*op, Op::Write(4, Dc::Data, vec![0xFF; PANEL_WIDTH]));
         }
     }
 
