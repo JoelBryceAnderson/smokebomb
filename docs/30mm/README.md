@@ -47,6 +47,7 @@ Screen code has no target checks.
   |---|---|
   | gold | max, and Pass the Pot's pot |
   | red | fumble, low battery, Hot Potato's BOOM |
+  | potato tan, char brown, sweat blue | Hot Potato's potato only |
   | violet | the die and the menu's arrows |
   | mint | charging, saved, a + modifier, bills in hand, a die that keeps |
   | ember | embers, a − modifier, a heating fuse |
@@ -76,13 +77,19 @@ Screen code has no target checks.
 - Win: the pig bounces in gold sparks over "A wins!" and "[tap] new game". The "100 points" line is dropped.
 - Player tokens (initials A–Z and the hat, car, boot, boat, crown and star) are hand-drawn sprites, also used in the menu.
 
-**Hot Potato.** The 96×96 die's fuse is a glow with a small "PASS IT". At 64×64 the bomb is the screen. It heats from grey through ember to red as the ticks speed up: that's their pace, not the time left, so nobody can count it down. Its fuse sparks on each tick, under "PASS IT!" in 5×7 text. BOOM lands in red with a shake, a ring of fire and debris that stop short of the glass's corners, then "[tap] reset". At rest the label is the bomb, "Hot Potato" and "[shake] light".
+**Hot Potato.** At 64×64 it plays like a little arcade game, and the potato is the character.
+
+- **At rest:** a calm potato with its fuse out, "Hot Potato" and "[shake] light".
+- **Lit:** the potato goes from calm to worried to panicking as the ticks speed up. That's their pace, not the time left, so nobody can count it down. It reddens, shakes harder, sweats and steams, and its fuse fizzes. Under it, "PASS IT!" flashes white and gold in drop-shadowed text over an eight-block heat bar whose newest block flashes on each tick.
+- **Boom:** a white flash, an 8-bit fireball of 2×2 blocks that burns out from the middle, chunks flying, then the potato left charred with X eyes under a bouncing BOOM, and "[tap] reset".
+
+The fuse screen takes the die's clock, so the potato animates between ticks.
 
 **Pass the Pot.**
 - **Bills screen:** three banknotes, mint when you roll them, faint when you don't. Then the count in the result numerals with "bills" beside it, and "[tap] change".
 - **Results:** each die is a sprite, bigger the fewer there are (×3 for one, ×2 for two, ×1 for three): white arrows pass a bill left or right, a gold pot takes one, a mint dot keeps it. Under them is one short line per kind in the same colour ("1 left", "1 right", "1 pot", or "keep all"). The 96×96 summary ran off the face at 64×64 with three dice, and these lines can't.
 
-Both have a whole-game sheet, [contact-sheet-games.png](contact-sheet-games.png), with the hold ring. A test draws every throw of up to three dice, the fuse and boom at their widest, and the ring, and checks nothing reaches under the glass's corners.
+Both have a whole-game sheet, [contact-sheet-games.png](contact-sheet-games.png), with the hold ring. A test draws every throw of up to three dice, the fuse at each heat, the boom once its chunks have flown, and the ring, and checks nothing reaches under the glass's corners.
 
 **What fits.** Tests walk every case:
 

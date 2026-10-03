@@ -1178,7 +1178,11 @@ where
         } else if let Some(t) = self.potato.boomed_for(now) {
             Some(PotatoView::Boom(t as f32 / 1000.0))
         } else if self.potato.is_lit() {
-            Some(PotatoView::Fuse(self.potato.heat(now), self.potato.pulse(now)))
+            Some(PotatoView::Fuse(
+                self.potato.heat(now),
+                self.potato.pulse(now),
+                (now % 1_000_000) as f32 / 1000.0,
+            ))
         } else {
             None
         };
@@ -1388,7 +1392,7 @@ where
                 }
             }
             match potato_face {
-                Some(PotatoView::Fuse(heat, pulse)) => TargetOf::<P>::draw_fuse(&mut c, heat, pulse),
+                Some(PotatoView::Fuse(heat, pulse, t)) => TargetOf::<P>::draw_fuse(&mut c, heat, pulse, t),
                 Some(PotatoView::Boom(t)) => TargetOf::<P>::draw_boom(&mut c, t),
                 None => {}
             }
@@ -1449,8 +1453,9 @@ const SMOLDER_MAX: f32 = 0.3;
 /// What a round of Hot Potato shows on the faces.
 #[derive(Clone, Copy)]
 enum PotatoView {
-    /// Heat and pulse, both 0–1.
-    Fuse(f32, f32),
+    /// Heat and pulse, both 0–1, and the clock in seconds (wrapping every
+    /// ~17 minutes, so it stays precise as an f32), for animation.
+    Fuse(f32, f32, f32),
     /// Seconds since it went off.
     Boom(f32),
 }

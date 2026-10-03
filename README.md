@@ -119,8 +119,9 @@ What's done and what isn't:
 - **Pig Toss** has its own 64×64 design: pink pigs that fade, then a big
   throw score, then whose turn it is with icon hints
   (`cargo test -p smokebomb-core --test pigs64` draws its contact sheet).
-- **Hot Potato and Pass the Pot** have 64×64 designs too: a heating
-  pixel-art bomb, and sprites with one line per kind for the pot's dice
+- **Hot Potato and Pass the Pot** have 64×64 designs too: an arcade-style
+  potato that panics as it heats and goes off in an 8-bit fireball, and
+  sprites with one line per kind for the pot's dice
   (`cargo test -p smokebomb-core --test games64` draws their sheet). The
   hold ring is drawn in whole pixels.
 - **Fallback screens.** The Nest's clock and guidance fall back to the

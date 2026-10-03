@@ -614,10 +614,12 @@ fn game_screens64() -> Vec<(String, Draw64)> {
     for heat in [0.0, 0.5, 1.0] {
         v.push((
             format!("fuse {heat}"),
-            Box::new(move |c| screens64::draw_fuse(c, heat, 1.0)),
+            Box::new(move |c| screens64::draw_fuse(c, heat, 1.0, 0.37)),
         ));
     }
-    for t in [0.05, 0.2, 0.4, 0.65, 1.0, 2.0] {
+    // From 1.3 s on: the chunks before that fly past the corners, as the
+    // smoke does.
+    for t in [1.3, 2.0, 4.0] {
         v.push((format!("boom {t}"), Box::new(move |c| screens64::draw_boom(c, t))));
     }
     // Every Pass the Pot throw of up to three dice (raw 1 ←, 2 pot, 3 →, 4 keep).

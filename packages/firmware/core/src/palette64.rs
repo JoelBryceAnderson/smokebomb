@@ -15,6 +15,7 @@
 //! | [`MINT`] | good news that isn't a roll: charging, saved, a + modifier, bills in hand, a die that keeps |
 //! | [`EMBER`] | warmth and warning: embers, a − modifier, the low-battery bolt, a heating fuse |
 //! | [`PINK`] | Pig Toss: the pigs, and its players' turn |
+//! | [`POTATO`] | Hot Potato's potato, reddening as it heats; [`CHAR`] once it's gone off |
 //!
 //! Values are sRGB as the panel is driven (RGB565 keeps 5/6/5 bits of them).
 //! The emitters' real colour points and the module's white balance aren't
@@ -51,3 +52,12 @@ pub const PINK: Color = Color::hex(0xFF8FB8);
 pub const PINK_LIGHT: Color = Color::hex(0xFFC9DC);
 /// The dark of a pig's eyes and nostrils.
 pub const PINK_DARK: Color = Color::hex(0x6A2A40);
+
+/// Hot Potato's potato skin.
+pub const POTATO: Color = Color::hex(0xD9A55B);
+/// Its spots and the dark of its face.
+pub const POTATO_DARK: Color = Color::hex(0x6B4321);
+/// A potato that went off.
+pub const CHAR: Color = Color::hex(0x4A3326);
+/// Sweat, the one blue on the die.
+pub const SWEAT: Color = Color::hex(0x7CC8FF);

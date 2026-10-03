@@ -43,9 +43,18 @@ fn scenarios() -> Vec<common::Scenario> {
         scenario!(
             "potato: fuse and boom",
             hot_potato,
-            &[10.5, 18.0, 26.0, 34.0, 38.0, 39.0, 39.25, 39.5, 40.0, 41.0, 42.5],
+            &[10.5, 18.0, 26.0, 30.0, 34.0, 36.0, 38.0, 39.0],
             [(9.0, |r| {
                 // A 15 s fuse.
+                r.sim.lock().rng_script.push_back(1 << 31);
+                r.shake()
+            })]
+        ),
+        scenario!(
+            "potato: boom",
+            hot_potato,
+            &[39.1, 39.15, 39.25, 39.35, 39.5, 39.7, 40.0, 40.5, 41.5],
+            [(9.0, |r| {
                 r.sim.lock().rng_script.push_back(1 << 31);
                 r.shake()
             })]

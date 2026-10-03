@@ -73,8 +73,10 @@ pub trait DisplayTarget: Target {
         screens::draw_hold_ring(c, p, alpha, grow);
     }
 
-    /// Hot Potato's lit fuse.
-    fn draw_fuse<A: AssetStore>(c: &mut Ctx<A, Self>, heat: f32, pulse: f32) {
+    /// Hot Potato's lit fuse, `t` seconds on the die's clock (for
+    /// animation between ticks; the 96×96 die needs none).
+    fn draw_fuse<A: AssetStore>(c: &mut Ctx<A, Self>, heat: f32, pulse: f32, t: f32) {
+        let _ = t;
         screens::draw_fuse(c, heat, pulse);
     }
 
@@ -346,8 +348,8 @@ impl DisplayTarget for Rgb64 {
         screens64::draw_hold_ring(c, p, alpha, grow);
     }
 
-    fn draw_fuse<A: AssetStore>(c: &mut Ctx<A, Self>, heat: f32, pulse: f32) {
-        screens64::draw_fuse(c, heat, pulse);
+    fn draw_fuse<A: AssetStore>(c: &mut Ctx<A, Self>, heat: f32, pulse: f32, t: f32) {
+        screens64::draw_fuse(c, heat, pulse, t);
     }
 
     fn draw_boom<A: AssetStore>(c: &mut Ctx<A, Self>, t: f32) {

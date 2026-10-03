@@ -330,31 +330,56 @@ pub static SHAKE: Glyph<5> = glyph(' ', "....##### .#..#...# ....#.#.# ##..#...#
 /// Tap, 7×7.
 pub static TAP: Glyph<7> = glyph(' ', "..###.. .#...#. #..#..# #.###.# #..#..# .#...#. ..###..");
 
-/// Hot Potato's bomb, 15×15: `#` body, `h` its shine, `c` the cap, `f` the
-/// fuse running up to the right, its tip at (11, 0).
-const BOMB: &str = "
-...........f...
-..........f....
-..........f....
-.........f.....
-......ccc......
-....#######....
-...#########...
-..##hh#######..
-.##hh#########.
-.##h##########.
-.#############.
-.#############.
-..###########..
-...#########...
-....#######....
+/// The hot potato, 16×13: `#` skin, `s` its spots.
+const POTATO: &str = "
+....########....
+..############..
+.###s##########.
+################
+################
+################
+##########s#####
+################
+################
+.###s##########.
+.##############.
+..############..
+....########....
 ";
-pub static BOMB_BODY: Glyph<15> = layer(' ', BOMB, b'#');
-pub static BOMB_SHINE: Glyph<15> = layer(' ', BOMB, b'h');
-pub static BOMB_CAP: Glyph<15> = layer(' ', BOMB, b'c');
-pub static BOMB_FUSE: Glyph<15> = layer(' ', BOMB, b'f');
-/// Where the fuse's tip is in [`BOMB`], pixels from its top left.
-pub const BOMB_TIP: (f32, f32) = (11.0, 0.0);
+pub static POTATO_SKIN: Glyph<13> = layer(' ', POTATO, b'#');
+pub static POTATO_SPOTS: Glyph<13> = layer(' ', POTATO, b's');
+/// Where the fuse leaves the potato, pixels from its top left.
+pub const POTATO_FUSE: (f32, f32) = (9.0, 0.0);
+
+/// The potato's face as the fuse heats, drawn over the skin (same 16×13
+/// frame): calm, worried, panicking, and burnt out.
+pub static FACE_CALM: Glyph<13> = glyph(
+    ' ',
+    "................ ................ ................ ................ \
+     .....#....#..... .....#....#..... ................ ......#..#...... \
+     .......##.......",
+);
+pub static FACE_WORRIED: Glyph<13> = glyph(
+    ' ',
+    "................ ................ ................ ....##....##.... \
+     .....#....#..... .....#....#..... ................ ................ \
+     ......####......",
+);
+pub static FACE_PANIC: Glyph<13> = glyph(
+    ' ',
+    "................ ................ ...##......##... ................ \
+     ....##....##.... ....##....##.... ................ .......##....... \
+     ......#..#...... ......#..#...... .......##.......",
+);
+pub static FACE_BURNT: Glyph<13> = glyph(
+    ' ',
+    "................ ................ ................ ....#.#..#.#.... \
+     .....#....#..... ....#.#..#.#.... ................ ................ \
+     ......####......",
+);
+
+/// A drop of sweat, 3×4.
+pub static SWEAT: Glyph<4> = glyph(' ', ".#. .#. ### .#.");
 
 /// A spark, 5×5, in two shapes to flicker between.
 pub static SPARK_X: Glyph<5> = glyph(' ', "#...# .#.#. ..#.. .#.#. #...#");
@@ -428,7 +453,14 @@ mod tests {
         }
         assert!(symmetric(&HEART) && symmetric(&TAP) && symmetric(&SHACKLE) && symmetric(&LOCK_BODY));
         assert!(symmetric(&BILL) && symmetric(&POT_RIM) && symmetric(&POT_INSIDE) && symmetric(&KEEP));
-        assert!(symmetric(&SPARK_X) && symmetric(&SPARK_PLUS));
+        assert!(symmetric(&SPARK_X) && symmetric(&SPARK_PLUS) && symmetric(&SWEAT));
+        for face in [&FACE_CALM, &FACE_WORRIED, &FACE_PANIC, &FACE_BURNT] {
+            assert!(symmetric(face));
+            // The face sits on the skin.
+            for y in 0..13 {
+                assert_eq!(face.rows[y] & !POTATO_SKIN.rows[y] & !POTATO_SPOTS.rows[y], 0);
+            }
+        }
         // The arrows mirror each other.
         for y in 0..9 {
             let w = PASS_LEFT.width as u32;
