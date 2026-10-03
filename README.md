@@ -48,6 +48,7 @@ Where each area stands. Update this table when something changes.
 | BLE message framing, settings and roll chain persisted to flash | 🗓 Planned | Types are defined, not yet serialised |
 | Phone app: navigation and screens | 🧪 Stubbed | Drives the simulator over the network; real BLE, NFC and the API client are not wired up |
 | Store: modes and themes | 🧪 Started | Die offers licensed + enabled modes; app has mode switches. See [Store](docs/STORE.md) |
+| 30 mm die, 64×64 colour panels | 🧪 Proof of concept | Builds and runs in the simulator; SSD1357 driver from its datasheet, module wiring TBD. See [30 mm die](docs/30mm/README.md) |
 
 The full list of gaps is at the end of the
 [architecture doc](docs/ARCHITECTURE.md#not-yet-built).
@@ -84,6 +85,43 @@ cargo run --features=simulator     # → http://localhost:3000, hold "Throw", re
 Hold a screen for the menu. To drive it from an iPad, the server, the
 database and the tests, see [Getting started](docs/GETTING_STARTED.md).
 
+## 30 mm die: 64×64 colour proof of concept
+
+The firmware builds for two dice from one codebase. The display target is
+picked at compile time (`smokebomb_hal::target`):
+
+| Target | Die | Panels |
+|---|---|---|
+| `TARGET_34_GREY96` (default) | 34 mm | six SSD1317 96×96, 16 grey levels |
+| `TARGET_30_RGB64` | 30 mm | six 0.6" 64×64 RGB (SSD1357), RGB565 |
+
+The 64×64 screens are their own layouts, not the 96×96 ones scaled down:
+bitmap fonts, condensed numerals and a small palette in which colour
+carries meaning. The 34 mm die is unchanged: its snapshot sheets
+regenerate byte for byte.
+
+```sh
+cargo fw                  # 34 mm image (as before)
+cargo fw30                # 30 mm image: --features target-30-rgb64
+cargo sim -- --die 30     # simulator on the 30 mm die (or SMOKEBOMB_DIE=30);
+                          # or switch in the page's Die section
+UPDATE_SNAPSHOTS=1 cargo test -p smokebomb-core --test contact_sheet  # regenerate the contact sheets
+```
+
+What's done and what isn't:
+- **Driver.** The SSD1357 driver's commands, power sequence and timing come
+  from the datasheet, and its command stream is tested. The board's SPI
+  bus is a stub, like the other drivers.
+- **Placeholders.** Values that depend on the NHD-0.6-6464G module are
+  marked `MODULE TODO`: which SEG/COM lines it uses, remap, VCC and tuning.
+- **Estimates.** The lit-area, window and mask sizes and the number of SPI
+  buses are estimates.
+- **Fallback screens.** Pig Toss, Hot Potato, Pass the Pot's bills and the
+  Nest's clock fall back to the 96×96 layout.
+
+Findings, contact sheets and the full list of what's stubbed:
+[docs/30mm](docs/30mm/README.md).
+
 ## Docs
 
 - [Architecture](docs/ARCHITECTURE.md): decisions, repo map, roll signing format, animation packs, what isn't built
@@ -91,3 +129,4 @@ database and the tests, see [Getting started](docs/GETTING_STARTED.md).
 - [API](docs/API.md): REST endpoints and their status
 - [Simulator spec](docs/SIM_SPEC.md): how the die looks and behaves, which began as a 1:1 copy of the interactive mockup
 - [Store](docs/STORE.md): selling modes and themes, licenses, choosing a die's modes from the app
+- [30 mm die](docs/30mm/README.md): the 64×64 colour proof of concept, its contact sheets and findings
