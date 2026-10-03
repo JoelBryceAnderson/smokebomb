@@ -38,6 +38,12 @@ export interface DieViewHandle {
   drawFrames(frames: FramePacket): void;
   /** Close-up (SIM_SPEC A5): the camera at 0.4 of its distance, on the die. */
   setCloseUp(on: boolean): void;
+  /**
+   * True size: with the screen's CSS pixels per real millimetre, place the
+   * camera so the die shows at its real size (at its centre's depth), or
+   * `null` for the usual view. Overrides the close-up.
+   */
+  setTrueSize(pxPerMm: number | null): void;
   setPose(pose: Pose): void;
   /** The viewer's right in world space (the axis for up/down tips). */
   viewerRight(): [number, number, number];
@@ -134,6 +140,7 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
   useImperativeHandle(ref, () => ({
     drawFrames: (f) => api.current?.drawFrames(f),
     setCloseUp: (on) => api.current?.setCloseUp(on),
+    setTrueSize: (px) => api.current?.setTrueSize(px),
     setPose: (p) => api.current?.setPose(p),
     viewerRight: () => api.current?.viewerRight() ?? [1, 0, 0],
     setLook: (f, n) => api.current?.setLook(f, n),
@@ -385,6 +392,10 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
         closeUp = on;
         resize();
       },
+      setTrueSize(px) {
+        trueSize = px;
+        resize();
+      },
       setLook(finish, night) {
         const f = FINISHES.find((x) => x.key === finish) ?? FINISHES[0];
         shellMat.color.setHex(f.color);
@@ -437,6 +448,7 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     // Input, as in the mockup: press a face to touch it; moving more than
     // 8 px turns the press into a drag that turns the die in the hand.
     let closeUp = false;
+    let trueSize: number | null = null;
     const raycaster = new THREE.Raycaster();
     let press: {
       x: number;
@@ -552,8 +564,15 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       renderer.setSize(w, h);
       camera.aspect = w / h;
       const portrait = camera.aspect < 0.75;
-      const dist = (portrait ? 12.5 : 9.5) * K * (closeUp ? 0.4 : 1);
-      if (closeUp) look.set(0, 0, 0);
+      let dist = (portrait ? 12.5 : 9.5) * K * (closeUp ? 0.4 : 1);
+      if (trueSize) {
+        // A length L at distance d spans L / (2 d tan(fov / 2)) of the
+        // view's height, so for L mm to take L × pxPerMm CSS px of an
+        // h-px-tall view, d = h / (2 tan(fov / 2) pxPerMm) mm, whatever L.
+        const halfFov = THREE.MathUtils.degToRad(camera.fov / 2);
+        dist = (h / (2 * Math.tan(halfFov) * trueSize)) * MM;
+      }
+      if (closeUp || trueSize) look.set(0, 0, 0);
       else look.set(0, (portrait ? -0.1 : -0.35) * K, 0);
       camera.position.set(0.55, 0.62, 1).normalize().multiplyScalar(dist);
       camera.lookAt(look);

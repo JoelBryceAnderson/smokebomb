@@ -105,6 +105,7 @@ UPDATE_SNAPSHOTS=1 cargo test -p smokebomb-core --test contact_sheet   # regener
 In the simulator's Die section:
 - **Switch die** reboots the firmware built for the other panels.
 - **Close-up** moves the camera to 0.4 of its distance.
+- **True size** shows the die at its real size on your screen, measured at the die's centre. Calibrate it once by matching the outline to a bank card held against the screen; the scale is saved in the browser.
 - **Pixel gaps** darkens the gaps between panel pixels.
 
 The 30 mm geometry follows the mockup's 30 mm option:

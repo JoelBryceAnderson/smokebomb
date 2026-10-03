@@ -7,6 +7,22 @@ import { DEFAULT_FINISH, FINISHES, FinishKey } from "./finishes";
 
 const POT_GLYPHS = ["←", "P", "→", "•", "•", "•"];
 
+/** An ID-1 card (bank card, ISO/IEC 7810): 85.60 × 53.98 mm. */
+const CARD_MM: [number, number] = [85.6, 53.98];
+/** CSS's own idea of a millimetre (96 px to the inch); real screens vary. */
+const CSS_PX_PER_MM = 96 / 25.4;
+const SCALE_KEY = "sugarcube.pxPerMm";
+
+/** The calibrated screen scale, if this browser has one. */
+function loadScale(): number {
+  try {
+    const v = Number(localStorage.getItem(SCALE_KEY));
+    return v >= 1 && v <= 12 ? v : CSS_PX_PER_MM;
+  } catch {
+    return CSS_PX_PER_MM;
+  }
+}
+
 /** Setup label as the die shows it (SIM_SPEC C2): `d20`, `3d6`, `Pass the Pot ×2`. */
 function setupLabel(r: RollView): string {
   const n = r.values.length;
@@ -64,6 +80,8 @@ export function App() {
   const [glass, setGlass] = useState(false);
   const [pixelGrid, setPixelGrid] = useState(false);
   const [closeUp, setCloseUp] = useState(false);
+  const [trueSize, setTrueSize] = useState(false);
+  const [pxPerMm, setPxPerMm] = useState(loadScale);
   const shaking = useRef(false);
   // The die the server simulates; the view is rebuilt when it changes.
   const geometry = GEOMETRY[isDieMm(state.die) ? state.die : 34];
@@ -72,6 +90,14 @@ export function App() {
   useEffect(() => die.current?.setLook(finish, night), [finish, night, geometry]);
   useEffect(() => die.current?.setGlass(glass), [glass, geometry]);
   useEffect(() => die.current?.setCloseUp(closeUp), [closeUp, geometry]);
+  useEffect(() => die.current?.setTrueSize(trueSize ? pxPerMm : null), [trueSize, pxPerMm, geometry]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SCALE_KEY, String(pxPerMm));
+    } catch {
+      // No storage (private window): the scale lasts for this visit.
+    }
+  }, [pxPerMm]);
   // Etched on the charging face: the last six hex digits of the die's serial, once a roll has shown it.
   const serial = state.rolls[0]?.device_serial.slice(-6).toUpperCase() ?? "000042";
   useEffect(() => die.current?.setSerial(serial), [serial, geometry]);
@@ -210,8 +236,48 @@ export function App() {
             Switching reboots the firmware built for that die's panels. The 30 mm die is a proof of concept: its panel
             and window sizes are estimates until the module's drawing is in.
           </p>
+          <button
+            className={trueSize ? "chip on true-size" : "chip true-size"}
+            aria-pressed={trueSize}
+            onClick={() => setTrueSize((t) => !t)}
+          >
+            True size ({geometry.mm} mm)
+          </button>
+          {trueSize && (
+            <div className="calibrate">
+              <p className="muted">
+                Hold a bank card upright against the outline and drag until they match, so a millimetre here is a
+                millimetre on the die. Measured at the die's centre; the near edges show a little larger.
+              </p>
+              <div
+                className="card-outline"
+                // Portrait, so it fits the panel; ID-1 corners are 3.18 mm.
+                style={{ width: CARD_MM[1] * pxPerMm, height: CARD_MM[0] * pxPerMm, borderRadius: 3.18 * pxPerMm }}
+                aria-hidden="true"
+              />
+              <label>
+                Screen scale {pxPerMm.toFixed(2)} px/mm
+                <input
+                  type="range"
+                  min={2}
+                  max={10}
+                  step={0.01}
+                  value={pxPerMm}
+                  onChange={(e) => setPxPerMm(Number(e.target.value))}
+                />
+              </label>
+              <button className="chip" onClick={() => setPxPerMm(CSS_PX_PER_MM)}>
+                Reset to 96 dpi
+              </button>
+            </div>
+          )}
           <label className="check">
-            <input type="checkbox" checked={closeUp} onChange={(e) => setCloseUp(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={closeUp}
+              disabled={trueSize}
+              onChange={(e) => setCloseUp(e.target.checked)}
+            />
             Close-up
           </label>
           <label className="check">
