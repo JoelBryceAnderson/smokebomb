@@ -14,6 +14,8 @@ crate-type = ["staticlib"]
 default = []
 # Export `smokebomb_bench` for the Zephyr app's benchmark build (bench.conf).
 bench = []
+# The 30 mm die's 64x64 RGB panels (see smokebomb-firmware).
+target-30-rgb64 = ["smokebomb-firmware/target-30-rgb64"]
 
 # Only on the board: on the host this crate is empty, so workspace builds
 # don't pull in the board firmware alongside the simulator's.

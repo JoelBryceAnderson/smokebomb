@@ -13,13 +13,14 @@
 //! 64×64 transform: everything at two thirds of the size, in white. That is
 //! a stopgap, not a design; see the README's 30 mm section.
 
-use smokebomb_hal::{AssetStore, Color, Grey96, Region, Rgb64, Target};
+use smokebomb_hal::{AssetStore, Color, Grey96, Rgb64, Target};
 use smokebomb_shared::assets::SpriteKind;
 use smokebomb_shared::RollRecord;
 
 use crate::display::Framebuffer;
 use crate::menu::{Draft, Setup};
 use crate::nest::NestFace;
+use crate::panel::Layout;
 use crate::screens::{self, Ctx};
 use crate::smoke::Special;
 
@@ -41,12 +42,17 @@ pub trait DisplayTarget: Target {
     /// How frames are delivered.
     const DELIVERY: Delivery;
 
+    /// The packed frame's layout.
+    const LAYOUT: Layout;
+
+    /// One face's tile hashes for dirty tracking ([`crate::panel`]):
+    /// `[u32; tiles]`, or `[u32; 0]` for a target that sends whole frames
+    /// (so it costs no RAM there).
+    type Tiles: Copy + AsRef<[u32]> + AsMut<[u32]> + 'static;
+    const NO_TILES: Self::Tiles;
+
     /// Pack a framebuffer the way the panel takes it.
     fn pack(fb: &Framebuffer<Self>, out: &mut Self::Panel);
-
-    /// The bytes of `region` within a packed frame, as the panel's address
-    /// window takes them (row by row). For the size accounting.
-    fn region_bytes(region: Region) -> usize;
 
     /// The colour of each kind of particle. Grey panels draw them white
     /// (their sprites carry their own grey).
@@ -108,16 +114,16 @@ pub trait DisplayTarget: Target {
 
 impl DisplayTarget for Grey96 {
     const DELIVERY: Delivery = Delivery::WholeFrames;
+    const LAYOUT: Layout = Layout {
+        width: 96,
+        height: 96,
+        bits: 4,
+    };
+    type Tiles = [u32; 0];
+    const NO_TILES: Self::Tiles = [];
 
     fn pack(fb: &Framebuffer<Self>, out: &mut Self::Panel) {
         fb.quantize(out);
-    }
-
-    /// 4 bpp: a row of the region is half its width in bytes (rounded out to
-    /// whole bytes).
-    fn region_bytes(region: Region) -> usize {
-        let (x0, x1) = (region.x0 as usize / 2, (region.x1 as usize).div_ceil(2));
-        (x1 - x0) * region.height()
     }
 }
 
@@ -140,12 +146,16 @@ impl DisplayTarget for Rgb64 {
         face_down_ms: 250,
     };
 
+    const LAYOUT: Layout = Layout {
+        width: 64,
+        height: 64,
+        bits: 16,
+    };
+    type Tiles = [u32; 64];
+    const NO_TILES: Self::Tiles = [0; 64];
+
     fn pack(fb: &Framebuffer<Self>, out: &mut Self::Panel) {
         fb.pack565(out);
-    }
-
-    fn region_bytes(region: Region) -> usize {
-        region.width() * region.height() * 2
     }
 }
 
@@ -167,15 +177,16 @@ mod tests {
     }
 
     #[test]
-    fn region_bytes() {
-        let r = Region {
-            x0: 1,
-            y0: 0,
-            x1: 4,
-            y1: 2,
-        };
-        assert_eq!(Rgb64::region_bytes(r), 12);
-        assert_eq!(Grey96::region_bytes(r), 4);
-        assert_eq!(Rgb64::region_bytes(Region::full::<Rgb64>()), 8192);
+    fn layouts_match_the_panels() {
+        use smokebomb_hal::Region;
+        assert_eq!(
+            Rgb64::LAYOUT.region_bytes(Region::full::<Rgb64>()),
+            size_of::<<Rgb64 as Target>::Panel>()
+        );
+        assert_eq!(
+            Grey96::LAYOUT.region_bytes(Region::full::<Grey96>()),
+            size_of::<<Grey96 as Target>::Panel>()
+        );
+        assert_eq!(<Rgb64 as DisplayTarget>::NO_TILES.len(), 64);
     }
 }
