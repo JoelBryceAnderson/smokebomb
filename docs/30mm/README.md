@@ -4,13 +4,13 @@ Branch `poc/30mm-64-colour`. A 30 mm die with six 0.6" 64×64 RGB PMOLEDs (SSD13
 
 ![Contact sheet, page 1](contact-sheet-1.png)
 
-Contact sheets: [page 1](contact-sheet-1.png), [page 2](contact-sheet-2.png). On each row:
+Contact sheets: [page 1](contact-sheet-1.png), [page 2](contact-sheet-2.png), and [Pig Toss](contact-sheet-pigs.png). On each row of pages 1 and 2:
 
 - the 64×64 screen at 1:1 and at 8×,
 - its 96×96 counterpart at 1:1 and at 5× (the same shown size),
 - the glass's rounded corners shaded on the enlarged tiles.
 
-Every tile is drawn by the firmware's own code. The mid-throw row comes from the whole firmware running a throw on each target.
+Every tile is drawn by the firmware's own code. The mid-throw row comes from the whole firmware running a throw on each target. The Pig Toss sheet is whole games played on both targets (`tests/pigs64.rs`): the 64×64 checkpoints at 4× over the same moments on the 96×96 at 3×.
 
 ## How it's built
 
@@ -50,6 +50,7 @@ Screen code has no target checks.
   | violet | the die and the menu's arrows |
   | mint | charging, saved, a + modifier |
   | ember | embers, a − modifier |
+  | pink | Pig Toss: the pigs and whose turn it is |
   | grey | secondary text |
 
 - **Screens with a 64×64 design:**
@@ -60,8 +61,18 @@ Screen code has no target checks.
   - the whole menu, including the die picker,
   - saved,
   - a modifier screen (`1d20 + 5 = 17`) and a wrapped text block,
-  - charging and low battery.
-- **Fallback screens.** Pig Toss, Hot Potato, Pass the Pot's bills and the Nest's clock and guidance still use the 96×96 layout drawn through the 64×64 transform. It works, but it's the "shrunk 96" look, and those screens need their own 64×64 design.
+  - charging and low battery,
+  - Pig Toss (below).
+- **Fallback screens.** Hot Potato, Pass the Pot's bills and the Nest's clock and guidance still use the 96×96 layout drawn through the 64×64 transform. It works, but it's the "shrunk 96" look, and those screens need their own 64×64 design.
+
+**Pig Toss.** The 96×96 layout puts the pigs, the throw, the turn score, the total and the hints on screen at once. At 64×64 that was unreadable, so the 64×64 design uses time instead of space:
+
+- The pigs land full size and pink, hold, then fade out. The 96×96 die shrinks them into a corner instead.
+- Then the throw: a big "+10" (gold from 20), a red "OOPS", or a red heart for a smooch. Under it go the pose name and what it cost ("Lost 12", "Nothing lost").
+- Then the resting screen: "A's turn", the turn's points in the result numerals, and two icon hints, shake to roll and a mint lock with the banked total.
+- Lock-in: the shackle drops and snaps mint with sparks, the points count into the total, then "[next] to roll".
+- Win: the pig bounces in gold sparks over "A wins!" and "[tap] new game". The "100 points" line is dropped.
+- Player tokens (initials A–Z and the hat, car, boot, boat, crown and star) are hand-drawn sprites, also used in the menu.
 
 **What fits.** Tests walk every case:
 
@@ -125,6 +136,6 @@ The 30 mm geometry follows the mockup's 30 mm option:
 | SPI buses on the board (2), bus efficiency (85 %) | **Estimates** | A 30 mm board |
 | The board's SPI bus (`ZephyrPanels`) | **Stub**, like the crate's other drivers | Pins, SPIM instance, VCC enable |
 | Palette | Design values | Tuning on a real panel |
-| Pig Toss, Hot Potato, Pass the Pot bills, Nest clock and guidance at 64×64 | **96×96 fallback** | A 64×64 design |
+| Hot Potato, Pass the Pot bills, Nest clock and guidance at 64×64 | **96×96 fallback** | A 64×64 design |
 | Modifier screen | Drawn and on the contact sheet; **not reachable** on the die (the firmware has no modifiers) | A modifier feature |
 | Motion of a smaller die | The simulator's world model has no size or mass: both dice tumble alike | Only if rolling feel matters |

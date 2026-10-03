@@ -23,7 +23,7 @@ use core::ptr::addr_of_mut;
 
 use libm::{acosf, cosf, fabsf, sinf, sqrtf};
 
-use smokebomb_hal::{Pixel, Target};
+use smokebomb_hal::{Color, Pixel, Target};
 
 use crate::display::{Framebuffer, PIXELS};
 
@@ -506,10 +506,23 @@ impl Canvas {
     /// dimmed by `alpha`. The picture is cast at 96×96; a smaller panel
     /// samples it nearest (a stopgap: Pig Toss has no 64×64 design yet).
     pub fn lay_onto<T: Target>(&self, fb: &mut Framebuffer<T>, rot: Quarter, alpha: f32) {
+        self.lay_onto_tinted(fb, rot, alpha, Color::WHITE);
+    }
+
+    /// [`Self::lay_onto`], the pigs' shades taken as `tint`. White keeps them
+    /// grey, exactly as before; a colour also fades their coverage with
+    /// `alpha`, so they can fade out over the score (the 64×64 layout).
+    pub fn lay_onto_tinted<T: Target>(&self, fb: &mut Framebuffer<T>, rot: Quarter, alpha: f32, tint: Color) {
         let put = |fb: &mut Framebuffer<T>, x: usize, y: usize, shade: f32, a: f32| {
-            let under = fb.pixel(x, y).level() as f32;
-            let v = under * (1.0 - a) + shade * a * alpha;
-            fb.put(x, y, T::Pixel::grey((v + 0.5).clamp(0.0, 255.0) as u8));
+            if tint == Color::WHITE {
+                let under = fb.pixel(x, y).level() as f32;
+                let v = under * (1.0 - a) + shade * a * alpha;
+                fb.put(x, y, T::Pixel::grey((v + 0.5).clamp(0.0, 255.0) as u8));
+            } else {
+                // Here `alpha` fades the pigs out whole, coverage and all,
+                // so a fading pig doesn't darken what's under it.
+                fb.blend_rgb(x, y, tint.tint(shade), a * alpha);
+            }
         };
         let b = self.bounds;
         if T::WIDTH == 96 {

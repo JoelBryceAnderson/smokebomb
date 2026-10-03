@@ -21,6 +21,7 @@ use crate::display::Framebuffer;
 use crate::menu::{Draft, Setup};
 use crate::nest::NestFace;
 use crate::panel::Layout;
+use crate::pigs::{Locked, Throw, Token};
 use crate::screens::{self, Ctx};
 use crate::screens64;
 use crate::smoke::Special;
@@ -61,7 +62,51 @@ pub trait DisplayTarget: Target {
         Color::WHITE
     }
 
+    /// Pig Toss: the pigs' colour (grey panels draw them in their own
+    /// shades).
+    fn pig_tint() -> Color {
+        Color::WHITE
+    }
+
+    /// Pig Toss: how the settled pigs make way for the score, `s` seconds
+    /// after landing: `(shrink, alpha)`. The 96×96 die shrinks them to the
+    /// top of the face; a smaller panel can fade them instead.
+    fn pig_settle(s: f32) -> (f32, f32) {
+        use screens::pig_score::{SHRINK_AT, SHRINK_S};
+        let u = ((s - SHRINK_AT) / SHRINK_S).clamp(0.0, 1.0);
+        (u * u * (3.0 - 2.0 * u), 1.0)
+    }
+
     // ---------- screens with a layout per target ----------
+
+    fn draw_pigs_label<A: AssetStore>(
+        c: &mut Ctx<A, Self>,
+        setup: Setup,
+        token: Token,
+        won: bool,
+        alpha: f32,
+    ) {
+        screens::draw_pigs_label(c, setup, token, won, alpha);
+    }
+
+    fn draw_pig_score<A: AssetStore>(
+        c: &mut Ctx<A, Self>,
+        throw: &Throw,
+        t: f32,
+        next: u8,
+        tokens: &[Token],
+        alpha: f32,
+    ) {
+        screens::draw_pig_score(c, throw, t, next, tokens, alpha);
+    }
+
+    fn draw_locked<A: AssetStore>(c: &mut Ctx<A, Self>, l: &Locked, next: Token, t: f32, fade: f32) {
+        screens::draw_locked(c, l, next, t, fade);
+    }
+
+    fn draw_pig_win<A: AssetStore>(c: &mut Ctx<A, Self>, winner: Token, total: u16, t: f32, fade: f32) {
+        screens::draw_pig_win(c, winner, total, t, fade);
+    }
 
     fn draw_boot<A: AssetStore>(c: &mut Ctx<A, Self>, index: usize, top: bool, t: f32) {
         screens::draw_boot(c, index, top, t);
@@ -172,6 +217,46 @@ impl DisplayTarget for Rgb64 {
 
     fn draw_boot<A: AssetStore>(c: &mut Ctx<A, Self>, index: usize, top: bool, t: f32) {
         screens64::draw_boot(c, index, top, t);
+    }
+
+    fn pig_tint() -> Color {
+        crate::palette64::PINK
+    }
+
+    /// Shrunk to the top of a 64×64 face the pigs are specks, so they stay
+    /// full size and fade as the score comes in.
+    fn pig_settle(s: f32) -> (f32, f32) {
+        use screens::pig_score::{SHRINK_AT, SHRINK_S};
+        (0.0, 1.0 - ((s - SHRINK_AT) / SHRINK_S).clamp(0.0, 1.0))
+    }
+
+    fn draw_pigs_label<A: AssetStore>(
+        c: &mut Ctx<A, Self>,
+        _setup: Setup,
+        token: Token,
+        won: bool,
+        alpha: f32,
+    ) {
+        screens64::draw_pigs_label(c, token, won, alpha);
+    }
+
+    fn draw_pig_score<A: AssetStore>(
+        c: &mut Ctx<A, Self>,
+        throw: &Throw,
+        t: f32,
+        next: u8,
+        tokens: &[Token],
+        alpha: f32,
+    ) {
+        screens64::draw_pig_score(c, throw, t, next, tokens, alpha);
+    }
+
+    fn draw_locked<A: AssetStore>(c: &mut Ctx<A, Self>, l: &Locked, next: Token, t: f32, fade: f32) {
+        screens64::draw_locked(c, l, next, t, fade);
+    }
+
+    fn draw_pig_win<A: AssetStore>(c: &mut Ctx<A, Self>, winner: Token, total: u16, t: f32, fade: f32) {
+        screens64::draw_pig_win(c, winner, total, t, fade);
     }
 
     fn draw_wake_label<A: AssetStore>(
