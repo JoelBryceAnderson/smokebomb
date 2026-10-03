@@ -16,6 +16,7 @@ async fn session(mut socket: WebSocket, state: AppState) {
     let hello = Event::Hello {
         protocol: PROTOCOL_VERSION,
         mode: state.status.lock().await.mode.clone(),
+        die: *state.die.borrow(),
     };
     if let Outbound::Event(e) = Outbound::event(hello) {
         if socket.send(Message::Text(e.as_str().into())).await.is_err() {
@@ -109,5 +110,15 @@ fn apply(state: &AppState, input: Inbound) {
             world.set_reduced_motion(on);
             state.sim.lock().reduced_motion = on;
         }
+        Inbound::SetDie { die } => match crate::DieSize::from_mm(die) {
+            Some(d) => {
+                state.die.send_if_modified(|cur| {
+                    let changed = *cur != d.mm();
+                    *cur = d.mm();
+                    changed
+                });
+            }
+            None => tracing::warn!("no {die} mm die: the simulator has 34 and 30"),
+        },
     }
 }

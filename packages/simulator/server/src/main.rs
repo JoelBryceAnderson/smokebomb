@@ -10,6 +10,11 @@
 //!
 //! `cargo run --features=simulator` (or `cargo sim`) then open
 //! <http://localhost:3000>.
+//!
+//! Two dice: the 34 mm die with 96×96 grey panels (the default) and the
+//! 30 mm proof of concept with 64×64 colour panels. Pick one at launch with
+//! `--die 30` (or `SMOKEBOMB_DIE=30`), or switch in the page's Die section;
+//! switching reboots the firmware built for the other panels.
 
 mod phone;
 mod protocol;
@@ -25,10 +30,12 @@ use axum::extract::State;
 use axum::http::{header, HeaderValue};
 use axum::routing::get;
 use axum::{Json, Router};
-use smokebomb_firmware::board::{self, SimHandle};
-use smokebomb_hal::SecureElement;
-use smokebomb_hal_simulator::SimSecureElement;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use smokebomb_firmware::board::SimHandle;
+use smokebomb_firmware::smokebomb_core::target::DisplayTarget;
+use smokebomb_firmware::smokebomb_core::Firmware;
+use smokebomb_hal::{Grey96, Rgb64, SecureElement};
+use smokebomb_hal_simulator::{SimPlatform, SimSecureElement};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeader;
 
@@ -48,6 +55,60 @@ pub struct AppState {
     pub phone_out: broadcast::Sender<Arc<String>>,
     /// How many phones are connected.
     pub phones: Arc<AtomicUsize>,
+    /// The die being simulated, in mm ([`DieSize`]). Changing it reboots
+    /// the firmware for the other panels.
+    pub die: Arc<watch::Sender<u8>>,
+}
+
+/// The dice the simulator can be.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DieSize {
+    /// 34 mm, six SSD1317 96×96 grey panels (`TARGET_34_GREY96`).
+    Grey34,
+    /// 30 mm, six 0.6" 64×64 RGB panels (`TARGET_30_RGB64`).
+    Rgb30,
+}
+
+impl DieSize {
+    pub fn from_mm(mm: u8) -> Option<Self> {
+        match mm {
+            34 => Some(Self::Grey34),
+            30 => Some(Self::Rgb30),
+            _ => None,
+        }
+    }
+
+    pub fn mm(self) -> u8 {
+        match self {
+            Self::Grey34 => 34,
+            Self::Rgb30 => 30,
+        }
+    }
+
+    /// From `--die 30` / `--die=30`, else `SMOKEBOMB_DIE`, else 34.
+    fn from_launch() -> anyhow::Result<Self> {
+        Self::pick(std::env::args().skip(1), std::env::var("SMOKEBOMB_DIE").ok())
+    }
+
+    fn pick(mut args: impl Iterator<Item = String>, env: Option<String>) -> anyhow::Result<Self> {
+        let mut pick = env;
+        while let Some(a) = args.next() {
+            if a == "--die" {
+                pick = args.next();
+            } else if let Some(v) = a.strip_prefix("--die=") {
+                pick = Some(v.to_string());
+            }
+        }
+        match pick {
+            None => Ok(Self::Grey34),
+            Some(v) => v
+                .trim_end_matches("mm")
+                .parse()
+                .ok()
+                .and_then(Self::from_mm)
+                .ok_or_else(|| anyhow::anyhow!("--die takes 34 or 30, got {v:?}")),
+        }
+    }
 }
 
 #[tokio::main]
@@ -59,8 +120,9 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    let die = DieSize::from_launch()?;
+    tracing::info!("simulating the {} mm die", die.mm());
     let sim = SimHandle::new();
-    let firmware = board::boot(&sim).map_err(|e| anyhow::anyhow!("firmware boot failed: {e:?}"))?;
     let (out, _) = broadcast::channel(64);
     let (phone_in, phone_rx) = mpsc::unbounded_channel();
     let (phone_out, _) = broadcast::channel(64);
@@ -68,20 +130,15 @@ async fn main() -> anyhow::Result<()> {
         sim: sim.clone(),
         world: Arc::new(std::sync::Mutex::new(world::World::new())),
         out: out.clone(),
-        // Seeded from the booted firmware, so a browser that connects before
-        // the first tick still gets the real mode in its hello.
-        status: Arc::new(Mutex::new(StatusSnapshot {
-            mode: format!("{:?}", firmware.mode()),
-            die: firmware.settings().active().0.wire_name(),
-            die_count: firmware.settings().active().1,
-            last_roll: None,
-        })),
+        // Filled in once the firmware has booted.
+        status: Arc::new(Mutex::new(StatusSnapshot::default())),
         phone_in,
         phone_out,
         phones: Arc::new(AtomicUsize::new(0)),
+        die: Arc::new(watch::channel(die.mm()).0),
     };
 
-    tokio::spawn(run_firmware(firmware, state.clone(), phone_rx));
+    tokio::spawn(supervise(state.clone(), phone_rx));
 
     let web_dir = std::env::var_os("SMOKEBOMB_WEB_UI_DIR")
         .map(PathBuf::from)
@@ -149,11 +206,64 @@ async fn main() -> anyhow::Result<()> {
 /// samples cover the period the firmware integrates them over.
 pub const TICK_S: f64 = 1.0 / smokebomb_firmware::smokebomb_core::TICK_HZ as f64;
 
-/// Firmware main loop: tick, then publish anything that changed.
-async fn run_firmware(
-    mut fw: board::Firmware,
-    state: AppState,
-    mut phone_rx: mpsc::UnboundedReceiver<phone::PhoneRequest>,
+/// Boot the firmware for the die picked, run it until another is picked,
+/// and boot that one.
+async fn supervise(state: AppState, mut phone_rx: mpsc::UnboundedReceiver<phone::PhoneRequest>) {
+    let mut die_rx = state.die.subscribe();
+    loop {
+        let die = DieSize::from_mm(*die_rx.borrow_and_update()).unwrap_or(DieSize::Grey34);
+        state.sim.lock().reset_panels();
+        let _ = state
+            .out
+            .send(Outbound::event(protocol::Event::Die { die: die.mm() }));
+        match die {
+            DieSize::Grey34 => boot_and_run::<Grey96>(&state, &mut phone_rx, &mut die_rx).await,
+            DieSize::Rgb30 => boot_and_run::<Rgb64>(&state, &mut phone_rx, &mut die_rx).await,
+        }
+        tracing::info!("switching to the {} mm die", *die_rx.borrow());
+    }
+}
+
+async fn boot_and_run<T: DisplayTarget>(
+    state: &AppState,
+    phone_rx: &mut mpsc::UnboundedReceiver<phone::PhoneRequest>,
+    die_rx: &mut watch::Receiver<u8>,
+) {
+    // Built in place on the heap: at ~100 KB the firmware is too big to
+    // build on a runtime worker's stack and move.
+    let mut slot = Box::new(std::mem::MaybeUninit::uninit());
+    match Firmware::init(&mut slot, state.sim.peripherals_for::<T>()).map(|_| ()) {
+        Ok(()) => {
+            // SAFETY: `init` returned Ok, so it wrote every field.
+            let fw: Box<Firmware<SimPlatform<T>>> = unsafe { Box::from_raw(Box::into_raw(slot).cast()) };
+            {
+                let mut status = state.status.lock().await;
+                status.mode = format!("{:?}", fw.mode());
+                (status.die, status.die_count) = {
+                    let (d, n) = fw.settings().active();
+                    (d.wire_name(), n)
+                };
+            }
+            run_firmware(fw, state, phone_rx, die_rx).await;
+        }
+        Err(e) => {
+            tracing::error!(
+                "firmware boot failed on the {}×{} panels: {e:?}",
+                T::WIDTH,
+                T::HEIGHT
+            );
+            let _ = die_rx.changed().await;
+        }
+    }
+}
+
+/// Firmware main loop: tick, then publish anything that changed. Returns
+/// when another die is picked.
+async fn run_firmware<T: DisplayTarget>(
+    mut fw: Box<Firmware<SimPlatform<T>>>,
+    state: &AppState,
+    phone_rx: &mut mpsc::UnboundedReceiver<phone::PhoneRequest>,
+    die_rx: &mut watch::Receiver<u8>,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs_f64(TICK_S));
     let mut last_seq = 0;
@@ -167,7 +277,10 @@ async fn run_firmware(
     let dt = TICK_S;
 
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {}
+            _ = die_rx.changed() => return,
+        }
 
         // Move the die first, so the firmware reads this tick's IMU sample.
         let (pose, imu) = {
@@ -187,7 +300,7 @@ async fn run_firmware(
 
         // BLE writes from the phone, before the tick as the die drains them.
         while let Ok(req) = phone_rx.try_recv() {
-            phone::handle(&mut fw, &history, &state, req);
+            phone::handle(&mut fw, &history, state, req);
             // `handle` answered with the inventory already.
             last_inventory = fw.inventory();
         }
@@ -211,9 +324,12 @@ async fn run_firmware(
 
         let (frames, haptics) = {
             let mut s = state.sim.lock();
-            let frames = (s.frame_seq != last_seq).then(|| {
+            // Only whole sets: just after a switch some faces aren't drawn yet.
+            let complete =
+                s.target == Some(T::ID) && s.faces.iter().all(|f| f.len() == std::mem::size_of::<T::Panel>());
+            let frames = (s.frame_seq != last_seq && complete).then(|| {
                 last_seq = s.frame_seq;
-                protocol::encode_frames(&s.faces)
+                protocol::encode_frames(T::ID, &s.faces)
             });
             (frames, s.haptics.drain(..).collect::<Vec<_>>())
         };
@@ -262,10 +378,7 @@ async fn run_firmware(
             let _ = state
                 .out
                 .send(Outbound::event(protocol::Event::Roll(roll.into())));
-            phone::send(
-                &state,
-                &smokebomb_shared::protocol::DieToPhone::Roll(roll.clone()),
-            );
+            phone::send(state, &smokebomb_shared::protocol::DieToPhone::Roll(roll.clone()));
         }
 
         // A mode picked on the die, or turned on or off from the phone.
@@ -273,7 +386,7 @@ async fn run_firmware(
         if inventory != last_inventory {
             last_inventory = inventory;
             phone::send(
-                &state,
+                state,
                 &smokebomb_shared::protocol::DieToPhone::Inventory(inventory),
             );
         }
@@ -337,6 +450,30 @@ mod tests {
     use super::TICK_S as DT;
 
     /// The real firmware, fed only by this world's IMU, rolls after a throw.
+    #[test]
+    fn the_die_comes_from_the_flag_then_the_environment() {
+        use super::DieSize;
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>().into_iter();
+        assert_eq!(DieSize::pick(args(&[]), None).unwrap(), DieSize::Grey34);
+        assert_eq!(
+            DieSize::pick(args(&["--die", "30"]), None).unwrap(),
+            DieSize::Rgb30
+        );
+        assert_eq!(
+            DieSize::pick(args(&["--die=30mm"]), None).unwrap(),
+            DieSize::Rgb30
+        );
+        assert_eq!(
+            DieSize::pick(args(&[]), Some("30".into())).unwrap(),
+            DieSize::Rgb30
+        );
+        assert_eq!(
+            DieSize::pick(args(&["--die", "34"]), Some("30".into())).unwrap(),
+            DieSize::Grey34
+        );
+        assert!(DieSize::pick(args(&["--die", "40"]), None).is_err());
+    }
+
     #[test]
     fn firmware_rolls_from_a_simulated_throw() {
         use smokebomb_firmware::board;

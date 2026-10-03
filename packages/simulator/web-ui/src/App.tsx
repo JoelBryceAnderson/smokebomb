@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DieView, DieViewHandle } from "./DieView";
-import { FACE_NAMES, Pose, RollView, TipDirection } from "./protocol";
+import { FACE_NAMES, FramePacket, Pose, RollView, TipDirection } from "./protocol";
+import { GEOMETRY, isDieMm } from "./geometry";
 import { useSimulator } from "./useSimulator";
 import { DEFAULT_FINISH, FINISHES, FinishKey } from "./finishes";
 
@@ -34,7 +35,7 @@ const KEY_TIPS: Record<string, TipDirection> = {
 
 export function App() {
   const die = useRef<DieViewHandle>(null);
-  const onFrames = useCallback((faces: Uint8Array[]) => die.current?.drawFrames(faces), []);
+  const onFrames = useCallback((frames: FramePacket) => die.current?.drawFrames(frames), []);
   const onPose = useCallback((pose: Pose) => {
     poseRef.current = pose;
     die.current?.setPose(pose);
@@ -61,14 +62,23 @@ export function App() {
   const [finish, setFinish] = useState<FinishKey>(DEFAULT_FINISH);
   const [night, setNight] = useState(false);
   const [glass, setGlass] = useState(false);
+  const [pixelGrid, setPixelGrid] = useState(false);
+  const [closeUp, setCloseUp] = useState(false);
   const shaking = useRef(false);
+  // The die the server simulates; the view is rebuilt when it changes.
+  const geometry = GEOMETRY[isDieMm(state.die) ? state.die : 34];
 
   // The finish recolours the shell, contacts and (later) the Nest band, never the screens.
-  useEffect(() => die.current?.setLook(finish, night), [finish, night]);
-  useEffect(() => die.current?.setGlass(glass), [glass]);
+  useEffect(() => die.current?.setLook(finish, night), [finish, night, geometry]);
+  useEffect(() => die.current?.setGlass(glass), [glass, geometry]);
+  useEffect(() => die.current?.setCloseUp(closeUp), [closeUp, geometry]);
   // Etched on the charging face: the last six hex digits of the die's serial, once a roll has shown it.
   const serial = state.rolls[0]?.device_serial.slice(-6).toUpperCase() ?? "000042";
-  useEffect(() => die.current?.setSerial(serial), [serial]);
+  useEffect(() => die.current?.setSerial(serial), [serial, geometry]);
+  // A rebuilt view starts square to the world: put it where the die is.
+  useEffect(() => {
+    if (poseRef.current) die.current?.setPose(poseRef.current);
+  }, [geometry]);
 
   useEffect(() => {
     send({ type: "reduced_motion", on: reduced });
@@ -144,7 +154,10 @@ export function App() {
     <div className="layout">
       <main className={hapticActive ? "stage buzz" : "stage"}>
         <DieView
+          key={geometry.mm}
           ref={die}
+          geometry={geometry}
+          pixelGrid={pixelGrid}
           onTouch={(face, pressed) => send({ type: "touch", face, pressed })}
           onRotate={(yaw, pitch) => send({ type: "rotate", yaw, pitch })}
           swipeToTip={menuOpen}
@@ -178,6 +191,35 @@ export function App() {
       </main>
 
       <aside className="panel">
+        <section>
+          <h2>Die</h2>
+          <div className="chips" role="radiogroup" aria-label="Die">
+            {([34, 30] as const).map((mm) => (
+              <button
+                key={mm}
+                role="radio"
+                aria-checked={geometry.mm === mm}
+                className={geometry.mm === mm ? "chip on" : "chip"}
+                onClick={() => send({ type: "set_die", die: mm })}
+              >
+                {GEOMETRY[mm].label}
+              </button>
+            ))}
+          </div>
+          <p className="muted">
+            Switching reboots the firmware built for that die's panels. The 30 mm die is a proof of concept: its panel
+            and window sizes are estimates until the module's drawing is in.
+          </p>
+          <label className="check">
+            <input type="checkbox" checked={closeUp} onChange={(e) => setCloseUp(e.target.checked)} />
+            Close-up
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={pixelGrid} onChange={(e) => setPixelGrid(e.target.checked)} />
+            Pixel gaps (for close-ups)
+          </label>
+        </section>
+
         <section>
           <h2>Motion</h2>
           <button
@@ -253,7 +295,10 @@ export function App() {
             <input type="checkbox" checked={glass} onChange={(e) => setGlass(e.target.checked)} />
             Sapphire glass reflections
           </label>
-          <p className="muted">Off shows the screens unlit, so the 16 levels are exact. On adds the glass's reflections.</p>
+          <p className="muted">
+            Off shows the screens unlit, so their levels (16 grey, or 65k colours) are exact. On adds the glass's
+            reflections.
+          </p>
         </section>
 
         <section>

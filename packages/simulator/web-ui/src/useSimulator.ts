@@ -4,6 +4,7 @@ import {
   decodeFramePacket,
   decodePosePacket,
   FRAME_PACKET_TAG,
+  FramePacket,
   Pose,
   PROTOCOL_VERSION,
   RollView,
@@ -19,11 +20,13 @@ export interface SimulatorState {
   nest: string;
   rolls: RollView[];
   lastHaptic: { effect: string; at: number } | null;
+  /** The die the server simulates, in mm (34 or 30); 0 until it says. */
+  die: number;
 }
 
 export interface Streams {
-  /** Six packed 4bpp frames, at up to the firmware rate. */
-  onFrames(faces: Uint8Array[]): void;
+  /** Six packed panel frames, at up to the firmware rate. */
+  onFrames(frames: FramePacket): void;
   /** The die's pose from the server's world model, every tick it moves. */
   onPose(pose: Pose): void;
 }
@@ -40,8 +43,13 @@ export function useSimulator(streams: Streams) {
     nest: "OffNest",
     rolls: [],
     lastHaptic: null,
+    die: 0,
   });
   const socket = useRef<WebSocket | null>(null);
+  // The die the frames are for. Every frame packet says its panel, so the
+  // page follows a switch even if it missed the one-off `die` event (a slow
+  // client can lag behind the broadcast and lose messages).
+  const frameDie = useRef(0);
   const cb = useRef(streams);
   cb.current = streams;
 
@@ -64,8 +72,15 @@ export function useSimulator(streams: Streams) {
         if (msg.data instanceof ArrayBuffer) {
           const bytes = new Uint8Array(msg.data);
           if (bytes[0] === FRAME_PACKET_TAG) {
-            const faces = decodeFramePacket(bytes);
-            if (faces) cb.current.onFrames(faces);
+            const frames = decodeFramePacket(bytes);
+            if (frames) {
+              const die = frames.side === 64 ? 30 : 34;
+              if (die !== frameDie.current) {
+                frameDie.current = die;
+                setState((s) => (s.die === die ? s : { ...s, die }));
+              }
+              cb.current.onFrames(frames);
+            }
           } else {
             const pose = decodePosePacket(msg.data);
             if (pose) cb.current.onPose(pose);
@@ -79,11 +94,15 @@ export function useSimulator(streams: Streams) {
               return {
                 ...s,
                 mode: ev.mode || s.mode,
+                die: ev.die ?? s.die,
                 protocolMismatch:
                   ev.protocol === PROTOCOL_VERSION ? null : { server: ev.protocol, page: PROTOCOL_VERSION },
               };
             case "mode":
               return { ...s, mode: ev.mode };
+            case "die":
+              frameDie.current = ev.die;
+              return { ...s, die: ev.die };
             case "nest":
               return { ...s, nest: ev.phase };
             case "haptic":

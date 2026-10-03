@@ -2,19 +2,18 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { PANEL_SIZE, Pose, SpinAxis, TipDirection } from "./protocol";
+import { FramePacket, Pose, SpinAxis, TipDirection } from "./protocol";
 import { FINISHES, FinishKey, LIGHTING, SCREW_DARK } from "./finishes";
 import { addContacts, addSeam, CHARGING_FACE, makeEtching } from "./shell";
+import { DieGeometry, MM } from "./geometry";
 
-// Mockup scale (SIM_SPEC A1): 1 scene unit = 13.25 mm, 34 mm die, 2.5 mm edges.
-const MM = 1 / 13.25;
-export const HALF = 17 * MM; // 1.283 u
-const EDGE_RADIUS = 2.5 * MM;
-/** Growth factor from the mockup's earlier 29.4 mm body; camera distances use it. */
-const K = HALF / 1.11;
-/** Glass window: 24 mm square, 2.52 mm corners (half-size 0.906 u, radius 0.19 u). */
-const WINDOW_HALF = 0.906;
-const WINDOW_RADIUS = 0.19;
+// Mockup scale (SIM_SPEC A1): 1 scene unit = 13.25 mm. The die's own sizes
+// come from its `DieGeometry` (34 mm or 30 mm).
+/**
+ * Growth factor from the mockup's earlier 29.4 mm body; camera distances use
+ * it. Always the 34 mm die's, so the 30 mm die shows at its real, smaller size.
+ */
+const K = (17 * MM) / 1.11;
 
 // Each face's mesh rotation, as in the mockup, so canvas axes match the
 // firmware's `orientation::BASES`.
@@ -30,16 +29,15 @@ const FACE_DEFS: {
   { n: [0, 0, -1], rot: [0, Math.PI, 0] },
 ];
 
-// Screen texture (SIM_SPEC A3): 444 px spanning ±1 u; the 96×96 panel fills
-// the centred 288 px at 3 px per pixel; the glass's ink mask rounds it (42 px).
-const OUT_T = 444;
-const OUT_PX = 3;
-const OUT_OFF = (OUT_T - PANEL_SIZE * OUT_PX) / 2;
-const MASK_RADIUS = 42;
+// Screen texture (SIM_SPEC A3): `geometry.texture` texels spanning ±1 u; the
+// panel fills the centre at a whole number of texels a pixel (3 for 96×96,
+// so 288 of 444, as the mockup), and the glass's ink mask rounds it.
 
 export interface DieViewHandle {
-  /** Paint six packed 4bpp frames onto the faces. */
-  drawFrames(faces: Uint8Array[]): void;
+  /** Paint six packed panel frames (4 bpp grey or RGB565) onto the faces. */
+  drawFrames(frames: FramePacket): void;
+  /** Close-up (SIM_SPEC A5): the camera at 0.4 of its distance, on the die. */
+  setCloseUp(on: boolean): void;
   setPose(pose: Pose): void;
   /** The viewer's right in world space (the axis for up/down tips). */
   viewerRight(): [number, number, number];
@@ -52,6 +50,10 @@ export interface DieViewHandle {
 }
 
 interface Props {
+  /** The die's sizes. Mount a new view to change it (key it on `geometry.mm`). */
+  geometry: DieGeometry;
+  /** Darken the gaps between panel pixels, for close-ups. */
+  pixelGrid: boolean;
   onTouch(face: number, pressed: boolean): void;
   /** Drag deltas in radians: yaw about world Y, pitch about world X. */
   onRotate(yaw: number, pitch: number): void;
@@ -96,9 +98,16 @@ function roundRectPath(
 }
 
 export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
-  { onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey },
+  { geometry, pixelGrid, onTouch, onRotate, swipeToTip, onTip, multiTurn, onSpin, onSpinEnd, onMultiKey },
   ref,
 ) {
+  const grid = useRef(pixelGrid);
+  grid.current = pixelGrid;
+  const lastFrames = useRef<FramePacket | null>(null);
+  // Panels only send changes, so redraw the last frames when the grid turns.
+  useEffect(() => {
+    if (lastFrames.current) api.current?.drawFrames(lastFrames.current);
+  }, [pixelGrid]);
   const mountRef = useRef<HTMLDivElement>(null);
   const api = useRef<DieViewHandle | null>(null);
   const cbs = useRef({
@@ -124,6 +133,7 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
 
   useImperativeHandle(ref, () => ({
     drawFrames: (f) => api.current?.drawFrames(f),
+    setCloseUp: (on) => api.current?.setCloseUp(on),
     setPose: (p) => api.current?.setPose(p),
     viewerRight: () => api.current?.viewerRight() ?? [1, 0, 0],
     setLook: (f, n) => api.current?.setLook(f, n),
@@ -133,6 +143,17 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
 
   useEffect(() => {
     const mount = mountRef.current!;
+    const g = geometry;
+    const HALF = (g.mm / 2) * MM;
+    const EDGE_RADIUS = g.edgeMm * MM;
+    const WINDOW_HALF = g.windowHalfMm * MM;
+    const WINDOW_RADIUS = g.windowRadiusMm * MM;
+    const PANEL = g.panelPx;
+    const OUT_T = g.texture;
+    const OUT_PX = g.texelsPerPx;
+    const LIT = PANEL * OUT_PX;
+    const OUT_OFF = (OUT_T - LIT) / 2;
+    const MASK_RADIUS = g.maskTexels;
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -212,9 +233,9 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       polygonOffsetUnits: -2,
     });
     const contactMat = new THREE.MeshStandardMaterial({ envMap });
-    addContacts(die, FACE_DEFS[CHARGING_FACE], HALF, darkMat, contactMat);
+    addContacts(die, FACE_DEFS[CHARGING_FACE], HALF, g, darkMat, contactMat, renderer.capabilities.getMaxAnisotropy());
     addSeam(die, HALF, EDGE_RADIUS, darkMat);
-    const etching = makeEtching(HALF, renderer.capabilities.getMaxAnisotropy(), FACE_DEFS);
+    const etching = makeEtching(HALF, g, renderer.capabilities.getMaxAnisotropy(), FACE_DEFS);
     etching.mesh.material.polygonOffset = true;
     etching.mesh.material.polygonOffsetFactor = -1;
     etching.mesh.material.polygonOffsetUnits = -1;
@@ -252,9 +273,9 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, OUT_T, OUT_T);
       const panel = document.createElement("canvas");
-      panel.width = panel.height = PANEL_SIZE;
+      panel.width = panel.height = PANEL;
       const panelCtx = panel.getContext("2d")!;
-      const image = panelCtx.createImageData(PANEL_SIZE, PANEL_SIZE);
+      const image = panelCtx.createImageData(PANEL, PANEL);
       const texture = new THREE.CanvasTexture(out);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -301,34 +322,68 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     scene.add(shadow);
 
     api.current = {
-      drawFrames(frames) {
+      drawFrames(packet) {
+        const { format, side, faces: frames } = packet;
+        // A packet from the other die (sent just before a switch) is ignored.
+        if (side !== PANEL) return;
+        lastFrames.current = packet;
         frames.forEach((frame, i) => {
           const f = faces[i];
           const px = f.image.data;
-          for (let b = 0; b < frame.length; b++) {
-            const hi = (frame[b] >> 4) * 17;
-            const lo = (frame[b] & 0x0f) * 17;
-            const o = b * 8;
-            px[o] = px[o + 1] = px[o + 2] = hi;
-            px[o + 3] = 255;
-            px[o + 4] = px[o + 5] = px[o + 6] = lo;
-            px[o + 7] = 255;
+          if (format === "grey4") {
+            for (let b = 0; b < frame.length; b++) {
+              const hi = (frame[b] >> 4) * 17;
+              const lo = (frame[b] & 0x0f) * 17;
+              const o = b * 8;
+              px[o] = px[o + 1] = px[o + 2] = hi;
+              px[o + 3] = 255;
+              px[o + 4] = px[o + 5] = px[o + 6] = lo;
+              px[o + 7] = 255;
+            }
+          } else {
+            // RGB565, high byte first; each channel's top bits are repeated
+            // into its bottom bits so full scale is 255.
+            for (let p = 0; p < frame.length / 2; p++) {
+              const v = (frame[p * 2] << 8) | frame[p * 2 + 1];
+              const r = (v >> 11) & 0x1f;
+              const gr = (v >> 5) & 0x3f;
+              const b = v & 0x1f;
+              const o = p * 4;
+              px[o] = (r << 3) | (r >> 2);
+              px[o + 1] = (gr << 2) | (gr >> 4);
+              px[o + 2] = (b << 3) | (b >> 2);
+              px[o + 3] = 255;
+            }
           }
           f.panelCtx.putImageData(f.image, 0, 0);
           const o = f.ctx;
           o.globalCompositeOperation = "source-over";
           o.fillStyle = "#000";
           o.fillRect(0, 0, OUT_T, OUT_T);
+          // Nearest neighbour: no smoothing between panel pixels.
           o.imageSmoothingEnabled = false;
-          o.drawImage(f.panel, OUT_OFF, OUT_OFF, PANEL_SIZE * OUT_PX, PANEL_SIZE * OUT_PX);
+          o.drawImage(f.panel, OUT_OFF, OUT_OFF, LIT, LIT);
+          if (grid.current) {
+            // A faint gap on the last texel of every pixel's row and column.
+            o.fillStyle = "rgba(0,0,0,0.6)";
+            for (let k = 1; k <= PANEL; k++) {
+              const at = OUT_OFF + k * OUT_PX - 1;
+              o.fillRect(at, OUT_OFF, 1, LIT);
+              o.fillRect(OUT_OFF, at, LIT, 1);
+            }
+          }
           o.globalCompositeOperation = "destination-in";
           o.fillStyle = "#fff";
           o.beginPath();
-          roundRectPath(o, OUT_OFF, OUT_OFF, PANEL_SIZE * OUT_PX, PANEL_SIZE * OUT_PX, MASK_RADIUS);
+          roundRectPath(o, OUT_OFF, OUT_OFF, LIT, LIT, MASK_RADIUS);
           o.fill();
           o.globalCompositeOperation = "source-over";
           f.texture.needsUpdate = true;
         });
+      },
+      setCloseUp(on) {
+        closeUp = on;
+        resize();
       },
       setLook(finish, night) {
         const f = FINISHES.find((x) => x.key === finish) ?? FINISHES[0];
@@ -381,6 +436,7 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
 
     // Input, as in the mockup: press a face to touch it; moving more than
     // 8 px turns the press into a drag that turns the die in the hand.
+    let closeUp = false;
     const raycaster = new THREE.Raycaster();
     let press: {
       x: number;
@@ -489,18 +545,20 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
     renderer.domElement.addEventListener("pointercancel", onUp);
     renderer.domElement.addEventListener("contextmenu", noMenu);
 
-    // Camera (SIM_SPEC A5): 32° FOV along (0.55, 0.62, 1), farther in portrait.
-    const resize = () => {
+    // Camera (SIM_SPEC A5): 32° FOV along (0.55, 0.62, 1), farther in
+    // portrait; a close-up is 0.4 of the distance, looking at the die.
+    function resize() {
       const { clientWidth: w, clientHeight: h } = mount;
       renderer.setSize(w, h);
       camera.aspect = w / h;
       const portrait = camera.aspect < 0.75;
-      const dist = (portrait ? 12.5 : 9.5) * K;
-      look.set(0, (portrait ? -0.1 : -0.35) * K, 0);
+      const dist = (portrait ? 12.5 : 9.5) * K * (closeUp ? 0.4 : 1);
+      if (closeUp) look.set(0, 0, 0);
+      else look.set(0, (portrait ? -0.1 : -0.35) * K, 0);
       camera.position.set(0.55, 0.62, 1).normalize().multiplyScalar(dist);
       camera.lookAt(look);
       camera.updateProjectionMatrix();
-    };
+    }
     const observer = new ResizeObserver(resize);
     observer.observe(mount);
     resize();
@@ -527,6 +585,8 @@ export const DieView = forwardRef<DieViewHandle, Props>(function DieView(
       });
       mount.removeChild(renderer.domElement);
     };
+    // The view is rebuilt for another die by remounting (keyed on its size).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return <div className="die-view" ref={mountRef} />;

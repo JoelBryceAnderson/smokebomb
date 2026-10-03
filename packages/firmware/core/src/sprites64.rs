@@ -192,8 +192,23 @@ pub static SPARKLE: Glyph<5> = glyph(' ', "..#.. ..#.. ##.## ..#.. ..#..");
 
 // ---------- small things ----------
 
-/// A pip, 6×6.
-pub static PIP: Glyph<6> = glyph(' ', ".####. ###### ###### ###### ###### .####.");
+/// A pip, 10×10: the same size against its 14 px grid as the 96×96 die's
+/// pips against theirs (radius ≈ a third of the spacing).
+pub static PIP: Glyph<10> = glyph(
+    ' ',
+    "
+    ...####...
+    .########.
+    .########.
+    ##########
+    ##########
+    ##########
+    ##########
+    .########.
+    .########.
+    ...####...
+    ",
+);
 
 /// The menu's arrows, 7×4.
 pub static UP: Glyph<4> = glyph(' ', "...#... ..###.. .#####. #######");

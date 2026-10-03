@@ -1,12 +1,22 @@
 // Mirror of packages/simulator/server/src/protocol.rs.
 
 /** Must match `PROTOCOL_VERSION` in the server's protocol.rs. */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export const FACE_COUNT = 6;
-export const PANEL_SIZE = 96;
-export const FRAME_BYTES = (PANEL_SIZE * PANEL_SIZE) / 2; // 4bpp
 export const FRAME_PACKET_TAG = 0x01;
+/** Tag, format, width, height. */
+export const FRAME_HEADER_LEN = 4;
+
+/** How a frame packet's panels are packed (the firmware's display target). */
+export type PanelFormat = "grey4" | "rgb565";
+
+export interface FramePacket {
+  format: PanelFormat;
+  /** Panel pixels across (and down). */
+  side: number;
+  faces: Uint8Array[];
+}
 export const POSE_PACKET_TAG = 0x02;
 
 /** Face order matches three.js BoxGeometry material order and the firmware `Face` enum. */
@@ -26,7 +36,9 @@ export interface RollView {
 }
 
 export type ServerEvent =
-  | { type: "hello"; protocol: number; mode: string }
+  | { type: "hello"; protocol: number; mode: string; die: number }
+  /** The simulator swapped in the other die and rebooted its firmware. */
+  | { type: "die"; die: number }
   | { type: "mode"; mode: string }
   | { type: "haptic"; effect: string }
   /** The Nest's dock state: OffNest, Seating, Ok, Wrong, NoPower or Display. */
@@ -58,7 +70,9 @@ export type ClientMessage =
   | { type: "charge_rate"; rate: number }
   | { type: "set_time"; seconds: number }
   | { type: "ble"; connected: boolean }
-  | { type: "reduced_motion"; on: boolean };
+  | { type: "reduced_motion"; on: boolean }
+  /** Simulate the 34 mm (96×96 grey) or 30 mm (64×64 colour) die. */
+  | { type: "set_die"; die: number };
 
 export interface Pose {
   /** Die body → world rotation, x y z w. */
@@ -67,12 +81,22 @@ export interface Pose {
   position: [number, number, number];
 }
 
-/** Split a binary frame packet into six packed 4bpp panel frames. */
-export function decodeFramePacket(bytes: Uint8Array): Uint8Array[] | null {
-  if (bytes[0] !== FRAME_PACKET_TAG || bytes.length !== 1 + FRAME_BYTES * FACE_COUNT) return null;
-  return Array.from({ length: FACE_COUNT }, (_, i) =>
-    bytes.subarray(1 + i * FRAME_BYTES, 1 + (i + 1) * FRAME_BYTES),
+/**
+ * Split a binary frame packet: `[0x01][format][width][height]` then six
+ * frames in `Face` order. Format 1 is 4 bpp grey (two pixels a byte, high
+ * nibble first), 2 is RGB565 (two bytes a pixel, high byte first).
+ */
+export function decodeFramePacket(bytes: Uint8Array): FramePacket | null {
+  if (bytes[0] !== FRAME_PACKET_TAG || bytes.length < FRAME_HEADER_LEN) return null;
+  const format: PanelFormat | null = bytes[1] === 1 ? "grey4" : bytes[1] === 2 ? "rgb565" : null;
+  const side = bytes[2];
+  if (!format || side === 0 || bytes[3] !== side) return null;
+  const frameBytes = format === "grey4" ? (side * side) / 2 : side * side * 2;
+  if (bytes.length !== FRAME_HEADER_LEN + frameBytes * FACE_COUNT) return null;
+  const faces = Array.from({ length: FACE_COUNT }, (_, i) =>
+    bytes.subarray(FRAME_HEADER_LEN + i * frameBytes, FRAME_HEADER_LEN + (i + 1) * frameBytes),
   );
+  return { format, side, faces };
 }
 
 export function decodePosePacket(buf: ArrayBuffer): Pose | null {
