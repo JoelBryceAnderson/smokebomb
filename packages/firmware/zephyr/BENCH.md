@@ -98,9 +98,11 @@ for the panels' SCK and MOSI. Check that before laying out the board.
 
 ## The SSD1317 is one-bit
 
-Solomon lists the SSD1317 as a 128×96 **monochrome** controller, and u8g2's
-SSD1317 driver treats it as one: SSD1306-style pages, a bit a pixel. The
-firmware draws 16 grey levels (`FRAME_BYTES` = 4608, SIM_SPEC's "16 gray
+The panel is 96×96. Its controller, the SSD1317, can drive up to 128×96,
+and the panel is wired to 96 of its 128 columns (16–111, the driver's
+`COLUMN_OFFSET`). Solomon lists the SSD1317 as a **monochrome**
+controller, and u8g2's SSD1317 96×96 driver treats it as one:
+SSD1306-style pages, a bit a pixel. The firmware draws 16 grey levels (`FRAME_BYTES` = 4608, SIM_SPEC's "16 gray
 levels" for the ER-OLED0.96-6W).
 
 Until that's settled, the driver (`hal/nrf54l15/src/ssd1317.rs`) reduces
