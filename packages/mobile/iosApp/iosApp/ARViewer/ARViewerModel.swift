@@ -1,0 +1,226 @@
+import ARKit
+import AVFoundation
+import Observation
+import RealityKit
+
+/// The AR viewer's state, shared by the iPhone overlay and the iPad side panel.
+/// It outlives the AR view, so the chosen model and size lock survive a tab switch.
+@MainActor
+@Observable
+final class ARViewerModel {
+    enum Availability {
+        case checking, ready, cameraDenied, unsupported
+    }
+
+    /// The one the app uses; tests make their own.
+    static let shared = ARViewerModel(
+        catalog: ModelCatalog(source: BundleModelSource(bundle: .main)),
+        labels: .load(bundle: .main))
+
+    let catalog: ModelCatalog
+    let labels: PartLabels
+    @ObservationIgnored weak var scene: ARSceneController?
+
+    var availability = Availability.checking
+    let models: [SugarcubeModel]
+    private(set) var selected: SugarcubeModel?
+    /// The die to go back to when x-ray is switched off.
+    private var dieBeforeXray: SugarcubeModel?
+
+    var isLoading = false
+    var loadError: String?
+    var isCoaching = false
+    var planeFound = false
+    var isPlaced = false
+
+    var isTrueSizeLocked = true {
+        didSet { if isTrueSizeLocked { setScale(1) } }
+    }
+    private(set) var scale: Float = 1
+
+    var explode: Float = 0 {
+        didSet { scene?.setExplode(explode) }
+    }
+    private(set) var canExplode = false
+    private(set) var shellFaded = false
+    private(set) var canFadeShell = false
+
+    var selectedPart: String?
+    private(set) var isRolling = false
+    private(set) var faceUp: DieFace?
+    /// Visual bounds of the loaded model, measured in metres; the debug overlay compares them with the table.
+    private(set) var measured: SIMD3<Float>?
+
+    init(catalog: ModelCatalog, labels: PartLabels) {
+        self.catalog = catalog
+        self.labels = labels
+        models = catalog.available
+        selected = models.first { $0.kind == .die } ?? models.first
+    }
+
+    // MARK: Availability
+
+    func checkAvailability() async {
+        guard ARWorldTrackingConfiguration.isSupported else {
+            availability = .unsupported
+            return
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            availability = .ready
+        case .notDetermined:
+            availability = await AVCaptureDevice.requestAccess(for: .video) ? .ready : .cameraDenied
+        default:
+            availability = .cameraDenied
+        }
+    }
+
+    // MARK: Captions
+
+    /// "30 mm · Rainbow · 30.0 mm", with the scale when it isn't true size.
+    var caption: String {
+        guard let selected else { return "No models bundled" }
+        var text = "\(selected.title) · \(selected.sizeLabel)"
+        if abs(scale - 1) > 0.005 { text += " · \(scalePercent)" }
+        return text
+    }
+
+    var scalePercent: String { "\(Int((scale * 100).rounded()))%" }
+
+    /// Debug: measured bounds against the size table, to ±0.1 mm.
+    var boundsCheck: (text: String, ok: Bool)? {
+        guard let selected, let measured else { return nil }
+        let mm = measured * 1000
+        let ok = all(simd_abs(measured - selected.bounds) .<= SIMD3(repeating: 0.0001))
+        let size = String(format: "%.2f × %.2f × %.2f mm", mm.x, mm.y, mm.z)
+        return (ok ? "Bounds \(size) ✓" : "Bounds \(size) ✗ expected \(selected.sizeLabel)", ok)
+    }
+
+    var hint: String? {
+        if isCoaching { return nil }
+        if !isPlaced { return planeFound ? "Tap the table to place the die" : "Move your device slowly to find the table" }
+        return nil
+    }
+
+    // MARK: Choosing models
+
+    func select(_ model: SugarcubeModel) {
+        guard model != selected else { return }
+        if model.kind == .die || model.kind == .fixture { dieBeforeXray = nil }
+        selected = model
+        selectedPart = nil
+        faceUp = nil
+        loadError = nil
+        scene?.show(model)
+    }
+
+    var isXray: Bool {
+        shellFaded || selected?.kind == .xray || selected?.kind == .explodedXray
+    }
+
+    /// Whether the X-ray switch does anything for this model.
+    var canToggleXray: Bool {
+        guard let selected else { return false }
+        if canFadeShell { return true }
+        switch selected.kind {
+        case .die: return catalog.model(id: selected.xray).map { models.contains($0) } ?? false
+        case .xray, .explodedXray: return true
+        case .lineup, .fixture: return false
+        }
+    }
+
+    func toggleXray() {
+        guard let selected else { return }
+        if canFadeShell {
+            shellFaded.toggle()
+            scene?.setShellFaded(shellFaded)
+            return
+        }
+        switch selected.kind {
+        case .die:
+            guard let xray = catalog.model(id: selected.xray), models.contains(xray) else { return }
+            let die = selected
+            select(xray)
+            dieBeforeXray = die
+        case .xray, .explodedXray:
+            if let back = dieBeforeXray ?? catalog.model(id: selected.die), models.contains(back) {
+                select(back)
+            }
+        case .lineup, .fixture:
+            break
+        }
+    }
+
+    /// The pre-exploded counterpart for the 30 mm x-ray, in either direction.
+    var explodedCounterpart: SugarcubeModel? {
+        guard let other = catalog.model(id: selected?.exploded), models.contains(other) else { return nil }
+        return other
+    }
+
+    func toggleExplodedFile() {
+        guard let other = explodedCounterpart else { return }
+        let back = dieBeforeXray
+        select(other)
+        dieBeforeXray = back
+    }
+
+    // MARK: Size
+
+    func setScale(_ value: Float) {
+        scale = isTrueSizeLocked ? 1 : min(max(value, 0.25), 10)
+        scene?.setScale(scale)
+    }
+
+    func resetScale() { setScale(1) }
+
+    // MARK: Rolling
+
+    var canThrow: Bool {
+        isPlaced && !isRolling && !isLoading && (selected?.isThrowable ?? false)
+    }
+
+    /// Throws away from the camera, for the Roll button.
+    func roll() {
+        scene?.throwDie(screenDirection: CGVector(dx: CGFloat.random(in: -0.3...0.3), dy: -1),
+                        flickSpeed: DiePhysics.flickForFullSpeed * CGFloat.random(in: 0.35...0.7))
+    }
+
+    func resetDie() { scene?.reset() }
+    func placeAgain() { scene?.unplace() }
+
+    // MARK: Called by the scene
+
+    func sceneDidStart() {
+        isPlaced = false
+        planeFound = false
+        isRolling = false
+        if let selected { scene?.show(selected) }
+    }
+
+    func rigDidLoad(_ rig: DieRig, measured: SIMD3<Float>) {
+        self.measured = measured
+        canExplode = rig.canExplode
+        canFadeShell = rig.canFadeShell
+        if !canExplode { explode = 0 }
+        if !canFadeShell { shellFaded = false }
+    }
+
+    func loadFailed(_ error: Error) {
+        loadError = error.localizedDescription
+        measured = nil
+    }
+
+    func rollDidStart() {
+        isRolling = true
+        faceUp = nil
+    }
+
+    func rollDidSettle(faceUp: DieFace) {
+        isRolling = false
+        self.faceUp = faceUp
+    }
+
+    func rollDidReset() {
+        isRolling = false
+    }
+}

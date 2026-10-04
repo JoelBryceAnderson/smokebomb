@@ -188,6 +188,10 @@ xcodegen generate            # creates iosApp.xcodeproj (git-ignored)
 open iosApp.xcodeproj        # run on an iOS simulator
 ```
 
+The **AR** tab needs a real iPhone or iPad; the Simulator has no AR. See
+[AR_VIEWER.md](../packages/mobile/iosApp/AR_VIEWER.md) for converting and
+bundling the models and for its tests (the `ARViewerTests` scheme).
+
 ### The app with the simulator as its die
 
 The app can use the desktop simulator instead of a real die: it speaks the
@@ -208,11 +212,19 @@ the die and to watch the menu change.
 
 To put the app on your own iPhone: connect the phone by cable (or pair it for
 wireless debugging in Xcode's *Devices and Simulators*), turn on Developer
-Mode on the phone (*Settings → Privacy & Security*), then in Xcode select the
-`iosApp` target, *Signing & Capabilities*, tick *Automatically manage
-signing* and pick your team (a free Apple ID works; its builds expire after
-seven days). If the bundle id `com.smokebomb.app` is taken, change it to
-something of your own there. Pick the phone as the run destination and
+Mode on the phone (*Settings → Privacy & Security*), then set your team
+once in `packages/mobile/iosApp/Local.xcconfig` (git-ignored, so
+`xcodegen generate` keeps it):
+
+```sh
+cd packages/mobile/iosApp
+cp Local.xcconfig.example Local.xcconfig   # set DEVELOPMENT_TEAM
+xcodegen generate
+```
+
+A free Apple ID works; its builds expire after seven days. Find your team ID
+in Xcode under *Settings → Accounts*. If the bundle id `com.smokebomb.app` is
+taken, set `SUGARCUBE_BUNDLE_ID` there too. Pick the phone as the run destination and
 press Run. The first time, trust the developer profile on the phone
 (*Settings → General → VPN & Device Management*). The app asks for local
 network access when it first connects to the simulator; allow it.
