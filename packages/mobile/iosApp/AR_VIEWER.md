@@ -267,11 +267,13 @@ RealityKit pose ──► ImuSynth ──► sb_die_tick(imu, touch) ──► s
 - **The menu.** Hold a finger on a face to open it. The die lifts off the
   table with the menu's face toward you, tilted up toward the camera, as if
   in your hand.
-  - The floating **turn pad** gives the menu's tips: ▲ ▼ are ∓90° about your
-    right, ◀ ▶ are ∓90° about vertical, and the twist keys turn it about the
-    line of sight. The firmware reads them from the gyro, as on the hardware.
+  - The **turn pad** floats beside the held die, only while the menu is open.
+    It keeps next to the die on screen, to its right or to its left if
+    there's no room. Its keys are the menu's tips: ▲ ▼ are ∓90° about your
+    right, ◀ ▶ are ∓90° about vertical, and the twist keys turn the die about
+    the line of sight. The firmware reads them from the gyro, as on the
+    hardware.
   - When the menu closes, the die is set back down, flat on its lowest face.
-  - On the table, the same keys turn the die over.
 - **Handling.** While the die is slid or turned on the table, its linear
   acceleration is capped at 0.4 g, so a finger's jitter can't read as a shake.
   A throw's windup and flight read everything.
@@ -289,7 +291,7 @@ Switching panels boots it again, and so does placing the die.
 | Flick on the die | Throw it: picked up, shaken, let go |
 | Drag elsewhere, or twist | Turn it |
 | Pinch | Scale, only when **True size** is unlocked; tap the % to return to 100% |
-| Turn pad ▲ ▼ ◀ ▶ ⟲ ⟳ | Quarter turns about your right, vertical and line of sight: menu tips while held, turning the die over on the table |
+| Turn pad ▲ ▼ ◀ ▶ ⟲ ⟳ (menu open) | The menu's tips: quarter turns about your right, vertical and line of sight |
 
 ## Tests
 

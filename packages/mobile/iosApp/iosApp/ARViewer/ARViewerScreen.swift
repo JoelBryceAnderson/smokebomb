@@ -56,13 +56,6 @@ struct ARViewerScreen: View {
             StatusOverlay(model: model)
                 .padding(.top, 8)
         }
-        .overlay(alignment: .trailing) {
-            if model.isPlaced {
-                TurnPad(model: model)
-                    .padding(.trailing, 12)
-                    .offset(y: widthClass == .regular ? 0 : -60)
-            }
-        }
     }
 }
 
@@ -311,15 +304,16 @@ private struct ControlPad: View {
 
 // MARK: - Turn pad
 
-/// Floats beside the die: quarter turns about the viewer's three axes. With
-/// the menu open these are its tips (SIM_SPEC C3: up is −90° about your
-/// right, left is −90° about vertical); on the table they turn the die over.
-private struct TurnPad: View {
+/// The menu's tips (SIM_SPEC C3): quarter turns about the viewer's three
+/// axes, up being −90° about your right and left −90° about vertical. Shown
+/// only while the menu is open, floating beside the held die (the scene
+/// controller hosts it in the AR view and keeps it next to the die).
+struct TurnPad: View {
     let model: ARViewerModel
 
     var body: some View {
         VStack(spacing: 6) {
-            Text(model.isHeld ? "Menu" : "Turn")
+            Text("Menu")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
             key("chevron.up", "Tip up") { model.tip(.pitch, -1) }

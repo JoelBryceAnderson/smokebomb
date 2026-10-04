@@ -62,6 +62,13 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var held = false
     /// Where a drag wants the die's centre (x, z), which it eases toward.
     private var dragTarget: SIMD2<Float>?
+    /// The turn pad, floating beside the die while the menu is open.
+    private lazy var padHost: UIHostingController<TurnPad> = {
+        let host = UIHostingController(rootView: TurnPad(model: model))
+        host.view.backgroundColor = .clear
+        host.sizingOptions = .intrinsicContentSize
+        return host
+    }()
     /// Seconds since the scene started, summed from frame times.
     private var time: TimeInterval = 0
 
@@ -113,6 +120,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             coaching.bottomAnchor.constraint(equalTo: arView.bottomAnchor),
         ])
         installGestures()
+        padHost.view.isHidden = true
+        arView.addSubview(padHost.view)
     }
 
     // MARK: Session
@@ -150,6 +159,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         stepGlide()
         stepDrag(dt: Float(dt))
         if firmware != nil { stepFirmware() }
+        placeTurnPad()
     }
 
     // MARK: Showing models
@@ -264,6 +274,14 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         for recognizer in [tap, pan, twist, pinch, touch] as [UIGestureRecognizer] {
             recognizer.delegate = self
             arView.addGestureRecognizer(recognizer)
+        }
+    }
+
+    /// Touches on the turn pad are its own: not a tap, drag or touch on the scene.
+    nonisolated func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        MainActor.assumeIsolated {
+            guard let view = touch.view else { return true }
+            return !view.isDescendant(of: padHost.view)
         }
     }
 
@@ -616,6 +634,44 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let pivotAxis = DiePhysics.nearestDieAxis(to: wanted, orientation: pivot.orientation)
         let rotation = simd_quatf(angle: Float(direction) * .pi / 2, axis: pivotAxis) * pivot.orientation
         glide(to: c, rotation: rotation, duration: DiePhysics.tipTime, easeOut: true)
+    }
+
+    // MARK: Turn pad
+
+    /// Shows the turn pad while the menu is open, beside the die on screen:
+    /// to its right, or its left if there's no room, clear of the die itself.
+    private func placeTurnPad() {
+        let pad = padHost.view!
+        guard held, let placement,
+              let centreOnScreen = arView.project(placement.convert(position: centre, to: nil))
+        else {
+            pad.isHidden = true
+            return
+        }
+        let size = pad.intrinsicContentSize
+        guard size.width > 0, size.height > 0 else { return }
+        pad.bounds.size = size
+
+        // How far the die reaches on screen: its centre to one corner's worth
+        // of the way along the camera's right.
+        let camera = arView.cameraTransform.matrix
+        let right = SIMD3(camera.columns.0.x, camera.columns.0.y, camera.columns.0.z)
+        let edgeWorld = placement.convert(position: centre, to: nil) + right * halfHeight * 1.8
+        let reach = arView.project(edgeWorld).map { abs($0.x - centreOnScreen.x) } ?? 60
+
+        let gap: CGFloat = 16
+        let bounds = arView.bounds.inset(by: arView.safeAreaInsets).insetBy(dx: 8, dy: 8)
+        var x = centreOnScreen.x + reach + gap + size.width / 2
+        if x + size.width / 2 > bounds.maxX {
+            x = centreOnScreen.x - reach - gap - size.width / 2
+        }
+        x = min(max(x, bounds.minX + size.width / 2), bounds.maxX - size.width / 2)
+        let y = min(max(centreOnScreen.y, bounds.minY + size.height / 2), bounds.maxY - size.height / 2)
+        pad.center = CGPoint(x: x, y: y)
+        if pad.isHidden {
+            pad.isHidden = false
+            arView.bringSubviewToFront(pad)
+        }
     }
 
     // MARK: Corral
