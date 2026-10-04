@@ -103,6 +103,9 @@ def convert(src, dst, report):
     """Flatten src's stage to one binary layer and package it as an ARKit usdz at dst."""
     stem = os.path.splitext(os.path.basename(dst))[0]
     with tempfile.TemporaryDirectory() as tmp:
+        # macOS's temp folder is behind a symlink (/var -> /private/var); resolve it so
+        # texture paths anchor consistently while packaging.
+        tmp = os.path.realpath(tmp)
         # Unpack the package so textures keep their relative paths next to the new root.
         with zipfile.ZipFile(src) as z:
             names = z.namelist()
@@ -117,6 +120,9 @@ def convert(src, dst, report):
             report.error(f"couldn't open {names[0]}")
             return False
         flat = stage.Flatten()
+        fixed = apply_material_binding_api(flat)
+        if fixed:
+            report.note(f"applied MaterialBindingAPI to {fixed} prim(s) that bind materials (metadata only; geometry untouched)")
         usdc = os.path.join(tmp, f"{stem}.usdc")
         # The .usdc extension selects the binary crate format.
         if not flat.Export(usdc):
@@ -128,6 +134,20 @@ def convert(src, dst, report):
             report.error("UsdUtils.CreateNewARKitUsdzPackage failed")
             return False
     return True
+
+
+def apply_material_binding_api(layer):
+    """Declare MaterialBindingAPI on prims that have material:binding relationships but don't
+    declare it. Current USD and ARKit require the schema; adding it changes no geometry or look.
+    Returns how many prims were changed."""
+    stage = Usd.Stage.Open(layer)
+    fixed = 0
+    for prim in stage.Traverse():
+        binds = any(r.GetName().startswith("material:binding") for r in prim.GetRelationships())
+        if binds and not prim.HasAPI(UsdShade.MaterialBindingAPI):
+            UsdShade.MaterialBindingAPI.Apply(prim)
+            fixed += 1
+    return fixed
 
 
 def check_package(path, report):
@@ -182,9 +202,26 @@ def check_stage(path, stem, report):
             if sid not in ALLOWED_SHADER_IDS and not str(sid).startswith("UsdPrimvarReader_"):
                 report.error(f"{prim.GetPath()}: shader id {sid} isn't supported by ARKit")
 
+    check_textures(stage, report)
     run_validators(stage, report)
     check_bounds(stage, stem, mpu, report)
     report_prims(stage, report)
+
+
+def check_textures(stage, report):
+    """Every texture the model uses must resolve to a file inside the package."""
+    count = 0
+    for prim in stage.Traverse():
+        for attr in prim.GetAttributes():
+            if attr.GetTypeName() != Sdf.ValueTypeNames.Asset:
+                continue
+            value = attr.Get()
+            if not value or not value.path:
+                continue
+            count += 1
+            if not value.resolvedPath:
+                report.error(f"{attr.GetPath()}: texture {value.path} isn't in the package")
+    report.note(f"textures: {count} referenced, all checked")
 
 
 def run_validators(stage, report):

@@ -56,12 +56,17 @@ For each file, the script does what `usdcat in.usdz -o tmp.usdc` and then
 1. It flattens the stage into one binary layer.
 2. It repackages that layer with its textures into `iosApp/Resources/Models/`.
 
+It makes one metadata-only fix along the way. Prims that bind a material but
+don't declare `MaterialBindingAPI` get the schema applied. Current USD and ARKit
+require it, and the report says how many prims it touched.
+
 It then checks the result. It never changes geometry; it reports problems.
 
 - **Package layout:** a `.usdc` root, only ARKit file types, stored entries
   aligned to 64 bytes.
 - **Stage metadata:** a `defaultPrim`, `upAxis` Y and `metersPerUnit` 1.
 - **Prim types and shader ids** that ARKit accepts.
+- **Textures:** every texture path resolves to a file inside the package.
 - **USD's validators:** every `UsdValidation` validator in this USD build.
 - **True size:** the bounds match the table below to ±0.1 mm, with the origin
   at the bottom centre.
