@@ -21,10 +21,11 @@ import androidx.compose.ui.unit.dp
 
 /**
  * First run: owner name, then NFC-tap pairing (TODO) and BLE bonding.
+ * [initialName] pre-fills the field with the name saved last time.
  */
 @Composable
-fun OnboardingScreen(onFinished: () -> Unit) {
-    var name by remember { mutableStateOf("") }
+fun OnboardingScreen(initialName: String = "", onFinished: (name: String) -> Unit) {
+    var name by remember { mutableStateOf(initialName) }
     Surface(Modifier.fillMaxSize()) {
         Column(
             Modifier.fillMaxSize().padding(24.dp),
@@ -43,7 +44,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
                 "Next: tap the die to the back of your phone to pair.",
                 style = MaterialTheme.typography.bodySmall,
             )
-            Button(onClick = onFinished, enabled = name.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { onFinished(name.trim()) }, enabled = name.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                 Text("Continue")
             }
         }

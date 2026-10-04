@@ -13,11 +13,16 @@ import com.smokebomb.app.navigation.AppShell
 import com.smokebomb.app.network.ApiClient
 import com.smokebomb.app.network.StubApiClient
 import com.smokebomb.app.screens.OnboardingScreen
+import com.smokebomb.app.settings.AppSettings
 import com.smokebomb.app.theme.SmokebombTheme
 
 /** Root composable shared by Android and iOS. */
 @Composable
-fun App(ble: BleManager, api: ApiClient = remember { StubApiClient() }) {
+fun App(
+    ble: BleManager,
+    settings: AppSettings,
+    api: ApiClient = remember { StubApiClient() },
+) {
     val scope = rememberCoroutineScope()
     // Bluetooth, or the desktop simulator when the Die tab picks it.
     val links = remember(ble) { DieLinks(ble, scope) }
@@ -28,7 +33,13 @@ fun App(ble: BleManager, api: ApiClient = remember { StubApiClient() }) {
         if (onboarded) {
             AppShell(links = links, history = history, api = api)
         } else {
-            OnboardingScreen(onFinished = { onboarded = true })
+            OnboardingScreen(
+                initialName = settings.ownerName.orEmpty(),
+                onFinished = { name ->
+                    settings.ownerName = name
+                    onboarded = true
+                },
+            )
         }
     }
 }
