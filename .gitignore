@@ -34,3 +34,6 @@ tools/mockup-capture/golden/**/sheet.png
 .env.*
 !.env.example
 .DS_Store
+
+# Python virtual environments (the USDZ converter)
+.venv/
