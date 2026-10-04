@@ -1,7 +1,6 @@
 import ARKit
 import Combine
 import RealityKit
-import SwiftUI
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
 
@@ -63,13 +62,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var held = false
     /// Where a drag wants the die's centre (x, z), which it eases toward.
     private var dragTarget: SIMD2<Float>?
-    /// The turn pad, floating beside the die while the menu is open.
-    private lazy var padHost: UIHostingController<TurnPad> = {
-        let host = UIHostingController(rootView: TurnPad(model: model))
-        host.view.backgroundColor = .clear
-        host.sizingOptions = .intrinsicContentSize
-        return host
-    }()
+    /// The turn pad: a pane of glass beside the die while the menu is open.
+    private var menuPanel: MenuPanel?
     /// Seconds since the scene started, summed from frame times.
     private var time: TimeInterval = 0
 
@@ -121,8 +115,6 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             coaching.bottomAnchor.constraint(equalTo: arView.bottomAnchor),
         ])
         installGestures()
-        padHost.view.isHidden = true
-        arView.addSubview(padHost.view)
     }
 
     // MARK: Session
@@ -160,7 +152,6 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         stepGlide()
         stepDrag(dt: Float(dt))
         if firmware != nil { stepFirmware() }
-        placeTurnPad()
     }
 
     // MARK: Showing models
@@ -278,14 +269,6 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         }
     }
 
-    /// Touches on the turn pad are its own: not a tap, drag or touch on the scene.
-    nonisolated func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        MainActor.assumeIsolated {
-            guard let view = touch.view else { return true }
-            return !view.isDescendant(of: padHost.view)
-        }
-    }
-
     nonisolated func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         // Twist and pinch together; a one-finger pan stays on its own.
         !(g is UIPanGestureRecognizer) && !(other is UIPanGestureRecognizer)
@@ -293,6 +276,11 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     @objc private func didTap(_ g: UITapGestureRecognizer) {
         let point = g.location(in: arView)
+        if let key = menuPanel?.press(at: point, in: arView) {
+            lightHaptic.impactOccurred()
+            tip(key.axis, key.direction)
+            return
+        }
         guard model.isPlaced, let rig else {
             _ = place(at: point)
             return
@@ -450,6 +438,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         glide = nil
         held = false
         model.isHeld = false
+        hideMenuPanel()
         dragTarget = nil
         removeCorral()
         imu.reset()
@@ -499,6 +488,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     private func dropFirmware() {
+        // No firmware, no menu: a held die goes back down.
+        if held { putDown() }
         screens?.remove()
         screens = nil
         firmware = nil
@@ -599,12 +590,34 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let target = SIMD3<Float>(c.x, DiePhysics.heldHeight + halfHeight * 1.5, c.z)
         let rotation = DiePhysics.heldOrientation(front: front, current: pivot.orientation, toCamera: cam.position - target)
         glide(to: target, rotation: rotation, duration: DiePhysics.heldMoveTime, easeOut: false)
+        showMenuPanel(beside: target, camera: cam)
+    }
+
+    /// Stands the glass turn pad beside where the die is held, on the
+    /// camera's right, facing the phone as it is now. It stays put after.
+    private func showMenuPanel(beside dieCentre: SIMD3<Float>, camera cam: (position: SIMD3<Float>, right: SIMD3<Float>)) {
+        guard let placement, let rig else { return }
+        menuPanel?.hide()
+        let side = max(rig.model.bounds.x, rig.model.bounds.z) * pivot.scale.x
+        let panel = MenuPanel(side: side)
+        var right = cam.right
+        right.y = 0
+        right = simd_length(right) < 1e-5 ? [1, 0, 0] : simd_normalize(right)
+        let position = dieCentre + right * (side * 0.9 + DiePhysics.menuPanelGap + panel.width / 2)
+        panel.show(at: position, facing: cam.position, in: placement)
+        menuPanel = panel
+    }
+
+    private func hideMenuPanel() {
+        menuPanel?.hide()
+        menuPanel = nil
     }
 
     /// Sets the die back down where it was, flat on its lowest face.
     private func putDown() {
         held = false
         model.isHeld = false
+        hideMenuPanel()
         let rotation = DiePhysics.setDownOrientation(current: pivot.orientation)
         // Straight down over the spot it was lifted from; resting on a face,
         // the centre is half a side up.
@@ -635,44 +648,6 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let pivotAxis = DiePhysics.nearestDieAxis(to: wanted, orientation: pivot.orientation)
         let rotation = simd_quatf(angle: Float(direction) * .pi / 2, axis: pivotAxis) * pivot.orientation
         glide(to: c, rotation: rotation, duration: DiePhysics.tipTime, easeOut: true)
-    }
-
-    // MARK: Turn pad
-
-    /// Shows the turn pad while the menu is open, beside the die on screen:
-    /// to its right, or its left if there's no room, clear of the die itself.
-    private func placeTurnPad() {
-        let pad = padHost.view!
-        guard held, let placement,
-              let centreOnScreen = arView.project(placement.convert(position: centre, to: nil))
-        else {
-            pad.isHidden = true
-            return
-        }
-        let size = pad.intrinsicContentSize
-        guard size.width > 0, size.height > 0 else { return }
-        pad.bounds.size = size
-
-        // How far the die reaches on screen: its centre to one corner's worth
-        // of the way along the camera's right.
-        let camera = arView.cameraTransform.matrix
-        let right = SIMD3(camera.columns.0.x, camera.columns.0.y, camera.columns.0.z)
-        let edgeWorld = placement.convert(position: centre, to: nil) + right * halfHeight * 1.8
-        let reach = arView.project(edgeWorld).map { abs($0.x - centreOnScreen.x) } ?? 60
-
-        let gap: CGFloat = 16
-        let bounds = arView.bounds.inset(by: arView.safeAreaInsets).insetBy(dx: 8, dy: 8)
-        var x = centreOnScreen.x + reach + gap + size.width / 2
-        if x + size.width / 2 > bounds.maxX {
-            x = centreOnScreen.x - reach - gap - size.width / 2
-        }
-        x = min(max(x, bounds.minX + size.width / 2), bounds.maxX - size.width / 2)
-        let y = min(max(centreOnScreen.y, bounds.minY + size.height / 2), bounds.maxY - size.height / 2)
-        pad.center = CGPoint(x: x, y: y)
-        if pad.isHidden {
-            pad.isHidden = false
-            arView.bringSubviewToFront(pad)
-        }
     }
 
     // MARK: Corral
@@ -728,7 +703,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// (or turns into a drag, a pinch or a twist). In x-ray, taps name parts instead.
     private func touchChanged(at point: CGPoint?) {
         var mask: UInt8 = 0
-        if let point, firmware != nil, model.isPlaced, !model.isRolling, !model.isXray,
+        if let point, menuPanel?.contains(point, in: arView) != true, firmware != nil, model.isPlaced, !model.isRolling, !model.isXray,
            let rig, let ray = arView.ray(through: point) {
             let size = rig.model.bounds
             let local = PartPicker.ray(origin: ray.origin, direction: ray.direction, into: pivot.transformMatrix(relativeTo: nil))

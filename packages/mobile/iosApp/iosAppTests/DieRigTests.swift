@@ -52,6 +52,21 @@ final class DieRigTests: XCTestCase {
         XCTAssertNil(shell.components[OpacityComponent.self])
     }
 
+    func testMenuPanelStandsUprightFacingTheViewer() {
+        let parent = Entity()
+        let panel = MenuPanel(side: 0.03)
+        panel.show(at: [0.05, 0.1, 0], facing: [0.05, 0.1, 1], in: parent)
+        XCTAssertEqual(panel.root.children.count, 7, "the pane and six keys")
+        XCTAssertTrue(panel.root.parent === parent)
+        // Its face (+Z) toward the viewer, its up still up.
+        let q = panel.root.orientation
+        XCTAssertEqual(simd_distance(q.act([0, 0, 1]), [0, 0, 1]), 0, accuracy: 1e-5)
+        XCTAssertEqual(simd_distance(q.act([0, 1, 0]), [0, 1, 0]), 0, accuracy: 1e-5)
+        XCTAssertGreaterThan(panel.width, 0.03)
+        panel.hide()
+        XCTAssertNil(panel.root.parent)
+    }
+
     func testTapNamesTheOutermostLabelledPart() async throws {
         let (rig, _) = try await loadFixture()
         // Straight down onto the top face's centre: the sapphire window is first.

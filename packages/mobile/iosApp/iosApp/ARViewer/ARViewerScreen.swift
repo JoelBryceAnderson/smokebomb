@@ -302,51 +302,6 @@ private struct ControlPad: View {
     }
 }
 
-// MARK: - Turn pad
-
-/// The menu's tips (SIM_SPEC C3): quarter turns about the viewer's three
-/// axes, up being −90° about your right and left −90° about vertical. Shown
-/// only while the menu is open, floating beside the held die (the scene
-/// controller hosts it in the AR view and keeps it next to the die).
-struct TurnPad: View {
-    let model: ARViewerModel
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Text("Menu")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-            key("chevron.up", "Tip up") { model.tip(.pitch, -1) }
-            HStack(spacing: 6) {
-                key("chevron.left", "Tip left") { model.tip(.yaw, -1) }
-                key("chevron.right", "Tip right") { model.tip(.yaw, 1) }
-            }
-            key("chevron.down", "Tip down") { model.tip(.pitch, 1) }
-            Divider().frame(width: 60)
-            HStack(spacing: 6) {
-                key("arrow.counterclockwise", "Twist left") { model.tip(.roll, 1) }
-                key("arrow.clockwise", "Twist right") { model.tip(.roll, -1) }
-            }
-        }
-        .padding(8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .disabled(!model.canTurn)
-        .opacity(model.canTurn ? 1 : 0.5)
-    }
-
-    private func key(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.body.weight(.semibold))
-                .frame(width: 36, height: 36)
-        }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.circle)
-        .tint(.primary)
-        .accessibilityLabel(label)
-    }
-}
-
 // MARK: - Shared controls
 
 private struct ViewButtons: View {

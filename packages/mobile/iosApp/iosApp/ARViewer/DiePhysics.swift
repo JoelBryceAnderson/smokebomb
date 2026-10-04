@@ -46,6 +46,8 @@ enum DiePhysics {
     static let heldMoveTime: TimeInterval = 0.5
     /// Seconds for one quarter turn from the turn pad (a menu tip).
     static let tipTime: TimeInterval = 0.35
+    /// Space between the held die and the glass turn pad, in metres.
+    static let menuPanelGap: Float = 0.012
     /// Tumble speed, in rad/s.
     static let throwSpin: ClosedRange<Float> = 10...30
     /// Flick speed, in points per second, that maps to the top of `throwSpeed`.
