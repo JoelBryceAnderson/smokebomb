@@ -98,6 +98,11 @@ private struct StatusOverlay: View {
                     Text(model.caption)
                         .font(.subheadline.weight(.semibold))
                     #if DEBUG
+                    if let mode = model.firmwareMode {
+                        Text("Firmware: \(mode)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
                     if let check = model.boundsCheck {
                         Text(check.text)
                             .font(.caption2.monospacedDigit())
@@ -222,6 +227,9 @@ private struct SidePanel: View {
                 }
             }
             Section("View") {
+                if model.canRunFirmware {
+                    Toggle("Live screens", isOn: $model.liveScreens)
+                }
                 if model.canToggleXray {
                     Toggle("X-ray", isOn: Binding(get: { model.isXray }, set: { _ in model.toggleXray() }))
                 }
@@ -297,9 +305,17 @@ private struct ControlPad: View {
 // MARK: - Shared controls
 
 private struct ViewButtons: View {
-    let model: ARViewerModel
+    @Bindable var model: ARViewerModel
 
     var body: some View {
+        if model.canRunFirmware {
+            Toggle(isOn: $model.liveScreens) {
+                Label("Live", systemImage: model.liveScreens ? "play.display" : "display")
+            }
+            .toggleStyle(.button)
+            .buttonStyle(.bordered)
+            .tint(.primary)
+        }
         if model.canToggleXray {
             Button { model.toggleXray() } label: {
                 Label("X-ray", systemImage: model.isXray ? "cube.transparent.fill" : "cube.transparent")

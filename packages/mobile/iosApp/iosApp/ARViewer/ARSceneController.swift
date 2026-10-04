@@ -2,6 +2,7 @@ import ARKit
 import Combine
 import RealityKit
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 
 /// Owns the ARView: the AR session, plane coaching, placing the die, gestures and physics.
 /// UI state lives in `ARViewerModel`; this pushes changes back to it.
@@ -14,6 +15,10 @@ import UIKit
 ///         └── rig.root   the loaded model (its own metres, origin at the bottom centre)
 ///
 /// Table and die share the anchor so they share one physics simulation.
+///
+/// With live screens on, the real firmware runs here too: every 1/60 s it gets
+/// the IMU reading the die's motion makes (`ImuSynth`) and the faces being
+/// touched, and its six panels are drawn on the die (`LiveScreens`).
 @MainActor
 final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     let arView: ARView
@@ -32,6 +37,30 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     // Throwing.
     private var settle = SettleDetector()
     private var lastPose: (position: SIMD3<Float>, orientation: simd_quatf)?
+    /// A throw in its windup: picked up and shaken before release.
+    private struct Windup {
+        let start: TimeInterval
+        let base: Transform
+        let velocity: SIMD3<Float>
+        let spin: SIMD3<Float>
+    }
+    private var windup: Windup?
+    /// Seconds since the scene started, summed from frame times.
+    private var time: TimeInterval = 0
+
+    // The firmware, when live screens are on.
+    private var firmware: DieFirmware?
+    private var firmwarePanel: PanelKind?
+    private var screens: LiveScreens?
+    private var imu = ImuSynth()
+    private var ticks = TickClock()
+    private var frameSeq: UInt64 = 0
+    private var touchMask: UInt8 = 0
+    private var faceBuffer: [UInt8] = []
+    private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
+    private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
+    private let mediumHaptic = UIImpactFeedbackGenerator(style: .medium)
+    private let notifyHaptic = UINotificationFeedbackGenerator()
 
     // Gestures.
     private enum PanMode { case move, turn }
@@ -88,6 +117,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     func stop() {
         loadTask?.cancel()
+        dropFirmware()
         updates?.cancel()
         updates = nil
         arView.session.pause()
@@ -98,7 +128,9 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         if !model.planeFound, arView.session.currentFrame?.anchors.contains(where: { $0 is ARPlaneAnchor }) == true {
             model.planeFound = true
         }
-        if model.isRolling { trackRoll(dt: dt) }
+        time += dt
+        if windup != nil { stepWindup() } else if model.isRolling { trackRoll(dt: dt) }
+        if firmware != nil { stepFirmware() }
     }
 
     // MARK: Showing models
@@ -132,6 +164,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         rig.setShellFaded(model.shellFaded)
         updateBody()
         model.rigDidLoad(rig, measured: rig.measuredSize())
+        syncFirmware()
     }
 
     func setExplode(_ e: Float) { rig?.setExplode(e) }
@@ -185,6 +218,9 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         pivot.transform = Transform(scale: SIMD3(repeating: model.scale), rotation: simd_quatf(angle: yaw, axis: [0, 1, 0]), translation: .zero)
         restTransform = pivot.transform
         model.isPlaced = true
+        imu.reset()
+        ticks.reset()
+        syncFirmware()
         return true
     }
 
@@ -194,6 +230,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         placement?.removeFromParent()
         placement = nil
         model.isPlaced = false
+        syncFirmware()
     }
 
     // MARK: Gestures
@@ -204,7 +241,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         pan.maximumNumberOfTouches = 1
         let twist = UIRotationGestureRecognizer(target: self, action: #selector(didTwist(_:)))
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(didPinch(_:)))
-        for recognizer in [tap, pan, twist, pinch] as [UIGestureRecognizer] {
+        let touch = TouchTracker { [weak self] point in self?.touchChanged(at: point) }
+        for recognizer in [tap, pan, twist, pinch, touch] as [UIGestureRecognizer] {
             recognizer.delegate = self
             arView.addGestureRecognizer(recognizer)
         }
@@ -222,6 +260,13 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             return
         }
         guard let ray = arView.ray(through: point) else { return }
+        // With live screens, a tap on the die is a touch for the firmware
+        // (TouchTracker sent it); parts are named in x-ray.
+        if firmware != nil, !model.isXray, rig.contains(origin: ray.origin, direction: ray.direction) {
+            rig.highlight(nil)
+            model.selectedPart = nil
+            return
+        }
         let part = rig.pick(origin: ray.origin, direction: ray.direction, seeThroughShell: model.isXray)
         rig.highlight(part)
         model.selectedPart = part?.label
@@ -304,17 +349,35 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let wobble = SIMD3<Float>(Float.random(in: -0.3...0.3), Float.random(in: -0.5...0.5), Float.random(in: -0.3...0.3))
 
         restTransform = pivot.transform
-        pivot.position.y += DiePhysics.releaseHeight
-        setBodyMode(.dynamic)
-        pivot.components.set(PhysicsMotionComponent(
-            linearVelocity: direction * speed + [0, DiePhysics.throwLift, 0],
-            angularVelocity: (rollAxis + wobble) * spin))
-
+        windup = Windup(
+            start: time, base: pivot.transform,
+            velocity: direction * speed + [0, DiePhysics.throwLift, 0],
+            spin: (rollAxis + wobble) * spin)
         rig.highlight(nil)
         model.selectedPart = nil
+        touchMask = 0
+        model.rollDidStart()
+    }
+
+    /// Picked up, then shaken, then let go: one frame of the windup.
+    private func stepWindup() {
+        guard let w = windup else { return }
+        let t = time - w.start
+        if t >= DiePhysics.windupLiftTime + DiePhysics.windupShakeTime {
+            release(w)
+            return
+        }
+        let (offset, rock) = DiePhysics.windup(at: t)
+        pivot.position = w.base.translation + offset
+        pivot.orientation = rock * w.base.rotation
+    }
+
+    private func release(_ w: Windup) {
+        windup = nil
+        setBodyMode(.dynamic)
+        pivot.components.set(PhysicsMotionComponent(linearVelocity: w.velocity, angularVelocity: w.spin))
         settle.reset()
         lastPose = nil
-        model.rollDidStart()
     }
 
     private func trackRoll(dt: TimeInterval) {
@@ -341,6 +404,9 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     /// Puts the die back on its placed spot.
     func reset() {
+        windup = nil
+        imu.reset()
+        ticks.reset()
         setBodyMode(.kinematic)
         pivot.components.remove(PhysicsMotionComponent.self)
         pivot.transform = restTransform
@@ -356,5 +422,133 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private func flatten(_ v: SIMD3<Float>) -> SIMD3<Float> {
         let flat = SIMD3<Float>(v.x, 0, v.z)
         return simd_length(flat) < 1e-5 ? [0, 0, -1] : simd_normalize(flat)
+    }
+
+    // MARK: Firmware
+
+    /// Starts, keeps or stops the firmware to match: running while a die with
+    /// panels is placed and live screens are on. Swapping between models with
+    /// the same panels keeps it running; other panels boot it afresh.
+    func syncFirmware() {
+        let wanted = model.liveScreens && model.isPlaced ? rig?.model.panel : nil
+        if wanted != firmwarePanel {
+            dropFirmware()
+            if let wanted, let made = model.makeFirmware?(wanted) {
+                firmware = made
+                firmwarePanel = wanted
+                faceBuffer = [UInt8](repeating: 0, count: made.panelSide * made.panelSide * 4)
+                imu.reset()
+                ticks.reset()
+                lightHaptic.prepare()
+            }
+        }
+        screens?.remove()
+        screens = nil
+        if let firmware, let rig {
+            let live = LiveScreens(rig: rig, reference: pivot, side: firmware.panelSide)
+            screens = live.isEmpty ? nil : live
+            redraw()
+        }
+    }
+
+    private func dropFirmware() {
+        screens?.remove()
+        screens = nil
+        firmware = nil
+        firmwarePanel = nil
+        frameSeq = 0
+        touchMask = 0
+        model.firmwareMode = nil
+    }
+
+    /// Runs the firmware up to now: one tick per 1/60 s, each with the IMU
+    /// reading of the die's pose at that instant.
+    private func stepFirmware() {
+        guard let firmware else { return }
+        let pose = DiePose(position: pivot.position(relativeTo: nil), orientation: pivot.orientation(relativeTo: nil))
+        var seq = frameSeq
+        for tickPose in ticks.advance(to: time, pose: pose) {
+            seq = firmware.tick(imu.reading(at: tickPose), touchMask: touchMask)
+        }
+        if seq != frameSeq {
+            frameSeq = seq
+            redraw()
+        }
+        while let effect = firmware.nextHaptic() { play(haptic: effect) }
+        let mode = firmware.mode
+        if model.firmwareMode != mode { model.firmwareMode = mode }
+    }
+
+    private func redraw() {
+        guard let firmware, let screens else { return }
+        for face in DieFace.allCases where firmware.faceRGBA(face, into: &faceBuffer) {
+            screens.show(faceBuffer, on: face)
+        }
+    }
+
+    /// The firmware's haptic effects, felt through the phone. Numbers follow
+    /// `smokebomb_hal::HapticEffect`.
+    private func play(haptic effect: Int) {
+        switch effect {
+        case 0, 6, 9: lightHaptic.impactOccurred()  // Tick, MenuTip, DockTick
+        case 2, 8: heavyHaptic.impactOccurred()  // LandingThud, SeatThunk
+        case 3: notifyHaptic.notificationOccurred(.success)  // MaxCelebration
+        case 4, 11: notifyHaptic.notificationOccurred(.warning)  // Dud, SoftBuzz
+        default: mediumHaptic.impactOccurred()
+        }
+    }
+
+    /// A finger down on the die touches the face under it, until it lifts
+    /// (or turns into a drag, a pinch or a twist). In x-ray, taps name parts instead.
+    private func touchChanged(at point: CGPoint?) {
+        var mask: UInt8 = 0
+        if let point, firmware != nil, model.isPlaced, !model.isRolling, !model.isXray,
+           let rig, let ray = arView.ray(through: point) {
+            let size = rig.model.bounds
+            let local = PartPicker.ray(origin: ray.origin, direction: ray.direction, into: pivot.transformMatrix(relativeTo: nil))
+            if let face = PartPicker.entryFace(
+                origin: local.origin, direction: local.direction,
+                boxMin: [-size.x / 2, 0, -size.z / 2], boxMax: [size.x / 2, size.y, size.z / 2]) {
+                mask = 1 << UInt8(face.index)
+            }
+        }
+        touchMask = mask
+    }
+}
+
+/// Watches one finger without claiming it: reports where it went down and
+/// when it lifts. It never recognises, so taps, drags and pinches still work;
+/// when one of those takes over, UIKit resets this and the touch ends.
+private final class TouchTracker: UIGestureRecognizer {
+    private let changed: (CGPoint?) -> Void
+
+    init(changed: @escaping (CGPoint?) -> Void) {
+        self.changed = changed
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        if let view, let touch = touches.first, (event.allTouches?.count ?? 1) == 1 {
+            changed(touch.location(in: view))
+        } else {
+            changed(nil)
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        changed(nil)
+        state = .failed
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        changed(nil)
+        state = .failed
+    }
+
+    override func reset() {
+        changed(nil)
     }
 }

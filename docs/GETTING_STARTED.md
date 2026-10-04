@@ -188,7 +188,10 @@ xcodegen generate            # creates iosApp.xcodeproj (git-ignored)
 open iosApp.xcodeproj        # run on an iOS simulator
 ```
 
-The **AR** tab needs a real iPhone or iPad; the Simulator has no AR. See
+The **AR** tab needs a real iPhone or iPad; the Simulator has no AR. Its live
+screens run the firmware core on the phone, so building the app also builds
+`packages/firmware/ffi` with Rust: install it from https://rustup.rs (the iOS
+targets are added on the first build). See
 [AR_VIEWER.md](../packages/mobile/iosApp/AR_VIEWER.md) for converting and
 bundling the models and for its tests (the `ARViewerTests` scheme).
 

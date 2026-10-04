@@ -6,6 +6,11 @@ on:
   pull_request:
     paths:
       - "packages/mobile/**"
+      # The iOS app links the firmware core (packages/firmware/ffi).
+      - "packages/firmware/**"
+      - "packages/shared/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/ci-mobile.yml"
 
 concurrency:
@@ -46,6 +51,8 @@ jobs:
         run: ./gradlew :shared:iosSimulatorArm64Test
       - name: Link Compose framework
         run: ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
+      - name: Rust targets for iOS (the app links the firmware core)
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
       - name: Generate Xcode project
         run: |
           brew install xcodegen

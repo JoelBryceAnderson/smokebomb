@@ -8,6 +8,9 @@ import UIKit
 @MainActor
 final class ARViewerFactory: NSObject, @preconcurrency ArViewControllerFactory {
     func makeArViewController() -> UIViewController {
-        UIHostingController(rootView: ARViewerScreen(model: .shared))
+        let model = ARViewerModel.shared
+        // Live screens: the real firmware, from the Rust library.
+        model.makeFirmware = { RustDieFirmware(panel: $0) }
+        return UIHostingController(rootView: ARViewerScreen(model: model))
     }
 }

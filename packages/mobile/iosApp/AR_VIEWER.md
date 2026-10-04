@@ -28,7 +28,12 @@ It needs iOS 18 or later, and runs on iPhone and iPad.
 | `iosApp/ARViewer/DieRig.swift` | Finds contract prims in a loaded model: explode, shell fade, tap picking, highlight |
 | `iosApp/ARViewer/ModelCatalog.swift` | The model list and loading behind `ModelSource` |
 | `iosApp/ARViewer/PartLabels.json` | Tap labels; edit freely |
-| `iosApp/ARViewer/DiePhysics.swift` | Tunable physics constants, face-up and settle maths |
+| `iosApp/ARViewer/DiePhysics.swift` | Tunable physics constants, the throw windup, face-up and settle maths |
+| `iosApp/ARViewer/DieFirmware.swift` | What the viewer needs from the firmware, the panels per die, screen axes |
+| `iosApp/ARViewer/ImuSynth.swift` | Die motion → IMU readings at exact 60 Hz ticks |
+| `iosApp/ARViewer/LiveScreens.swift` | The firmware's panels on the die's faces |
+| `iosApp/Firmware/RustDieFirmware.swift` | The firmware over the Rust C ABI (app target only) |
+| `scripts/build_firmware.sh` | Builds `packages/firmware/ffi` for the SDK Xcode is building for |
 | `iosApp/Resources/Models/` | Bundled `.usdz` files (a folder reference) |
 | `iosAppTests/` | `ARViewerTests`: true-size check, explode, picking, labels, face-up |
 | `scripts/convert_usdz.py` | Binary-root conversion and ARKit checks |
@@ -192,7 +197,10 @@ Tunable constants, all in `DiePhysics.swift`:
 | `throwLift` | 0.5 m/s | Upward part of every throw |
 | `throwSpin` | 10–30 rad/s | Tumble |
 | `flickThreshold` / `flickForFullSpeed` | 900 / 3000 pt/s | What counts as a flick; what's a hard one |
-| `releaseHeight` | 0.02 m | Lift before release |
+| `windupLift` / `windupLiftTime` | 0.05 m / 0.3 s | Picked up before a throw (eased, under ~0.35 g) |
+| `windupShakeTime` | 0.5 s | Shaken in the air before release |
+| `shakeAmplitude` / `shakeFrequency` | 7.5, 2, 5.7 mm / 6.5, 7, 7.5 Hz | About 1.3 g along the table, 0.4 g up |
+| `shakeWobble` | 0.15 rad | Rocking while shaken |
 | `continuousCollisionDetection` | on | Stops a fast, small die passing through the table |
 | `useSceneReconstruction` | on | Room mesh as a collider on LiDAR devices |
 | `settleLinearSpeed` / `settleAngularSpeed` / `settleTime` | 4 mm/s / 0.15 rad/s / 0.35 s | When it counts as stopped |
@@ -202,14 +210,66 @@ These are starting points and haven't been tuned on a device. PhysX is tuned
 for objects about a metre across. If a 30 mm die floats or jitters, try more
 `angularDamping` and less `restitution` first.
 
+## Live screens: the firmware in the loop
+
+With **Live screens** on (the default), the real firmware core runs on the
+phone and drives the die's six screens. You see what the hardware would show:
+the boot, the smoke filling as you shake, the roll and its reveal, the menu.
+
+```
+RealityKit pose ──► ImuSynth ──► sb_die_tick(imu, touch) ──► six panels ──► LiveScreens
+   (60 Hz ticks)    accel+gyro      packages/firmware/ffi       RGBA          quads on the die
+```
+
+- **The firmware.** `packages/firmware/ffi` is a Rust static library with a C
+  ABI (`include/smokebomb_ffi.h`). It boots `smokebomb_core::Firmware` on the
+  simulator HAL with the clock driven tick by tick: the same core the board
+  and the desktop simulator run, unmodified.
+  - The 34 mm dice get the 96×96 grey build.
+  - The 30 mm dice get the 64×64 RGB565 build.
+  - The 40 mm die borrows the 30 mm colour build until it has a target of its own.
+  - The line-up has no live screens.
+- **Building it.** Xcode runs `scripts/build_firmware.sh` before each build.
+  It builds the library for the device or the Simulator, so you need Rust
+  (https://rustup.rs); the iOS targets are added on first use. Cargo only
+  rebuilds when the firmware changes.
+- **Motion in** (`ImuSynth.swift`):
+  - Every 1/60 s, the die's pose at that instant is interpolated between
+    rendered frames (`TickClock`).
+  - It's turned into what the IMU would read. The accelerometer reads 1 g up
+    plus the linear acceleration (from the last three positions); the gyro
+    reads the turn since the last tick. Both are in the die's frame, as the
+    desktop simulator's `World::imu` does it.
+- **Throws** start with a windup: the die is lifted 5 cm and shaken for half a
+  second, then let go. The firmware only counts a throw that starts in the
+  hand (Held, then Shaking, then FreeFall). The windup is tuned to read
+  between 0.6 g and 2.2 g, so it never looks like a fall or an impact.
+  `FirmwareLoopTests` checks that.
+- **Touch in.** A finger on the die touches the face under it until it lifts.
+  A drag, pinch or twist ends the touch.
+- **Frames out** (`LiveScreens.swift`):
+  - Each face's panel is drawn on a quad over that face's `Screen_<face>`.
+  - The quad is turned to the firmware's own screen axes
+    (`orientation::BASES`), so frames land as on the hardware, whatever the
+    model's UVs.
+  - Pixels are sampled nearest-neighbour and unlit.
+  - The baked screens are hidden while live screens are on.
+  - The quads ride along with explode.
+  - If a frame shows upside down on device, flip `LiveScreens.flipVertically`.
+- **Haptics.** The firmware's haptic effects play on the phone.
+- **Debug builds** show the firmware's mode under the caption.
+
+Switching between models with the same panels keeps the firmware running.
+Switching panels boots it again, and so does placing the die.
+
 ## Gestures
 
 | Gesture | Does |
 |---|---|
 | Tap the table | Place the die (once a plane is found) |
-| Tap the die | Name the part; tap elsewhere to clear |
+| Tap the die | Live screens: touch the face (a hold is a long press). Otherwise, or in x-ray: name the part; tap elsewhere to clear |
 | Drag on the die | Move it along the table |
-| Flick on the die | Throw it |
+| Flick on the die | Throw it: picked up, shaken, let go |
 | Drag elsewhere, or twist | Turn it |
 | Pinch | Scale, only when **True size** is unlocked; tap the % to return to 100% |
 
@@ -225,6 +285,12 @@ CI runs it on a simulator.
 - `DieRigTests`: explode distances, the shell fade and tap picking, on the
   contract fixture.
 - `ViewerLogicTests`: face-up, settling, ray picking, labels and captions.
+- `FirmwareLoopTests`: IMU readings at rest, tilted, falling and spinning; the
+  windup's limits; 60 Hz ticks at any frame rate; touch faces; screen axes.
+
+The firmware side has its own tests (`cargo test -p smokebomb-ffi`). They boot
+both builds and play throws through the C ABI, including the viewer's windup
+and flight rebuilt from positions, and check they end in a reveal.
 
 Debug builds also show the measured bounds under the caption, green when they
 are within ±0.1 mm.

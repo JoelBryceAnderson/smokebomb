@@ -20,6 +20,9 @@ final class ARViewerModel {
     let catalog: ModelCatalog
     let labels: PartLabels
     @ObservationIgnored weak var scene: ARSceneController?
+    /// Makes the firmware for live screens. The app sets it (it needs the Rust
+    /// library); nil means baked screens only, as in the tests.
+    @ObservationIgnored var makeFirmware: DieFirmwareFactory?
 
     var availability = Availability.checking
     let models: [SugarcubeModel]
@@ -44,6 +47,15 @@ final class ARViewerModel {
     private(set) var canExplode = false
     private(set) var shellFaded = false
     private(set) var canFadeShell = false
+
+    /// Run the real firmware and show its panels on the die.
+    var liveScreens = true {
+        didSet { scene?.syncFirmware() }
+    }
+    /// Whether live screens are possible at all: the app supplied a firmware.
+    var canRunFirmware: Bool { makeFirmware != nil }
+    /// The firmware's mode while it runs (debug readout).
+    var firmwareMode: String?
 
     var selectedPart: String?
     private(set) var isRolling = false

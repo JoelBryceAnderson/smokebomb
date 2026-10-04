@@ -30,8 +30,25 @@ enum DiePhysics {
     static let flickForFullSpeed: CGFloat = 3000
     /// A drag on the die that ends faster than this (points per second) is a throw, not a move.
     static let flickThreshold: CGFloat = 900
-    /// How high the die is lifted before it's released, in metres.
-    static let releaseHeight: Float = 0.02
+
+    // The windup: before a throw the die is picked up and shaken in the air,
+    // as a hand would. The firmware reads that from the IMU (Held, Shaking)
+    // and only counts a release after it as a roll; the shake also fills the
+    // smoke. Amplitudes keep the accelerometer between ~0.6 g and ~2.2 g, so
+    // the shake never reads as free fall or as an impact.
+    /// How high the die is lifted, in metres.
+    static let windupLift: Float = 0.05
+    /// Seconds to lift it (eased, so the push stays under ~0.35 g).
+    static let windupLiftTime: TimeInterval = 0.3
+    /// Seconds of shaking before release.
+    static let windupShakeTime: TimeInterval = 0.5
+    /// Shake amplitude along the table (x, z) and up (y), in metres: about
+    /// 1.3 g on x and z (A·ω²) and 0.4 g up.
+    static let shakeAmplitude = SIMD3<Float>(0.0075, 0.002, 0.0057)
+    /// Shake frequency per axis, in Hz.
+    static let shakeFrequency = SIMD3<Float>(6.5, 7.0, 7.5)
+    /// How far the die rocks while shaken, in radians.
+    static let shakeWobble: Float = 0.15
 
     /// Continuous collision detection: keeps a fast, small die from passing through the table.
     static let continuousCollisionDetection = true
@@ -46,6 +63,22 @@ enum DiePhysics {
     static let maxRollTime: TimeInterval = 8
     /// Below this, the die has fallen off the table; put it back.
     static let lostBelow: Float = -1.0
+
+    /// The die's offset from its spot and its rocking, `t` seconds into the
+    /// windup: an eased lift, then a shake that starts from rest (1 − cos).
+    static func windup(at t: TimeInterval) -> (offset: SIMD3<Float>, rock: simd_quatf) {
+        let u = Float(min(max(t / windupLiftTime, 0), 1))
+        var offset = SIMD3<Float>(0, windupLift * u * u * (3 - 2 * u), 0)
+        var rock = simd_quatf(angle: 0, axis: [0, 1, 0])
+        if t > windupLiftTime {
+            let ts = Float(t - windupLiftTime)
+            let phase = 2 * Float.pi * shakeFrequency * ts
+            offset += shakeAmplitude * (SIMD3<Float>(repeating: 1) - SIMD3(cos(phase.x), cos(phase.y), cos(phase.z)))
+            let a = shakeWobble * sin(2 * .pi * 6 * ts)
+            rock = simd_quatf(angle: a, axis: [1, 0, 0]) * simd_quatf(angle: a * 0.7, axis: [0, 0, 1])
+        }
+        return (offset, rock)
+    }
 
     static func throwSpeed(forFlick pointsPerSecond: CGFloat) -> Float {
         let t = Float(min(max(pointsPerSecond / flickForFullSpeed, 0), 1))

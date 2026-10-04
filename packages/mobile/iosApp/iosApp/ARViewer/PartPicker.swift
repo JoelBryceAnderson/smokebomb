@@ -32,3 +32,20 @@ enum PartPicker {
         return (SIMD3(o.x, o.y, o.z), SIMD3(d.x, d.y, d.z))
     }
 }
+
+extension PartPicker {
+    /// The face of a die-shaped box (in the die's own frame) a ray first
+    /// enters through, or nil if it misses.
+    static func entryFace(origin: SIMD3<Float>, direction: SIMD3<Float>, boxMin: SIMD3<Float>, boxMax: SIMD3<Float>) -> DieFace? {
+        guard let t = hitDistance(origin: origin, direction: direction, boxMin: boxMin, boxMax: boxMax) else { return nil }
+        let hit = origin + direction * t
+        let size = boxMax - boxMin
+        // The face the hit point lies on: the one it's closest to, relative to the box.
+        let candidates: [(DieFace, Float)] = [
+            (.px, abs(hit.x - boxMax.x) / size.x), (.nx, abs(hit.x - boxMin.x) / size.x),
+            (.py, abs(hit.y - boxMax.y) / size.y), (.ny, abs(hit.y - boxMin.y) / size.y),
+            (.pz, abs(hit.z - boxMax.z) / size.z), (.nz, abs(hit.z - boxMin.z) / size.z),
+        ]
+        return candidates.min { $0.1 < $1.1 }?.0
+    }
+}
