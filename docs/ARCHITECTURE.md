@@ -549,7 +549,7 @@ and iOS arm64 plus the arm64 simulator.
   `VerifyResult`, the service UUID).
 - `composeApp/commonMain`:
   - `App` with the theme and the onboarding gate
-  - `navigation/AppShell`: bottom bar with Die, History, Store and Settings
+  - `navigation/AppShell`: bottom bar with Die, AR (iOS only), History, Store and Settings
   - `screens/*`
   - `network/ApiClient`, stubbed until Ktor is added
 - **BLE:** the common `BleManager` interface plus
@@ -564,9 +564,15 @@ and iOS arm64 plus the arm64 simulator.
   syncs the die's kept rolls on each connect and adds live ones, keeping each
   roll once (by die and signature). In memory only for now; server history
   isn't merged in yet.
-- `iosApp/`: a SwiftUI host that embeds `MainViewController()`. The Xcode
-  project is generated from `project.yml` with XcodeGen, so no `.pbxproj` is
-  kept in git.
+- `iosApp/`: a SwiftUI host that embeds `MainViewController(arViewer:)`. The
+  Xcode project is generated from `project.yml` with XcodeGen, so no
+  `.pbxproj` is kept in git. It targets iOS 18 on iPhone and iPad.
+- **AR viewer (iOS):** a RealityKit `ARView` in Swift
+  (`iosApp/iosApp/ARViewer/`). Compose shows it in the AR tab through the
+  common `ar/ArViewer` interface: on iOS, `UIKitArViewer` embeds a view
+  controller made by Swift's `ARViewerFactory`. It shows the die at true size
+  on a detected table. Details, the model naming contract and the physics
+  constants are in [AR_VIEWER.md](../packages/mobile/iosApp/AR_VIEWER.md).
 
 ## Nx
 

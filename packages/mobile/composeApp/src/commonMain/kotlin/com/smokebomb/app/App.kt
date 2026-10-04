@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.smokebomb.app.ar.ArViewer
 import com.smokebomb.app.ble.BleManager
 import com.smokebomb.app.ble.DieLinks
 import com.smokebomb.app.history.RollHistory
@@ -22,6 +23,7 @@ fun App(
     ble: BleManager,
     settings: AppSettings,
     api: ApiClient = remember { StubApiClient() },
+    arViewer: ArViewer? = null,
 ) {
     val scope = rememberCoroutineScope()
     // Bluetooth, or the desktop simulator when the Die tab picks it.
@@ -31,7 +33,7 @@ fun App(
         // TODO: persist onboarding completion (DataStore / NSUserDefaults).
         var onboarded by remember { mutableStateOf(false) }
         if (onboarded) {
-            AppShell(links = links, history = history, api = api)
+            AppShell(links = links, history = history, api = api, arViewer = arViewer)
         } else {
             OnboardingScreen(
                 initialName = settings.ownerName.orEmpty(),

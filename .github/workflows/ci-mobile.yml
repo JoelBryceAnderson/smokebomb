@@ -55,3 +55,14 @@ jobs:
         run: |
           xcodebuild -project iosApp.xcodeproj -target iosApp -configuration Debug \
             -sdk iphonesimulator -arch arm64 CODE_SIGNING_ALLOWED=NO build
+      - name: AR viewer tests (simulator)
+        working-directory: packages/mobile/iosApp
+        run: |
+          # The first available iPhone simulator; device names change between runner images.
+          UDID=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(d["udid"] for runtime, ds in sorted(devices.items(), reverse=True) if "iOS" in runtime
+                     for d in ds if d["name"].startswith("iPhone")))')
+          xcodebuild test -project iosApp.xcodeproj -scheme ARViewerTests \
+            -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO

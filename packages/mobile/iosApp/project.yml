@@ -5,13 +5,25 @@ name: iosApp
 options:
   bundleIdPrefix: com.smokebomb
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "18.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
 targets:
   iosApp:
     type: application
     platform: iOS
     sources:
-      - iosApp
+      - path: iosApp
+        excludes:
+          - "Resources/Models/**"
+      # A folder reference: drop converted .usdz files in and they ship, no regenerate needed.
+      - path: iosApp/Resources/Models
+        type: folder
+        buildPhase: resources
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     info:
       path: iosApp/Info.plist
       properties:
@@ -20,14 +32,27 @@ targets:
         CADisableMinimumFrameDurationOnPhone: true
         NSBluetoothAlwaysUsageDescription: Sugarcube connects to your die over Bluetooth to sync and verify rolls.
         NFCReaderUsageDescription: Tap your die to pair it or join a verified session.
+        NSCameraUsageDescription: Sugarcube uses the camera to show a true-size die on your table in AR.
         UIBackgroundModes: [bluetooth-central]
         # The desktop simulator link: plain ws:// to a Mac on the local network.
         NSLocalNetworkUsageDescription: Sugarcube connects to the Sugarcube simulator on your computer.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # iPad: every orientation, so the app can run in Split View and Slide Over.
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.smokebomb.app
+        PRODUCT_BUNDLE_IDENTIFIER: "$(SUGARCUBE_BUNDLE_ID)"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
         FRAMEWORK_SEARCH_PATHS: "$(inherited) $(SRCROOT)/../composeApp/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"
         OTHER_LDFLAGS: "$(inherited) -framework ComposeApp"
         ENABLE_USER_SCRIPT_SANDBOXING: NO
@@ -37,3 +62,33 @@ targets:
         script: |
           cd "$SRCROOT/.."
           ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode
+
+  # The AR viewer's logic and the true-size check, without the app or Kotlin:
+  # it compiles the ARViewer sources itself and bundles the same models.
+  ARViewerTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: iosApp/ARViewer
+      - path: iosApp/Resources/Models
+        type: folder
+        buildPhase: resources
+      - path: iosAppTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smokebomb.app.arviewertests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+
+schemes:
+  iosApp:
+    build:
+      targets:
+        iosApp: all
+  ARViewerTests:
+    build:
+      targets:
+        ARViewerTests: [test]
+    test:
+      targets:
+        - ARViewerTests
