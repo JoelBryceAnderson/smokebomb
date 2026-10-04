@@ -55,6 +55,10 @@ int32_t sb_die_next_haptic(SbDie *die);
 /// truncated to fit. Returns the untruncated length.
 size_t sb_die_mode(const SbDie *die, char *out, size_t len);
 
+/// While the menu is open, the face it's read on (the one held toward the
+/// person): 0-5 in the face order above. -1 when the menu is closed.
+int32_t sb_die_menu_front(const SbDie *die);
+
 /// Sets the wall clock, seconds since local midnight.
 void sb_die_set_local_time(SbDie *die, uint32_t seconds);
 

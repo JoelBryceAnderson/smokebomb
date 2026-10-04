@@ -56,6 +56,13 @@ struct ARViewerScreen: View {
             StatusOverlay(model: model)
                 .padding(.top, 8)
         }
+        .overlay(alignment: .trailing) {
+            if model.isPlaced {
+                TurnPad(model: model)
+                    .padding(.trailing, 12)
+                    .offset(y: widthClass == .regular ? 0 : -60)
+            }
+        }
     }
 }
 
@@ -299,6 +306,50 @@ private struct ControlPad: View {
             .disabled(!model.isPlaced)
             .accessibilityLabel("Die control pad")
             .accessibilityHint("Drag sideways to turn the die. Flick to throw it.")
+    }
+}
+
+// MARK: - Turn pad
+
+/// Floats beside the die: quarter turns about the viewer's three axes. With
+/// the menu open these are its tips (SIM_SPEC C3: up is −90° about your
+/// right, left is −90° about vertical); on the table they turn the die over.
+private struct TurnPad: View {
+    let model: ARViewerModel
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(model.isHeld ? "Menu" : "Turn")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            key("chevron.up", "Tip up") { model.tip(.pitch, -1) }
+            HStack(spacing: 6) {
+                key("chevron.left", "Tip left") { model.tip(.yaw, -1) }
+                key("chevron.right", "Tip right") { model.tip(.yaw, 1) }
+            }
+            key("chevron.down", "Tip down") { model.tip(.pitch, 1) }
+            Divider().frame(width: 60)
+            HStack(spacing: 6) {
+                key("arrow.counterclockwise", "Twist left") { model.tip(.roll, 1) }
+                key("arrow.clockwise", "Twist right") { model.tip(.roll, -1) }
+            }
+        }
+        .padding(8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .disabled(!model.canTurn)
+        .opacity(model.canTurn ? 1 : 0.5)
+    }
+
+    private func key(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.body.weight(.semibold))
+                .frame(width: 36, height: 36)
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.circle)
+        .tint(.primary)
+        .accessibilityLabel(label)
     }
 }
 

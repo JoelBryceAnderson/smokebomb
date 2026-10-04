@@ -25,7 +25,10 @@ struct ImuSynth {
     }
 
     /// The reading for the tick ending at `pose`. Poses must be one tick apart.
-    mutating func reading(at pose: DiePose) -> ImuReading {
+    /// `maxLinearMg` caps the linear acceleration: for a die being slid or
+    /// turned on the table, where a finger's jitter would otherwise read as a
+    /// shake. Nil (throws) reads it all.
+    mutating func reading(at pose: DiePose, maxLinearMg: Float? = nil) -> ImuReading {
         defer {
             previous.append(pose)
             if previous.count > 2 { previous.removeFirst() }
@@ -38,6 +41,9 @@ struct ImuSynth {
         if previous.count == 2 {
             let a = (pose.position - 2 * previous[1].position + previous[0].position) / (dt * dt)
             linearMg = a / Self.gravity * 1000
+            if let cap = maxLinearMg, simd_length(linearMg) > cap {
+                linearMg = simd_normalize(linearMg) * cap
+            }
         }
         // At rest the accelerometer reads +1 g toward the sky.
         let force = toBody.act(SIMD3<Float>(0, 1000, 0) + linearMg)

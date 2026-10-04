@@ -193,8 +193,13 @@ Tunable constants, all in `DiePhysics.swift`:
 | `tableStaticFriction` / `tableDynamicFriction` / `tableRestitution` | 0.55 / 0.45 / 0.30 | Table surface (RealityKit combines the two) |
 | `linearDamping` | 0.05 | Air drag |
 | `angularDamping` | 0.6 | Stands in for rolling resistance |
-| `throwSpeed` | 0.25–1.4 m/s | Along the table, scaled by flick speed |
-| `throwLift` | 0.5 m/s | Upward part of every throw |
+| `throwSpeed` | 0.15–0.6 m/s | Along the table, scaled by flick speed |
+| `throwLift` | 0.35 m/s | Upward part of every throw |
+| `corralRadius` / `corralHeight` | 0.18 m / 0.15 m | Invisible walls around where a throw starts; nil for none |
+| `handlingMaxLinearMg` | 400 mg | Cap on linear acceleration while the die is slid or turned, so handling never reads as a shake |
+| `dragFollowRate` | 18 /s | How fast a dragged die catches up with the finger |
+| `heldHeight` / `heldMaxTilt` | 0.08 m / 0.6 rad | Held for the menu: height, and most tilt toward the camera |
+| `heldMoveTime` / `tipTime` | 0.5 s / 0.35 s | Lifting or setting down; one quarter turn |
 | `throwSpin` | 10–30 rad/s | Tumble |
 | `flickThreshold` / `flickForFullSpeed` | 900 / 3000 pt/s | What counts as a flick; what's a hard one |
 | `windupLift` / `windupLiftTime` | 0.05 m / 0.3 s | Picked up before a throw (eased, under ~0.35 g) |
@@ -259,6 +264,18 @@ RealityKit pose ──► ImuSynth ──► sb_die_tick(imu, touch) ──► s
 - **Haptics.** The firmware's haptic effects play on the phone.
 - **Debug builds** show the firmware's mode under the caption.
 
+- **The menu.** Hold a finger on a face to open it. The die lifts off the
+  table with the menu's face toward you, tilted up toward the camera, as if
+  in your hand.
+  - The floating **turn pad** gives the menu's tips: ▲ ▼ are ∓90° about your
+    right, ◀ ▶ are ∓90° about vertical, and the twist keys turn it about the
+    line of sight. The firmware reads them from the gyro, as on the hardware.
+  - When the menu closes, the die is set back down, flat on its lowest face.
+  - On the table, the same keys turn the die over.
+- **Handling.** While the die is slid or turned on the table, its linear
+  acceleration is capped at 0.4 g, so a finger's jitter can't read as a shake.
+  A throw's windup and flight read everything.
+
 Switching between models with the same panels keeps the firmware running.
 Switching panels boots it again, and so does placing the die.
 
@@ -272,6 +289,7 @@ Switching panels boots it again, and so does placing the die.
 | Flick on the die | Throw it: picked up, shaken, let go |
 | Drag elsewhere, or twist | Turn it |
 | Pinch | Scale, only when **True size** is unlocked; tap the % to return to 100% |
+| Turn pad ▲ ▼ ◀ ▶ ⟲ ⟳ | Quarter turns about your right, vertical and line of sight: menu tips while held, turning the die over on the table |
 
 ## Tests
 

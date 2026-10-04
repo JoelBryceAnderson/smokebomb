@@ -45,6 +45,11 @@ final class RustDieFirmware: DieFirmware {
         return String(cString: text)
     }
 
+    var menuFront: DieFace? {
+        let face = Int(sb_die_menu_front(die))
+        return DieFace.allCases.indices.contains(face) ? DieFace.allCases[face] : nil
+    }
+
     private static func secondsSinceMidnight() -> UInt32 {
         let now = Date()
         return UInt32(max(0, now.timeIntervalSince(Calendar.current.startOfDay(for: now))))

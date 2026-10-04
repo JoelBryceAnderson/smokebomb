@@ -34,6 +34,8 @@ protocol DieFirmware: AnyObject {
     func nextHaptic() -> Int?
     /// The firmware's mode, for a debug readout.
     var mode: String { get }
+    /// While the menu is open, the face it's read on (held toward the person).
+    var menuFront: DieFace? { get }
 }
 
 /// Makes a firmware for a panel kind; nil if it can't boot.

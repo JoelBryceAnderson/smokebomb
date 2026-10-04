@@ -253,3 +253,21 @@ fn the_viewers_windup_and_flight_read_as_a_roll() {
         );
     }
 }
+
+/// A finger held on a resting die opens the menu; it reports the face it's
+/// read on until it closes.
+#[test]
+fn a_long_press_opens_the_menu_and_names_its_front() {
+    let mut die = SbDie::new(SB_PANEL_RGB64).unwrap();
+    run(&mut die, UP_Y, 8.0);
+    assert_eq!(unsafe { sb_die_menu_front(&die) }, -1, "closed at first");
+    for _ in 0..120 {
+        die.tick(UP_Y.into(), 1 << 4); // holding +Z
+    }
+    for _ in 0..10 {
+        die.tick(UP_Y.into(), 0);
+    }
+    assert_eq!(die.mode(), "Menu");
+    let front = unsafe { sb_die_menu_front(&die) };
+    assert!((0..6).contains(&front), "menu front is {front}");
+}

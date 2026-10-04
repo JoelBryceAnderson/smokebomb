@@ -45,6 +45,23 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let spin: SIMD3<Float>
     }
     private var windup: Windup?
+    /// Invisible walls around a throw, so the die stays close.
+    private var corral: Entity?
+
+    /// An eased move of the die about its centre: lifting it into the hand
+    /// for the menu, a quarter turn from the turn pad, setting it down.
+    private struct Glide {
+        let start: TimeInterval
+        let duration: TimeInterval
+        let from: (centre: SIMD3<Float>, rotation: simd_quatf)
+        let to: (centre: SIMD3<Float>, rotation: simd_quatf)
+        let easeOut: Bool
+    }
+    private var glide: Glide?
+    /// Held in the air for the menu.
+    private var held = false
+    /// Where a drag wants the die's centre (x, z), which it eases toward.
+    private var dragTarget: SIMD2<Float>?
     /// Seconds since the scene started, summed from frame times.
     private var time: TimeInterval = 0
 
@@ -130,6 +147,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         time += dt
         if windup != nil { stepWindup() } else if model.isRolling { trackRoll(dt: dt) }
+        stepGlide()
+        stepDrag(dt: Float(dt))
         if firmware != nil { stepFirmware() }
     }
 
@@ -226,7 +245,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     /// Takes the die off the table so the next tap places it again.
     func unplace() {
-        if model.isRolling { reset() }
+        reset()
         placement?.removeFromParent()
         placement = nil
         model.isPlaced = false
@@ -273,7 +292,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc private func didPan(_ g: UIPanGestureRecognizer) {
-        guard model.isPlaced, !model.isRolling, let rig, let placement else { return }
+        guard model.isPlaced, !model.isRolling, !held, glide == nil, let rig, let placement else { return }
         let point = g.location(in: arView)
         switch g.state {
         case .began:
@@ -286,7 +305,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
                 if let hit = arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first {
                     let world = SIMD3(hit.worldTransform.columns.3.x, hit.worldTransform.columns.3.y, hit.worldTransform.columns.3.z)
                     let local = placement.convert(position: world, from: nil)
-                    pivot.position = [local.x, 0, local.z]
+                    dragTarget = SIMD2(local.x, local.z)
                 }
             } else {
                 let x = g.translation(in: arView).x
@@ -297,6 +316,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             let v = g.velocity(in: arView)
             let speed = hypot(v.x, v.y)
             if panMode == .move, speed > DiePhysics.flickThreshold, rig.model.isThrowable {
+                dragTarget = nil
                 throwDie(screenDirection: CGVector(dx: v.x, dy: v.y), flickSpeed: speed)
             } else {
                 restTransform = pivot.transform
@@ -308,7 +328,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc private func didTwist(_ g: UIRotationGestureRecognizer) {
-        guard model.isPlaced, !model.isRolling else { return }
+        guard model.isPlaced, !model.isRolling, !held, glide == nil else { return }
         turn(by: -Float(g.rotation))
         g.rotation = 0
         if g.state == .ended { restTransform = pivot.transform }
@@ -322,7 +342,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     /// Spins the die about the table's vertical.
     func turn(by radians: Float) {
-        guard model.isPlaced, !model.isRolling else { return }
+        guard model.isPlaced, !model.isRolling, !held, glide == nil else { return }
         pivot.orientation = simd_quatf(angle: radians, axis: [0, 1, 0]) * pivot.orientation
         restTransform = pivot.transform
     }
@@ -332,8 +352,9 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// Throws the die across the table. `screenDirection` is in view points
     /// (right, down); it's mapped onto the table as seen from the camera.
     func throwDie(screenDirection: CGVector, flickSpeed: CGFloat) {
-        guard model.isPlaced, !model.isRolling, let rig, rig.model.isThrowable, let placement else { return }
+        guard model.isPlaced, !model.isRolling, !held, glide == nil, let rig, rig.model.isThrowable, let placement else { return }
         if model.explode > 0 { model.explode = 0 }
+        dragTarget = nil
 
         // Camera right and forward, flattened onto the table, in the anchor's space.
         let camera = arView.cameraTransform.matrix
@@ -374,6 +395,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     private func release(_ w: Windup) {
         windup = nil
+        buildCorral(around: w.base.translation)
         setBodyMode(.dynamic)
         pivot.components.set(PhysicsMotionComponent(linearVelocity: w.velocity, angularVelocity: w.spin))
         settle.reset()
@@ -398,6 +420,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let angular = turned / Float(dt)
         if settle.update(linearSpeed: linear, angularSpeed: angular, dt: dt) {
             setBodyMode(.kinematic)
+            removeCorral()
             model.rollDidSettle(faceUp: DieFace.faceUp(orientation: orientation))
         }
     }
@@ -405,6 +428,11 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// Puts the die back on its placed spot.
     func reset() {
         windup = nil
+        glide = nil
+        held = false
+        model.isHeld = false
+        dragTarget = nil
+        removeCorral()
         imu.reset()
         ticks.reset()
         setBodyMode(.kinematic)
@@ -467,8 +495,11 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         guard let firmware else { return }
         let pose = DiePose(position: pivot.position(relativeTo: nil), orientation: pivot.orientation(relativeTo: nil))
         var seq = frameSeq
+        // Slid or turned on the table, a finger's jitter mustn't read as a
+        // shake; a throw reads everything.
+        let cap: Float? = model.isRolling ? nil : DiePhysics.handlingMaxLinearMg
         for tickPose in ticks.advance(to: time, pose: pose) {
-            seq = firmware.tick(imu.reading(at: tickPose), touchMask: touchMask)
+            seq = firmware.tick(imu.reading(at: tickPose, maxLinearMg: cap), touchMask: touchMask)
         }
         if seq != frameSeq {
             frameSeq = seq
@@ -477,6 +508,144 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         while let effect = firmware.nextHaptic() { play(haptic: effect) }
         let mode = firmware.mode
         if model.firmwareMode != mode { model.firmwareMode = mode }
+
+        // The menu opened: pick the die up with its front toward you. Closed:
+        // set it back down.
+        let front = firmware.menuFront
+        if let front, !held, !model.isRolling, glide == nil {
+            pickUp(showing: front)
+        } else if front == nil, held, glide == nil {
+            putDown()
+        }
+    }
+
+    // MARK: Held and turned
+
+    private var halfHeight: Float { (rig?.model.bounds.y ?? 0) / 2 * pivot.scale.y }
+
+    /// The die's centre, in the anchor's space.
+    private var centre: SIMD3<Float> {
+        pivot.position + pivot.orientation.act(SIMD3(0, halfHeight, 0))
+    }
+
+    private func setPose(centre c: SIMD3<Float>, rotation: simd_quatf) {
+        pivot.orientation = rotation
+        pivot.position = c - rotation.act(SIMD3(0, halfHeight, 0))
+    }
+
+    private func glide(to c: SIMD3<Float>, rotation: simd_quatf, duration: TimeInterval, easeOut: Bool) {
+        glide = Glide(start: time, duration: duration, from: (centre, pivot.orientation), to: (c, rotation), easeOut: easeOut)
+    }
+
+    private func stepGlide() {
+        guard let g = glide else { return }
+        let u = Float(min((time - g.start) / g.duration, 1))
+        let e = g.easeOut ? 1 - (1 - u) * (1 - u) * (1 - u) : u * u * (3 - 2 * u)
+        setPose(
+            centre: simd_mix(g.from.centre, g.to.centre, SIMD3(repeating: e)),
+            rotation: simd_slerp(g.from.rotation, g.to.rotation, e))
+        if u >= 1 {
+            glide = nil
+            if !held { restTransform = pivot.transform }
+        }
+    }
+
+    private func stepDrag(dt: Float) {
+        guard let target = dragTarget else { return }
+        let c = centre
+        let k = 1 - exp(-DiePhysics.dragFollowRate * dt)
+        let step = (target - SIMD2(c.x, c.z)) * k
+        pivot.position += SIMD3(step.x, 0, step.y)
+        if simd_length(target - SIMD2(c.x, c.z)) < 0.0005, panMode == nil {
+            dragTarget = nil
+            restTransform = pivot.transform
+        }
+    }
+
+    private var cameraInAnchor: (position: SIMD3<Float>, right: SIMD3<Float>)? {
+        guard let placement else { return nil }
+        let camera = arView.cameraTransform.matrix
+        let right = SIMD3(camera.columns.0.x, camera.columns.0.y, camera.columns.0.z)
+        return (placement.convert(position: arView.cameraTransform.translation, from: nil),
+                placement.convert(direction: right, from: nil))
+    }
+
+    /// Lifts the die off the table, the menu's face toward the camera.
+    private func pickUp(showing front: DieFace) {
+        guard let cam = cameraInAnchor else { return }
+        held = true
+        model.isHeld = true
+        dragTarget = nil
+        let c = centre
+        let target = SIMD3<Float>(c.x, DiePhysics.heldHeight + halfHeight * 1.5, c.z)
+        let rotation = DiePhysics.heldOrientation(front: front, current: pivot.orientation, toCamera: cam.position - target)
+        glide(to: target, rotation: rotation, duration: DiePhysics.heldMoveTime, easeOut: false)
+    }
+
+    /// Sets the die back down where it was, flat on its lowest face.
+    private func putDown() {
+        held = false
+        model.isHeld = false
+        let rotation = DiePhysics.setDownOrientation(current: pivot.orientation)
+        // Straight down over the spot it was lifted from; resting on a face,
+        // the centre is half a side up.
+        let c = centre
+        let target = SIMD3<Float>(c.x, halfHeight, c.z)
+        glide(to: target, rotation: rotation, duration: DiePhysics.heldMoveTime, easeOut: false)
+    }
+
+    /// A quarter turn from the turn pad, about the die's centre: `direction`
+    /// is +1 or −1 (radians' sign) about the viewer's axis. On the table and
+    /// in the hand alike, it turns about the die's own axis nearest that one,
+    /// so it ends square.
+    func tip(_ axis: TurnAxis, _ direction: Int) {
+        guard model.isPlaced, !model.isRolling, glide == nil, let cam = cameraInAnchor else { return }
+        dragTarget = nil
+        let c = centre
+        var toward = cam.position - c
+        toward.y = 0
+        toward = simd_length(toward) < 1e-5 ? [0, 0, 1] : simd_normalize(toward)
+        var right = cam.right
+        right.y = 0
+        right = simd_length(right) < 1e-5 ? [1, 0, 0] : simd_normalize(right)
+        let wanted: SIMD3<Float> = switch axis {
+        case .pitch: right
+        case .yaw: [0, 1, 0]
+        case .roll: toward
+        }
+        let pivotAxis = DiePhysics.nearestDieAxis(to: wanted, orientation: pivot.orientation)
+        let rotation = simd_quatf(angle: Float(direction) * .pi / 2, axis: pivotAxis) * pivot.orientation
+        glide(to: c, rotation: rotation, duration: DiePhysics.tipTime, easeOut: true)
+    }
+
+    // MARK: Corral
+
+    private func buildCorral(around spot: SIMD3<Float>) {
+        removeCorral()
+        guard let radius = DiePhysics.corralRadius, let placement else { return }
+        let walls = Entity()
+        walls.name = "Corral"
+        let sides = 8
+        let width = 2 * radius * tan(.pi / Float(sides)) * 1.1
+        let shape = ShapeResource.generateBox(size: [width, DiePhysics.corralHeight, 0.01])
+        let material = PhysicsMaterialResource.generate(staticFriction: 0.3, dynamicFriction: 0.3, restitution: DiePhysics.tableRestitution)
+        for i in 0..<sides {
+            let angle = Float(i) * 2 * .pi / Float(sides)
+            let outward = SIMD3<Float>(sin(angle), 0, cos(angle))
+            let wall = Entity()
+            wall.components.set(CollisionComponent(shapes: [shape]))
+            wall.components.set(PhysicsBodyComponent(shapes: [shape], mass: 0, material: material, mode: .static))
+            wall.position = SIMD3(spot.x, DiePhysics.corralHeight / 2, spot.z) + outward * (radius + 0.005)
+            wall.orientation = simd_quatf(angle: angle, axis: [0, 1, 0])
+            walls.addChild(wall)
+        }
+        placement.addChild(walls)
+        corral = walls
+    }
+
+    private func removeCorral() {
+        corral?.removeFromParent()
+        corral = nil
     }
 
     private func redraw() {

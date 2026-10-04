@@ -163,6 +163,14 @@ impl SbDie {
         }
     }
 
+    /// The face the menu is read on (toward the person), while the menu is open.
+    pub fn menu_front(&self) -> Option<Face> {
+        match &self.core {
+            Core::Grey(fw) => fw.menu_front(),
+            Core::Rgb(fw) => fw.menu_front(),
+        }
+    }
+
     pub fn set_local_time(&mut self, seconds: u32) {
         self.sim.lock().set_local_time(seconds % 86_400);
     }
@@ -264,6 +272,16 @@ pub unsafe extern "C" fn sb_die_mode(die: *const SbDie, out: *mut u8, len: usize
         *out.add(n) = 0;
     }
     text.len()
+}
+
+/// # Safety
+/// `die` is NULL or a live die.
+#[no_mangle]
+pub unsafe extern "C" fn sb_die_menu_front(die: *const SbDie) -> i32 {
+    match die.as_ref() {
+        Some(d) => guard(-1, || d.menu_front().map_or(-1, |f| f.index() as i32)),
+        None => -1,
+    }
 }
 
 /// # Safety

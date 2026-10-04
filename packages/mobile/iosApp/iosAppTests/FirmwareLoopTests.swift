@@ -126,6 +126,50 @@ final class FirmwareLoopTests: XCTestCase {
         XCTAssertEqual(DieFace.allCases.map(\.index), [0, 1, 2, 3, 4, 5], "the firmware's face order")
     }
 
+    func testAJitteryDragNeverReadsAsAShake() {
+        // A finger sliding the die with a centimetre of jitter each tick.
+        let poses = (0..<30).map { k in
+            DiePose(position: [Float(k) * 0.005 + (k % 2 == 0 ? 0.01 : -0.01), 0, 0], orientation: still)
+        }
+        var synth = ImuSynth()
+        let mags = poses.map { synth.reading(at: $0, maxLinearMg: DiePhysics.handlingMaxLinearMg) }.map(magnitude)
+        // The firmware's shake: more than 0.7 g off 1 g; free fall: under 0.35 g.
+        XCTAssertLessThan(mags.map { abs($0 - 1000) }.max()!, 700)
+        XCTAssertGreaterThan(mags.min()!, 350)
+    }
+
+    // MARK: Held for the menu, turned, set down
+
+    func testHeldFacesTheCameraWithItsEdgeUp() {
+        let q = DiePhysics.heldOrientation(front: .pz, current: still, toCamera: [0, 0.2, 1])
+        let facing = q.act(DieFace.pz.normal)
+        let tilt = atan2(Float(0.2), 1)
+        XCTAssertEqual(facing.y, sin(tilt), accuracy: 1e-4)
+        XCTAssertEqual(facing.z, cos(tilt), accuracy: 1e-4)
+        XCTAssertGreaterThan(q.act(DieFace.pz.screenAxes.up).y, 0.9, "the screen stays upright")
+    }
+
+    func testHeldTiltIsCapped() {
+        let q = DiePhysics.heldOrientation(front: .px, current: still, toCamera: [1, 10, 0])
+        XCTAssertEqual(asin(q.act(DieFace.px.normal).y), DiePhysics.heldMaxTilt, accuracy: 1e-4)
+    }
+
+    func testSettingDownPutsTheLowestFaceFlat() {
+        // Tipped 30° forward and turned: −Y is still lowest.
+        let current = simd_quatf(angle: 0.5, axis: [1, 0, 0]) * simd_quatf(angle: 0.7, axis: [0, 1, 0])
+        let q = DiePhysics.setDownOrientation(current: current)
+        XCTAssertEqual(q.act(DieFace.ny.normal).y, -1, accuracy: 1e-5)
+        // Turned over: +Z lowest goes flat.
+        let over = DiePhysics.setDownOrientation(current: simd_quatf(angle: 1.4, axis: [1, 0, 0]))
+        XCTAssertEqual(over.act(DieFace.pz.normal).y, -1, accuracy: 1e-5)
+    }
+
+    func testQuarterTurnsUseTheDiesOwnAxes() {
+        let yawed = simd_quatf(angle: 0.3, axis: [0, 1, 0])
+        let axis = DiePhysics.nearestDieAxis(to: [1, 0, 0], orientation: yawed)
+        XCTAssertEqual(simd_length(axis - yawed.act([1, 0, 0])), 0, accuracy: 1e-6)
+    }
+
     func testPanelsPerDie() {
         let panel = { (id: String) in ModelCatalog.all.first { $0.id == id }?.panel }
         XCTAssertEqual(panel("sugarcube_34"), .grey96)

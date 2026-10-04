@@ -59,6 +59,8 @@ final class ARViewerModel {
 
     var selectedPart: String?
     private(set) var isRolling = false
+    /// Held in the air with the menu's face toward you (the firmware's menu is open).
+    var isHeld = false
     private(set) var faceUp: DieFace?
     /// Visual bounds of the loaded model, measured in metres; the debug overlay compares them with the table.
     private(set) var measured: SIMD3<Float>?
@@ -111,6 +113,7 @@ final class ARViewerModel {
     var hint: String? {
         if isCoaching { return nil }
         if !isPlaced { return planeFound ? "Tap the table to place the die" : "Move your device slowly to find the table" }
+        if isHeld { return "Menu: tip it with the turn pad · touch the front face" }
         return nil
     }
 
@@ -188,7 +191,16 @@ final class ARViewerModel {
     // MARK: Rolling
 
     var canThrow: Bool {
-        isPlaced && !isRolling && !isLoading && (selected?.isThrowable ?? false)
+        isPlaced && !isRolling && !isHeld && !isLoading && (selected?.isThrowable ?? false)
+    }
+
+    /// The turn pad works once the die is down and not mid-throw.
+    var canTurn: Bool { isPlaced && !isRolling && !isLoading }
+
+    /// A quarter turn about one of the viewer's axes (+1 or −1): a menu tip
+    /// while the die is held, or turning it over on the table.
+    func tip(_ axis: TurnAxis, _ direction: Int) {
+        scene?.tip(axis, direction)
     }
 
     /// Throws away from the camera, for the Roll button.

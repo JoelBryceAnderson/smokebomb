@@ -21,9 +21,31 @@ enum DiePhysics {
     static let angularDamping: Float = 0.6
 
     /// Throw speed along the table, in m/s, from a gentle flick to a hard one.
-    static let throwSpeed: ClosedRange<Float> = 0.25...1.4
+    static let throwSpeed: ClosedRange<Float> = 0.15...0.6
     /// Upward speed added to every throw, in m/s.
-    static let throwLift: Float = 0.5
+    static let throwLift: Float = 0.35
+    /// Invisible walls this far around where a throw starts keep the die
+    /// close, in metres; nil lets it roll anywhere.
+    static let corralRadius: Float? = 0.18
+    /// Height of those walls, in metres.
+    static let corralHeight: Float = 0.15
+
+    // Handling on the table. Linear acceleration is capped below the
+    // firmware's shake threshold (0.7 g off 1 g) while the die is slid or
+    // turned, and a dragged die eases toward the finger.
+    static let handlingMaxLinearMg: Float = 400
+    /// How quickly a dragged die catches up with the finger, per second.
+    static let dragFollowRate: Float = 18
+
+    // Held for the menu: lifted off the table with the menu's face toward you.
+    /// How high the die's bottom floats above the table, in metres.
+    static let heldHeight: Float = 0.08
+    /// The most the held face tilts up toward the camera, in radians.
+    static let heldMaxTilt: Float = 0.6
+    /// Seconds to lift the die into the hand, or set it back down.
+    static let heldMoveTime: TimeInterval = 0.5
+    /// Seconds for one quarter turn from the turn pad (a menu tip).
+    static let tipTime: TimeInterval = 0.35
     /// Tumble speed, in rad/s.
     static let throwSpin: ClosedRange<Float> = 10...30
     /// Flick speed, in points per second, that maps to the top of `throwSpeed`.
@@ -139,5 +161,53 @@ struct SettleDetector {
             still = 0
         }
         return still >= DiePhysics.settleTime || elapsed >= DiePhysics.maxRollTime
+    }
+}
+
+/// The turn pad's axes, in the viewer's frame (the firmware's menu tips,
+/// SIM_SPEC C3): about the viewer's right (tip up/down), about vertical
+/// (tip left/right), and about the line of sight (a twist).
+enum TurnAxis: Sendable {
+    case pitch, yaw, roll
+}
+
+extension DiePhysics {
+    /// The rotation taking die axes `a` and `b` (orthonormal) to `a2` and `b2`.
+    static func rotation(from a: SIMD3<Float>, _ b: SIMD3<Float>, to a2: SIMD3<Float>, _ b2: SIMD3<Float>) -> simd_quatf {
+        let local = simd_float3x3(columns: (a, b, simd_cross(a, b)))
+        let target = simd_float3x3(columns: (a2, b2, simd_cross(a2, b2)))
+        return simd_normalize(simd_quatf(target * local.transpose))
+    }
+
+    /// Of the die's six axes (in its frame), the one `orientation` turns
+    /// closest to `direction`; returned in world space.
+    static func nearestDieAxis(to direction: SIMD3<Float>, orientation: simd_quatf) -> SIMD3<Float> {
+        DieFace.allCases.map { orientation.act($0.normal) }.max { simd_dot($0, direction) < simd_dot($1, direction) }!
+    }
+
+    /// Held for the menu: the menu's `front` face toward the camera, tilted up
+    /// toward it by at most `heldMaxTilt`, and turned so whichever of its edges
+    /// was most nearly up stays up. `toCamera` is from the die to the camera.
+    static func heldOrientation(front: DieFace, current: simd_quatf, toCamera: SIMD3<Float>) -> simd_quatf {
+        let up = SIMD3<Float>(0, 1, 0)
+        var flat = SIMD3<Float>(toCamera.x, 0, toCamera.z)
+        flat = simd_length(flat) < 1e-5 ? [0, 0, 1] : simd_normalize(flat)
+        let tilt = min(max(atan2(toCamera.y, simd_length(SIMD2(toCamera.x, toCamera.z))), 0), heldMaxTilt)
+        let facing = flat * cos(tilt) + up * sin(tilt)
+        let upright = simd_normalize(up - facing * simd_dot(up, facing))
+        let (right, screenUp) = front.screenAxes
+        let edge = [screenUp, -screenUp, right, -right].max { simd_dot(current.act($0), up) < simd_dot(current.act($1), up) }!
+        return rotation(from: front.normal, edge, to: facing, upright)
+    }
+
+    /// Set down after the menu: whichever face is lowest goes flat on the
+    /// table, keeping the die's heading.
+    static func setDownOrientation(current: simd_quatf) -> simd_quatf {
+        let down = DieFace.allCases.min { current.act($0.normal).y < current.act($1.normal).y }!
+        let side = down.screenAxes.right
+        var heading = current.act(side)
+        heading.y = 0
+        heading = simd_length(heading) < 1e-5 ? [1, 0, 0] : simd_normalize(heading)
+        return rotation(from: down.normal, side, to: [0, -1, 0], heading)
     }
 }
