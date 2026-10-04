@@ -590,21 +590,24 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let target = SIMD3<Float>(c.x, DiePhysics.heldHeight + halfHeight * 1.5, c.z)
         let rotation = DiePhysics.heldOrientation(front: front, current: pivot.orientation, toCamera: cam.position - target)
         glide(to: target, rotation: rotation, duration: DiePhysics.heldMoveTime, easeOut: false)
-        showMenuPanel(beside: target, camera: cam)
+        showMenuPanel(dieCentre: target, dieRotation: rotation, front: front)
     }
 
-    /// Stands the glass turn pad beside where the die is held, on the
-    /// camera's right, facing the phone as it is now. It stays put after.
-    private func showMenuPanel(beside dieCentre: SIMD3<Float>, camera cam: (position: SIMD3<Float>, right: SIMD3<Float>)) {
+    /// Stands the glass turn pad in the plane of the held die's menu screen,
+    /// beside it on the screen's right: as if the screen carried on past the
+    /// die's edge. It stays put after.
+    private func showMenuPanel(dieCentre: SIMD3<Float>, dieRotation: simd_quatf, front: DieFace) {
         guard let placement, let rig else { return }
         menuPanel?.hide()
         let side = max(rig.model.bounds.x, rig.model.bounds.z) * pivot.scale.x
         let panel = MenuPanel(side: side)
-        var right = cam.right
-        right.y = 0
-        right = simd_length(right) < 1e-5 ? [1, 0, 0] : simd_normalize(right)
-        let position = dieCentre + right * (side * 0.9 + DiePhysics.menuPanelGap + panel.width / 2)
-        panel.show(at: position, facing: cam.position, in: placement)
+        let rotation = DiePhysics.menuPanelRotation(dieRotation: dieRotation, front: front)
+        let normal = rotation.act([0, 0, 1])
+        let right = rotation.act([1, 0, 0])
+        let position = dieCentre
+            + normal * (side / 2 + DiePhysics.menuPanelLift)
+            + right * (side / 2 + DiePhysics.menuPanelGap + panel.width / 2)
+        panel.show(at: position, rotation: rotation, in: placement)
         menuPanel = panel
     }
 

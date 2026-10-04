@@ -55,7 +55,7 @@ final class DieRigTests: XCTestCase {
     func testMenuPanelStandsUprightFacingTheViewer() {
         let parent = Entity()
         let panel = MenuPanel(side: 0.03)
-        panel.show(at: [0.05, 0.1, 0], facing: [0.05, 0.1, 1], in: parent)
+        panel.show(at: [0.05, 0.1, 0], rotation: simd_quatf(angle: 0, axis: [0, 1, 0]), in: parent)
         XCTAssertEqual(panel.root.children.count, 7, "the pane and six keys")
         XCTAssertTrue(panel.root.parent === parent)
         // Its face (+Z) toward the viewer, its up still up.

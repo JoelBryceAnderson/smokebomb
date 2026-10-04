@@ -46,8 +46,11 @@ enum DiePhysics {
     static let heldMoveTime: TimeInterval = 0.5
     /// Seconds for one quarter turn from the turn pad (a menu tip).
     static let tipTime: TimeInterval = 0.35
-    /// Space between the held die and the glass turn pad, in metres.
-    static let menuPanelGap: Float = 0.012
+    /// Space between the held die's edge and the glass turn pad, in metres.
+    static let menuPanelGap: Float = 0.008
+    /// How far the pad sits in front of the menu screen's plane, in metres
+    /// (just clear of the sapphire).
+    static let menuPanelLift: Float = 0.0005
     /// Tumble speed, in rad/s.
     static let throwSpin: ClosedRange<Float> = 10...30
     /// Flick speed, in points per second, that maps to the top of `throwSpeed`.
@@ -200,6 +203,16 @@ extension DiePhysics {
         let (right, screenUp) = front.screenAxes
         let edge = [screenUp, -screenUp, right, -right].max { simd_dot(current.act($0), up) < simd_dot(current.act($1), up) }!
         return rotation(from: front.normal, edge, to: facing, upright)
+    }
+
+    /// The glass turn pad's orientation: in the plane of the held die's `front`
+    /// face, facing the same way, with the pad's up along whichever of that
+    /// face's edges is most nearly up (the way the menu reads).
+    static func menuPanelRotation(dieRotation: simd_quatf, front: DieFace) -> simd_quatf {
+        let normal = dieRotation.act(front.normal)
+        let (right, screenUp) = front.screenAxes
+        let up = [screenUp, -screenUp, right, -right].map { dieRotation.act($0) }.max { $0.y < $1.y }!
+        return rotation(from: [0, 0, 1], [0, 1, 0], to: normal, up)
     }
 
     /// Set down after the menu: whichever face is lowest goes flat on the

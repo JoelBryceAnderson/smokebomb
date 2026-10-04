@@ -268,8 +268,9 @@ RealityKit pose ──► ImuSynth ──► sb_die_tick(imu, touch) ──► s
   table with the menu's face toward you, tilted up toward the camera, as if
   in your hand.
   - The **turn pad** is a pane of glass beside the held die, only while the
-    menu is open. It stands on the camera's right, facing the phone as it was
-    when the menu opened, and then stays put in the room like a real object.
+    menu is open. It lies in the plane of the die's menu screen, beside it on
+    the screen's right, as if that screen carried on past the die's edge, and
+    then stays put in the room like a real object.
     Tap its keys: ▲ ▼ are ∓90° about your right, ◀ ▶ are ∓90° about
     vertical, and the twist keys turn the die about the line of sight. The
     firmware reads the turns from the gyro, as on the hardware

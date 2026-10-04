@@ -2,9 +2,9 @@ import RealityKit
 import UIKit
 
 /// The turn pad as a pane of glass floating beside the held die: the menu's
-/// tips (SIM_SPEC C3) as keys in space. It's placed when the menu opens,
-/// turned toward where the phone is then, and stays put in the room after
-/// that, like a real object; walk around and it stays where it was.
+/// tips (SIM_SPEC C3) as keys in space. It lies in the plane of the die's
+/// menu screen, as if that screen carried on past the die's edge, and stays
+/// put in the room after that, like a real object.
 @MainActor
 final class MenuPanel {
     /// Keys answer ray casts in this group only, so they never touch the physics.
@@ -73,17 +73,9 @@ final class MenuPanel {
         }
     }
 
-    /// Stands the pane at `position` (anchor space), its face toward `viewer`,
-    /// upright; it grows in from a little smaller.
-    func show(at position: SIMD3<Float>, facing viewer: SIMD3<Float>, in parent: Entity) {
-        var forward = viewer - position
-        forward = simd_length(forward) < 1e-5 ? [0, 0, 1] : simd_normalize(forward)
-        let up = SIMD3<Float>(0, 1, 0)
-        var right = simd_cross(up, forward)
-        right = simd_length(right) < 1e-5 ? [1, 0, 0] : simd_normalize(right)
-        let upright = simd_cross(forward, right)
-        let rotation = simd_quatf(simd_float3x3(columns: (right, upright, forward)))
-
+    /// Stands the pane at `position` (in `parent`'s space), its face along
+    /// `rotation`'s +Z and its up along +Y; it grows in from a little smaller.
+    func show(at position: SIMD3<Float>, rotation: simd_quatf, in parent: Entity) {
         parent.addChild(root)
         root.transform = Transform(scale: SIMD3(repeating: 0.7), rotation: rotation, translation: position)
         root.move(

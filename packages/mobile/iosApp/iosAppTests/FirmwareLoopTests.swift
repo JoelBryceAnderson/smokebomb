@@ -164,6 +164,15 @@ final class FirmwareLoopTests: XCTestCase {
         XCTAssertEqual(over.act(DieFace.pz.normal).y, -1, accuracy: 1e-5)
     }
 
+    func testTheTurnPadLiesInTheMenuScreensPlane() {
+        let die = DiePhysics.heldOrientation(front: .px, current: still, toCamera: [1, 0.3, 0.2])
+        let pad = DiePhysics.menuPanelRotation(dieRotation: die, front: .px)
+        // Same facing as the menu screen, and upright as the screen reads.
+        XCTAssertEqual(simd_distance(pad.act([0, 0, 1]), die.act(DieFace.px.normal)), 0, accuracy: 1e-5)
+        XCTAssertGreaterThan(pad.act([0, 1, 0]).y, 0.8)
+        XCTAssertEqual(simd_dot(pad.act([1, 0, 0]), die.act(DieFace.px.normal)), 0, accuracy: 1e-5, "its sideways is in the plane")
+    }
+
     func testQuarterTurnsUseTheDiesOwnAxes() {
         let yawed = simd_quatf(angle: 0.3, axis: [0, 1, 0])
         let axis = DiePhysics.nearestDieAxis(to: [1, 0, 0], orientation: yawed)
