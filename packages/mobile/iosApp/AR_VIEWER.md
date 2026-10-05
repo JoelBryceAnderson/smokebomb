@@ -275,9 +275,12 @@ the lid before the real per-part models exist.
 ## The lid
 
 **Lid off** takes the lid off, as the desktop mockup does. The die turns
-lid-up, the lid lifts straight off the screws, then swings over and lies
-inside-up beside the cup, to the view's right. **Lid on** puts it back and
-turns the die back over onto its lid. It works on the dice, their x-rays and
+lid-up and the four screws turn out of their holes and lie in a row on the
+table in front of it. Then the lid lifts straight off, swings over and lies
+inside-up beside the cup, to the view's right. **Lid on** puts the lid back,
+the screws back over their holes and in, and turns the die back over onto
+its lid. The timings are `screwTime`, `screwLayTime` and `lidMoveTime` in
+`DiePhysics.swift`. It works on the dice, their x-rays and
 the per-part fixture, not the line-up or the pre-exploded x-ray.
 
 While it's off:
@@ -298,10 +301,11 @@ sorts each mesh by name (`DieLid.rule(for:)`):
 
 | Goes | Parts |
 |---|---|
-| With the lid, whole | `Lid`, `Screw_*`, `ScrewSleevesAndSlots`, `Etching`, `Window_ny`, `Module_ny`, `Screen_ny`, `Board`; in the x-rays the board and what's on and under it (`Internal_board`, `_ic`, `_lra`, `_ind`), the contacts' leads and sleeves (`Internal_w_charge`, `_w_12v`, `_sleeve`) |
-| The lid takes its face's piece | `LidScrews`, `SapphireWindows`, `Internal_panel_glass`, `_encap`, `_chip`, `_fpc`: one mesh with a piece on every face; the triangles nearest −Y go, so the lid's screen takes its own module and ribbon and the other ribbons stay |
-| Stays in the cup | `Pillar_*` and every other `Internal_*`: the frame, the cell and its lead, the screens' harness, the tungsten, the pillars and their inserts |
-| Hidden | `LidSeam` |
+| On its own screw entity | `Screw_*`, `LidScrews` (its −Y pieces) and the slots in the heads (the middle of `ScrewSleevesAndSlots`); the sleeves round them stay in the lid |
+| With the lid, whole | `Lid`, `Etching`, `Window_ny`, `Module_ny`, `Screen_ny`, `Board`; in the x-rays the board and what's on and under it (`Internal_board`, `_ic`, `_lra`, `_ind`), the contacts' leads and sleeves (`Internal_w_charge`, `_w_12v`, `_sleeve`) |
+| The lid takes its face's piece | `SapphireWindows`, `Internal_panel_glass`, `_encap`, `_chip`, `_fpc`: one mesh with a piece on every face; the triangles nearest −Y go, so the lid's screen takes its own module and ribbon and the other ribbons stay |
+| Stays in the cup | `Pillar_*` and every other `Internal_*`: the frame, the cell, the tungsten, the pillars and their inserts |
+| Hidden | `LidSeam`, and the wiring that plugs into the board: the screens' harness (`Internal_w_spi_*`) and the cell's lead (`Internal_w_batt`) |
 | Cut at the seam | Everything else (the shell): a triangle goes to the lid when its centre is below the seam, or inside the lid's flat (up to an edge radius from the lid face, clear of the walls) |
 
 The shell is a single skin, so the cut is closed as the mockup draws it, in

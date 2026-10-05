@@ -80,6 +80,10 @@ final class DieRigTests: XCTestCase {
         XCTAssertTrue(lid.root.findEntity(named: "Module_ny") != nil)
         XCTAssertNil(lid.root.findEntity(named: "Pillar_0"), "the pillars stay in the cup")
         XCTAssertNil(lid.root.findEntity(named: "Module_py"))
+        // Each screw on an entity of its own, in its corner.
+        XCTAssertEqual(lid.screws.count, 4)
+        XCTAssertTrue(lid.screws.allSatisfy { $0.children.count == 1 })
+        XCTAssertNil(lid.root.findEntity(named: "Screw_0"), "the screws aren't the lid's")
         XCTAssertLessThan(simd_distance(screen.position(relativeTo: pivot), before), 1e-6, "nothing moves until the lid does")
 
         lid.root.position = [0.05, 0, 0]

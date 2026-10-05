@@ -82,6 +82,16 @@ enum DiePhysics {
     static let lidOffDistance: Float = 1.45
     /// How far the lid lifts straight off the screws before it swings, in die sides.
     static let lidPull: Float = 0.3
+    /// Seconds for the lid screws to turn out of their holes (or back in),
+    /// and how many turns they make doing it.
+    static let screwTime: TimeInterval = 0.8
+    static let screwTurns: Float = 3
+    /// Seconds to carry the screws between the die and the table.
+    static let screwLayTime: TimeInterval = 0.6
+    /// Out, the screws lie in a row this many die sides in front of the
+    /// die's centre (toward you), this many die sides apart.
+    static let screwRowDistance: Float = 0.95
+    static let screwSpacing: Float = 0.22
 
     /// Space between the held die's edge and the glass turn pad, in metres.
     static let menuPanelGap: Float = 0.008

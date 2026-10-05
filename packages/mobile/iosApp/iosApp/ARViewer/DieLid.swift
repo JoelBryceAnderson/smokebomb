@@ -11,9 +11,13 @@ import UIKit
 ///
 /// - the lid's own parts go whole: the board and everything on it, the −Y
 ///   screen, the etching, the screw sleeves;
-/// - the cup's stay: the frame, the cell, the harness, the pillars;
-/// - meshes with a piece on every face (windows, display modules, ribbons,
-///   screws) give the lid the triangles nearest its face;
+/// - the cup's stay: the frame, the cell, the pillars;
+/// - meshes with a piece on every face (windows, display modules, ribbons)
+///   give the lid the triangles nearest its face;
+/// - the four screws (and the slots in their heads) each get an entity of
+///   their own (`screws`), so they can come out before the lid does;
+/// - the wiring that plugs into the board (the screens' harness, the cell's
+///   lead) is hidden, as it's unplugged;
 /// - the shell is cut at the seam.
 ///
 /// The cut is closed as the mockup draws it: a taper from the seam in to the
@@ -93,6 +97,8 @@ final class DieLid {
         case cup
         /// A piece on every face: the lid takes the triangles nearest its face.
         case byFace
+        /// The lid's screws: each comes out on its own.
+        case screws
         /// Only shown with the lid on.
         case hidden
     }
@@ -100,30 +106,45 @@ final class DieLid {
     /// How a part is sorted; nil means cut at the seam (the shell).
     static func rule(for name: String) -> Rule? {
         switch name {
-        case "LidSeam":
+        // The seam's hairline, and the wiring that plugs into the board and
+        // would hang loose with it gone: the screens' harness and the cell's lead.
+        case "LidSeam", "Internal_w_batt":
             return .hidden
         case "Lid", "Etching", "Window_ny", "Module_ny", "Screen_ny", "LiveScreen_ny", "Board",
-             "ScrewSleevesAndSlots",
              // The board and what's on it or under it, and the charge contacts' sleeves and leads.
              "Internal_board", "Internal_ic", "Internal_lra", "Internal_ind",
              "Internal_w_charge", "Internal_w_12v", "Internal_sleeve":
             return .lid
-        case "LidScrews", "SapphireWindows",
-             "Internal_panel_glass", "Internal_encap", "Internal_chip", "Internal_fpc":
+        case "SapphireWindows", "Internal_panel_glass", "Internal_encap", "Internal_chip", "Internal_fpc":
             return .byFace
+        // The screws, and the slots in their heads (the sleeves round them stay in the lid).
+        case "LidScrews", "ScrewSleevesAndSlots":
+            return .screws
         default:
-            if name.hasPrefix("Screw_") { return .lid }
-            // The frame, the cell and its lead, the screens' harness, the
-            // tungsten, the pillars and their inserts: the cup's.
+            if name.hasPrefix("Screw_") { return .screws }
+            if name.hasPrefix("Internal_w_spi") { return .hidden }
+            // The frame, the cell, the tungsten, the pillars and their
+            // inserts: the cup's.
             if name.hasPrefix("Pillar_") || name.hasPrefix("Internal_") { return .cup }
             return nil
         }
     }
 
+    /// Where a piece of a mesh goes.
+    private enum Destination: Hashable {
+        case cup, lid, screw(Int)
+    }
+
     let root = Entity()
     let geometry: Geometry
+    /// The four lid screws, each about its own axis: an entity at the screw
+    /// head's centre on the lid face, in the die's frame (Y along the screw,
+    /// into the die), starting on the reference entity where it sits.
+    private(set) var screws: [Entity] = []
+    /// Where each screw sits on the die: its head's centre, in the die's frame.
+    private(set) var screwSeats: [SIMD3<Float>] = []
     private let reference: Entity
-    /// What's added while the lid is off: the cup's mouth, and a die's borrowed internals.
+    /// What's added while the lid is off: the cup's mouth, a die's borrowed internals, the screws.
     private var added: [Entity] = []
     private var moved: [(entity: Entity, parent: Entity, transform: Transform, opacity: OpacityComponent?)] = []
     private var split: [(entity: Entity, original: ModelComponent)] = []
@@ -140,6 +161,7 @@ final class DieLid {
         root.name = "LidOff"
         reference.addChild(root)
         if let internals { borrow(internals, into: dieRoot) }
+        findScrews(in: dieRoot)
         visit(dieRoot)
         guard !moved.isEmpty || !split.isEmpty else {
             restore()
@@ -166,6 +188,7 @@ final class DieLid {
         split.removeAll()
         hidden.removeAll()
         added.removeAll()
+        screws.removeAll()
         root.removeFromParent()
     }
 
@@ -189,7 +212,56 @@ final class DieLid {
         added.append(holder)
     }
 
+    /// Finds the four screws (by corner, from the lid face's screw heads or
+    /// the per-part `Screw_*` prims) and makes an entity for each.
+    private func findScrews(in dieRoot: Entity) {
+        var sums: [SIMD2<Float>] = Array(repeating: .zero, count: 4), counts = [Int](repeating: 0, count: 4)
+        let g = geometry
+        func add(_ p: SIMD3<Float>) {
+            let q = Self.corner(p)
+            sums[q] += SIMD2(p.x, p.z)
+            counts[q] += 1
+        }
+        func find(_ entity: Entity) {
+            if entity.name == "LidScrews", let model = entity.components[ModelComponent.self] {
+                forEachTriangle(entity, model) { if g.nearestFace($0) == .ny { add($0) } }
+            } else if entity.name.hasPrefix("Screw_") {
+                add(entity.visualBounds(relativeTo: reference).center)
+                return
+            }
+            for child in entity.children { find(child) }
+        }
+        find(dieRoot)
+        guard counts.allSatisfy({ $0 > 0 }) else { return }
+        for q in 0..<4 {
+            let centre = sums[q] / Float(counts[q])
+            let seat = SIMD3<Float>(centre.x, 0, centre.y)
+            let screw = Entity()
+            screw.name = "LidScrew_\(q)"
+            reference.addChild(screw)
+            screw.position = seat
+            screws.append(screw)
+            screwSeats.append(seat)
+            added.append(screw)
+        }
+    }
+
+    /// The corner a point is in: 0 (+x +z), 1 (+x −z), 2 (−x +z), 3 (−x −z).
+    private static func corner(_ p: SIMD3<Float>) -> Int {
+        (p.x >= 0 ? 0 : 2) + (p.z >= 0 ? 0 : 1)
+    }
+
+    /// The screw a point belongs to, if it's within a screw head of one.
+    private func screw(near p: SIMD3<Float>) -> Int? {
+        let radius = 0.00085 * geometry.side / 0.030
+        let q = Self.corner(p)
+        guard q < screwSeats.count else { return nil }
+        let seat = screwSeats[q]
+        return simd_length(SIMD2(p.x - seat.x, p.z - seat.z)) < radius ? q : nil
+    }
+
     private func visit(_ entity: Entity) {
+        let g = geometry
         switch Self.rule(for: entity.name) {
         case .hidden?:
             if entity.isEnabled {
@@ -198,35 +270,53 @@ final class DieLid {
             }
             return
         case .lid?:
-            move(entity)
+            move(entity, to: root)
             return
         case .cup?:
             return
         case .byFace?:
-            let g = geometry
-            cutAll(entity) { g.nearestFace($0) == .ny }
+            cutAll(entity) { g.nearestFace($0) == .ny ? .lid : .cup }
+            return
+        case .screws?:
+            if entity.name.hasPrefix("Screw_"), !screws.isEmpty {
+                move(entity, to: screws[Self.corner(entity.visualBounds(relativeTo: reference).center)])
+                return
+            }
+            let slots = entity.name == "ScrewSleevesAndSlots"
+            cutAll(entity) { p in
+                if let q = self.screw(near: p), slots || g.nearestFace(p) == .ny { return .screw(q) }
+                // A sleeve stays in the lid; a screw with nowhere to go goes with the lid.
+                return slots || g.nearestFace(p) == .ny ? .lid : .cup
+            }
             return
         case nil:
             break
         }
-        let g = geometry
-        if let model = entity.components[ModelComponent.self], cut(entity, model, by: { g.isLid($0) }) { return }
+        if let model = entity.components[ModelComponent.self], cut(entity, model, by: { g.isLid($0) ? .lid : .cup }) { return }
         for child in Array(entity.children) { visit(child) }
     }
 
     /// Cuts an entity and every mesh under it.
-    private func cutAll(_ entity: Entity, by isLid: (SIMD3<Float>) -> Bool) {
-        if let model = entity.components[ModelComponent.self], cut(entity, model, by: isLid) { return }
-        for child in Array(entity.children) { cutAll(child, by: isLid) }
+    private func cutAll(_ entity: Entity, by place: (SIMD3<Float>) -> Destination) {
+        if let model = entity.components[ModelComponent.self], cut(entity, model, by: place) { return }
+        for child in Array(entity.children) { cutAll(child, by: place) }
     }
 
-    /// Moves a whole part onto the lid, keeping where it is and how see-through.
-    private func move(_ entity: Entity) {
+    private func parent(for destination: Destination) -> Entity? {
+        switch destination {
+        case .cup: return nil
+        case .lid: return root
+        case .screw(let q): return q < screws.count ? screws[q] : root
+        }
+    }
+
+    /// Moves a whole part, keeping where it is and how see-through.
+    private func move(_ entity: Entity, to destination: Entity) {
         guard let parent = entity.parent else { return }
         let own = entity.components[OpacityComponent.self]
         let opacity = inheritedOpacity(from: parent) * (own?.opacity ?? 1)
         moved.append((entity, parent, entity.transform, own))
-        root.addChild(entity, preservingWorldTransform: true)
+        destination.addChild(entity, preservingWorldTransform: true)
         if opacity < 1 { entity.components.set(OpacityComponent(opacity: opacity)) }
     }
 
@@ -241,87 +331,101 @@ final class DieLid {
         return opacity
     }
 
-    /// Splits one mesh by triangle, by where each triangle's centre is in the
-    /// die's frame. True if the whole entity went to the lid (its children
-    /// went with it).
-    private func cut(_ entity: Entity, _ model: ModelComponent, by isLid: (SIMD3<Float>) -> Bool) -> Bool {
+    /// Calls `body` with each triangle's centre, in the die's frame.
+    private func forEachTriangle(_ entity: Entity, _ model: ModelComponent, _ body: (SIMD3<Float>) -> Void) {
         let toReference = entity.transformMatrix(relativeTo: reference)
         let contents = model.mesh.contents
-        var lid: (models: [MeshResource.Model], instances: [MeshResource.Instance]) = ([], [])
-        var cup: (models: [MeshResource.Model], instances: [MeshResource.Instance]) = ([], [])
-        var lidCount = 0, cupCount = 0
+        for instance in contents.instances {
+            guard let source = contents.models[instance.model] else { continue }
+            let matrix = toReference * instance.transform
+            for part in source.parts {
+                let positions = part.positions.elements
+                let indices = part.triangleIndices?.elements ?? Array(0..<UInt32(positions.count))
+                var t = 0
+                while t + 2 < indices.count {
+                    let centre = (positions[Int(indices[t])] + positions[Int(indices[t + 1])] + positions[Int(indices[t + 2])]) / 3
+                    let p = matrix * SIMD4(centre, 1)
+                    body(SIMD3(p.x, p.y, p.z))
+                    t += 3
+                }
+            }
+        }
+    }
+
+    /// Splits one mesh by triangle, by where each triangle's centre is in the
+    /// die's frame. True if the whole entity went somewhere else (its
+    /// children went with it).
+    private func cut(_ entity: Entity, _ model: ModelComponent, by place: (SIMD3<Float>) -> Destination) -> Bool {
+        let toReference = entity.transformMatrix(relativeTo: reference)
+        let contents = model.mesh.contents
+        var pieces: [Destination: (models: [MeshResource.Model], instances: [MeshResource.Instance], count: Int)] = [:]
 
         for (i, instance) in contents.instances.enumerated() {
             guard let source = contents.models[instance.model] else { continue }
             let matrix = toReference * instance.transform
-            var lidParts: [MeshResource.Part] = [], cupParts: [MeshResource.Part] = []
+            var parts: [Destination: [MeshResource.Part]] = [:]
             for part in source.parts {
                 let positions = part.positions.elements
                 let indices = part.triangleIndices?.elements ?? Array(0..<UInt32(positions.count))
-                var lidIndices: [UInt32] = [], cupIndices: [UInt32] = []
+                var sorted: [Destination: [UInt32]] = [:]
                 var t = 0
                 while t + 2 < indices.count {
                     let a = indices[t], b = indices[t + 1], c = indices[t + 2]
                     let centre = (positions[Int(a)] + positions[Int(b)] + positions[Int(c)]) / 3
                     let p = matrix * SIMD4(centre, 1)
-                    if isLid(SIMD3(p.x, p.y, p.z)) {
-                        lidIndices += [a, b, c]
-                    } else {
-                        cupIndices += [a, b, c]
-                    }
+                    sorted[place(SIMD3(p.x, p.y, p.z)), default: []] += [a, b, c]
                     t += 3
                 }
-                lidCount += lidIndices.count
-                cupCount += cupIndices.count
-                if !lidIndices.isEmpty {
+                for (destination, kept) in sorted {
                     var p = part
-                    p.triangleIndices = MeshBuffer(lidIndices)
-                    lidParts.append(p)
-                }
-                if !cupIndices.isEmpty {
-                    var p = part
-                    p.triangleIndices = MeshBuffer(cupIndices)
-                    cupParts.append(p)
+                    p.triangleIndices = MeshBuffer(kept)
+                    parts[destination, default: []].append(p)
+                    pieces[destination, default: ([], [], 0)].count += kept.count
                 }
             }
             let id = "\(instance.model)#\(i)"
-            if !lidParts.isEmpty {
-                lid.models.append(MeshResource.Model(id: id, parts: lidParts))
-                lid.instances.append(MeshResource.Instance(id: id, model: id, at: instance.transform))
-            }
-            if !cupParts.isEmpty {
-                cup.models.append(MeshResource.Model(id: id, parts: cupParts))
-                cup.instances.append(MeshResource.Instance(id: id, model: id, at: instance.transform))
+            for (destination, kept) in parts {
+                pieces[destination, default: ([], [], 0)].models.append(MeshResource.Model(id: id, parts: kept))
+                pieces[destination, default: ([], [], 0)].instances.append(MeshResource.Instance(id: id, model: id, at: instance.transform))
             }
         }
 
-        if lidCount == 0 { return false }
-        if cupCount == 0 {
-            move(entity)
+        let elsewhere = pieces.keys.filter { $0 != .cup }
+        if elsewhere.isEmpty { return false }
+        if pieces.count == 1, let only = elsewhere.first, let destination = parent(for: only) {
+            move(entity, to: destination)
             return true
         }
-        guard let lidMesh = Self.mesh(lid.models, lid.instances),
-              let cupMesh = Self.mesh(cup.models, cup.instances)
-        else { return false }
+        var meshes: [Destination: MeshResource] = [:]
+        for (destination, piece) in pieces {
+            guard let mesh = Self.mesh(piece.models, piece.instances) else { return false }
+            meshes[destination] = mesh
+        }
 
         split.append((entity, model))
-        // Both halves show their insides now the die is open.
+        // Every piece shows its inside now the die is open.
         let materials = model.materials.map(Self.doubleSided)
-        var cupModel = model
-        cupModel.mesh = cupMesh
-        cupModel.materials = materials
-        entity.components.set(cupModel)
-
-        let fragment = Entity()
-        fragment.name = "\(entity.name)_lid"
-        var lidModel = model
-        lidModel.mesh = lidMesh
-        lidModel.materials = materials
-        fragment.components.set(lidModel)
-        root.addChild(fragment)
-        fragment.setTransformMatrix(entity.transformMatrix(relativeTo: root), relativeTo: root)
+        if let cupMesh = meshes[.cup] {
+            var cupModel = model
+            cupModel.mesh = cupMesh
+            cupModel.materials = materials
+            entity.components.set(cupModel)
+        } else {
+            entity.components.remove(ModelComponent.self)
+        }
         let opacity = inheritedOpacity(from: entity)
-        if opacity < 1 { fragment.components.set(OpacityComponent(opacity: opacity)) }
+        for (destination, mesh) in meshes {
+            guard let parent = parent(for: destination) else { continue }
+            let fragment = Entity()
+            fragment.name = "\(entity.name)_\(destination)"
+            var piece = model
+            piece.mesh = mesh
+            piece.materials = materials
+            fragment.components.set(piece)
+            parent.addChild(fragment)
+            fragment.setTransformMatrix(entity.transformMatrix(relativeTo: parent), relativeTo: parent)
+            if opacity < 1 { fragment.components.set(OpacityComponent(opacity: opacity)) }
+        }
         return false
     }
 

@@ -88,21 +88,26 @@ final class ViewerLogicTests: XCTestCase {
     }
 
     func testLidPartsByName() {
-        XCTAssertEqual(DieLid.rule(for: "Screw_2"), .lid)
         XCTAssertEqual(DieLid.rule(for: "Screen_ny"), .lid)
         // The board and what's on it come off together.
         for name in ["Internal_board", "Internal_ic", "Internal_lra", "Internal_ind", "Internal_w_charge"] {
             XCTAssertEqual(DieLid.rule(for: name), .lid, name)
         }
         // Pieces on every face: the lid takes its own.
-        for name in ["LidScrews", "SapphireWindows", "Internal_fpc", "Internal_panel_glass"] {
+        for name in ["SapphireWindows", "Internal_fpc", "Internal_panel_glass"] {
             XCTAssertEqual(DieLid.rule(for: name), .byFace, name)
         }
-        // The cup keeps its harness, cell and frame.
-        for name in ["Pillar_0", "Internal_w_spi_a", "Internal_battery", "Internal_frame", "Internal_pillar"] {
+        // The screws come out on their own.
+        for name in ["LidScrews", "ScrewSleevesAndSlots", "Screw_2"] {
+            XCTAssertEqual(DieLid.rule(for: name), .screws, name)
+        }
+        // The cup keeps its cell and frame; the wiring into the board is unplugged.
+        for name in ["Pillar_0", "Internal_battery", "Internal_frame", "Internal_pillar"] {
             XCTAssertEqual(DieLid.rule(for: name), .cup, name)
         }
-        XCTAssertEqual(DieLid.rule(for: "LidSeam"), .hidden)
+        for name in ["LidSeam", "Internal_w_spi_a", "Internal_w_batt"] {
+            XCTAssertEqual(DieLid.rule(for: name), .hidden, name)
+        }
         XCTAssertNil(DieLid.rule(for: "Shell"))
         XCTAssertNil(DieLid.rule(for: "Screen_py"))
     }

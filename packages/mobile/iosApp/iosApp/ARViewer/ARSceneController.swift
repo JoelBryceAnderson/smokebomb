@@ -85,15 +85,23 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var lid: DieLid?
     /// Turning the die lid-up, to take the lid off once it's there.
     private var lidOpening = false
-    /// The lid coming off (swung over to lie inside-up beside the cup) or going back on.
-    private struct LidMove {
-        let start: TimeInterval
-        let from: Transform
-        let to: Transform
-        /// Opening: the lid swings over about this axis. Closing: nil.
-        let swingAxis: SIMD3<Float>?
+    /// One stage of the lid coming off or going back on: the lid and the
+    /// four screws, each from one pose to another (in the anchor's space).
+    private struct LidStep {
+        let duration: TimeInterval
+        /// The lid's move, if it moves: swung over about `swing` (coming
+        /// off), or carried back in an arc (nil, going on).
+        var lid: (from: Transform, to: Transform, swing: SIMD3<Float>?)?
+        var screws: [(from: Transform, to: Transform)] = []
+        /// Screwing in (+) or out (−): turns about `screwAxis` as they go.
+        var turns: Float = 0
+        var screwAxis: SIMD3<Float> = [0, 1, 0]
+        /// When this step ends the lid is on and the die whole again.
+        var finishesClosing = false
     }
-    private var lidMove: LidMove?
+    /// What's left of the lid coming off or going on; the first is under way.
+    private var lidSteps: [LidStep] = []
+    private var lidStepStart: TimeInterval = 0
     /// A die's x-ray, loaded for its insides: the die's own model has none,
     /// so the x-ray's are shown while the lid is off.
     private var borrowedInternals: (id: String, entity: Entity)?
@@ -237,7 +245,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private func install(_ entity: Entity, as next: SugarcubeModel) {
         if model.isRolling { reset() }
         // With the lid off, the new model's lid comes off too, where the old one lay.
-        let lidAt = lidMove == nil ? lid?.root.transform : nil
+        let lidAt = lidSteps.isEmpty ? lid.map(lidPose) : nil
         closeLidNow()
         rig?.root.removeFromParent()
         pivot.addChild(entity)
@@ -973,7 +981,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     // MARK: The lid
 
     /// The lid is on its way off or back on: hands off until it's there.
-    private var lidBusy: Bool { lidOpening || lidMove != nil }
+    private var lidBusy: Bool { lidOpening || !lidSteps.isEmpty }
 
     /// Takes the lid off (the die turns lid-up, the lid lifts off and lies
     /// inside-up beside it) or puts it back on.
@@ -989,8 +997,39 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             glide(to: SIMD3(c.x, halfHeight, c.z), rotation: Self.lidUp(pivot.orientation),
                   duration: DiePhysics.heldMoveTime, easeOut: false)
         } else if let lid {
-            lidMove = LidMove(start: time, from: lid.root.transform, to: attachedLidTransform, swingAxis: nil)
+            // The lid back on, then the screws back over their holes and in.
+            let laid = lid.screws.map(\.transform)
+            let seated = seatedScrews(lid)
+            let out = pivot.orientation.act([0, -1, 0])
+            let backedOut = seated.map { Self.moved($0, by: out * screwTravel(lid)) }
+            lidSteps = [
+                LidStep(duration: DiePhysics.lidMoveTime, lid: (from: lid.root.transform, to: attachedLidTransform, swing: nil)),
+                LidStep(duration: DiePhysics.screwLayTime, screws: zip(laid, backedOut).map { (from: $0, to: $1) }),
+                LidStep(duration: DiePhysics.screwTime, screws: zip(backedOut, seated).map { (from: $0, to: $1) },
+                        turns: DiePhysics.screwTurns, screwAxis: out, finishesClosing: true),
+            ]
+            lidStepStart = time
         }
+    }
+
+    private static func moved(_ t: Transform, by offset: SIMD3<Float>) -> Transform {
+        Transform(scale: t.scale, rotation: t.rotation, translation: t.translation + offset)
+    }
+
+    /// Where each screw sits in its hole on the die as it is now, in the anchor's space.
+    private func seatedScrews(_ lid: DieLid) -> [Transform] {
+        lid.screwSeats.map { pivot.transform.matrix * Transform(translation: $0).matrix }.map(Transform.init(matrix:))
+    }
+
+    /// How far a screw comes out: its length and a millimetre, in the anchor's space.
+    private func screwTravel(_ lid: DieLid) -> Float {
+        let length = lid.screws.map { $0.visualBounds(relativeTo: $0).max.y }.max() ?? 0
+        return (max(length, 0) + 0.001) * pivot.scale.x
+    }
+
+    /// The lid and its screws where they lie, to put back after the die is rebuilt.
+    private func lidPose(_ lid: DieLid) -> (lid: Transform, screws: [Transform]) {
+        (lid.root.transform, lid.screws.map(\.transform))
     }
 
     /// Lid up, keeping the die's heading.
@@ -1008,7 +1047,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// Where the lid sits on the die, in the anchor's space.
     private var attachedLidTransform: Transform { pivot.transform }
 
-    /// The die is lid-up: cut the lid off and swing it over beside the cup.
+    /// The die is lid-up: the screws come out and lie in a row on the table,
+    /// then the lid lifts off and swings over beside the cup.
     private func beginLidOff() {
         guard detachLid(at: nil), let lid, let rig, let cam = cameraInAnchor else {
             model.lidDidChange(off: false)
@@ -1024,40 +1064,80 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let c = centre
         let rest = SIMD3<Float>(c.x, 0, c.z) + side * s * DiePhysics.lidOffDistance
         let to = Transform(scale: from.scale, rotation: simd_quatf(angle: .pi, axis: axis) * from.rotation, translation: rest)
-        lidMove = LidMove(start: time, from: from, to: to, swingAxis: axis)
+
+        // The screws: straight out of their holes, turning, then laid in a
+        // row on the table in front of the die, heads toward you.
+        var toward = cam.position - c
+        toward.y = 0
+        toward = simd_length(toward) < 1e-5 ? [0, 0, 1] : simd_normalize(toward)
+        let up = SIMD3<Float>(0, 1, 0)
+        let seated = lid.screws.map(\.transform)
+        let out = pivot.orientation.act([0, -1, 0])
+        let backedOut = seated.map { Self.moved($0, by: out * screwTravel(lid)) }
+        let lying = DiePhysics.rotation(from: [0, 1, 0], [1, 0, 0], to: -toward, up)
+        let laid = lid.screws.enumerated().map { i, screw -> Transform in
+            let head = screw.visualBounds(relativeTo: screw).extents.x / 2 * pivot.scale.x
+            let spot = SIMD3<Float>(c.x, 0, c.z) + toward * s * DiePhysics.screwRowDistance
+                + side * (Float(i) - 1.5) * s * DiePhysics.screwSpacing + up * head
+            return Transform(scale: seated[i].scale, rotation: lying, translation: spot)
+        }
+        lidSteps = [
+            LidStep(duration: DiePhysics.screwTime, screws: zip(seated, backedOut).map { (from: $0, to: $1) },
+                    turns: -DiePhysics.screwTurns, screwAxis: out),
+            LidStep(duration: DiePhysics.screwLayTime, screws: zip(backedOut, laid).map { (from: $0, to: $1) }),
+            LidStep(duration: DiePhysics.lidMoveTime, lid: (from: from, to: to, swing: axis)),
+        ]
+        lidStepStart = time
         if lockedInPlace {
-            // Frame the cup and the lid together.
-            let mid = (SIMD3(c.x, halfHeight, c.z) + rest) / 2
-            frameStudio(centre: mid, half: [simd_distance(c, rest) / 2 + s * 0.6, s * 0.6], animated: true)
+            // Frame the cup, the lid and the screws together.
+            let mid = (SIMD3(c.x, halfHeight, c.z) + rest) / 2 + toward * s * 0.2
+            frameStudio(centre: mid, half: [simd_distance(c, rest) / 2 + s * 0.6, s * 0.85], animated: true)
         }
     }
 
     /// One frame of the lid coming off or going back on.
     private func stepLid() {
-        guard let move = lidMove, let lid, let rig else { return }
-        let u = Float(min((time - move.start) / DiePhysics.lidMoveTime, 1))
+        guard let step = lidSteps.first, let lid, let rig else { return }
+        let u = Float(min((time - lidStepStart) / step.duration, 1))
         let s = max(rig.model.bounds.x, rig.model.bounds.z) * pivot.scale.x
         let up = SIMD3<Float>(0, 1, 0)
         let smooth = { (x: Float) -> Float in x * x * (3 - 2 * x) }
-        var position: SIMD3<Float>
-        let rotation: simd_quatf
-        if let axis = move.swingAxis {
-            // Straight off the screws first, then over and down beside the cup.
-            let pull = smooth(min(u / 0.3, 1))
-            let swing = smooth(max(0, (u - 0.2) / 0.8))
-            position = simd_mix(move.from.translation, move.to.translation, SIMD3(repeating: swing))
-            position += up * (s * DiePhysics.lidPull * pull * (1 - swing) + s * 0.5 * sin(.pi * swing))
-            rotation = simd_quatf(angle: .pi * swing, axis: axis) * move.from.rotation
-        } else {
-            let e = smooth(u)
-            position = simd_mix(move.from.translation, move.to.translation, SIMD3(repeating: e))
-            position += up * s * 0.5 * sin(.pi * e)
-            rotation = simd_slerp(move.from.rotation, move.to.rotation, e)
+        if let move = step.lid {
+            var position: SIMD3<Float>
+            let rotation: simd_quatf
+            if let axis = move.swing {
+                // Straight off the die first, then over and down beside the cup.
+                let pull = smooth(min(u / 0.3, 1))
+                let swing = smooth(max(0, (u - 0.2) / 0.8))
+                position = simd_mix(move.from.translation, move.to.translation, SIMD3(repeating: swing))
+                position += up * (s * DiePhysics.lidPull * pull * (1 - swing) + s * 0.5 * sin(.pi * swing))
+                rotation = simd_quatf(angle: .pi * swing, axis: axis) * move.from.rotation
+            } else {
+                let e = smooth(u)
+                position = simd_mix(move.from.translation, move.to.translation, SIMD3(repeating: e))
+                position += up * s * 0.5 * sin(.pi * e)
+                rotation = simd_slerp(move.from.rotation, move.to.rotation, e)
+            }
+            lid.root.transform = Transform(scale: move.from.scale, rotation: rotation, translation: position)
         }
-        lid.root.transform = Transform(scale: move.from.scale, rotation: rotation, translation: position)
+        let e = smooth(u)
+        for (screw, leg) in zip(lid.screws, step.screws) {
+            var position = simd_mix(leg.from.translation, leg.to.translation, SIMD3(repeating: e))
+            let rotation: simd_quatf
+            if step.turns != 0 {
+                // Turning in or out of its hole, along its own axis.
+                rotation = simd_quatf(angle: step.turns * 2 * .pi * e, axis: step.screwAxis) * leg.from.rotation
+            } else {
+                // Carried between the die and the table.
+                position += up * s * 0.25 * sin(.pi * e)
+                rotation = simd_slerp(leg.from.rotation, leg.to.rotation, e)
+            }
+            screw.transform = Transform(scale: leg.from.scale, rotation: rotation, translation: position)
+        }
         guard u >= 1 else { return }
-        lidMove = nil
-        if move.swingAxis == nil { finishLidOn() }
+        lidSteps.removeFirst()
+        lidStepStart = time
+        if step.finishesClosing { finishLidOn() }
     }
 
     /// The lid is back on the lid-up die: whole again, turned back over onto its lid.
@@ -1069,14 +1149,19 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         frameDieOnTable(animated: true)
     }
 
-    /// Cuts the lid off the die where it sits, or at `transform` (in the anchor's space).
-    private func detachLid(at transform: Transform?) -> Bool {
+    /// Cuts the lid off the die where it sits, or puts it and its screws
+    /// where they lay (`pose`, in the anchor's space).
+    private func detachLid(at pose: (lid: Transform, screws: [Transform])?) -> Bool {
         guard lid == nil, let rig, let placement, model.canTakeLidOff,
               let cut = DieLid(dieRoot: rig.root, reference: pivot, side: rig.model.bounds.x,
                                internals: internalsForRig, opacity: model.isXray ? DieRig.xrayShellOpacity : 1)
         else { return false }
         placement.addChild(cut.root, preservingWorldTransform: true)
-        if let transform { cut.root.transform = transform }
+        for screw in cut.screws { placement.addChild(screw, preservingWorldTransform: true) }
+        if let pose {
+            cut.root.transform = pose.lid
+            for (screw, t) in zip(cut.screws, pose.screws) { screw.transform = t }
+        }
         lid = cut
         return true
     }
@@ -1100,14 +1185,14 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             self.internalsLoading = false
             guard let entity else { return }
             self.borrowedInternals = (id, entity)
-            if self.lid != nil, self.lidMove == nil, self.rig?.model.xray == id { self.keepingLid {} }
+            if self.lid != nil, self.lidSteps.isEmpty, self.rig?.model.xray == id { self.keepingLid {} }
         }
     }
 
     /// Puts the lid back on at once, wherever it was.
     private func closeLidNow() {
         lidOpening = false
-        lidMove = nil
+        lidSteps = []
         lid?.restore()
         lid = nil
         if model.isLidOff { model.lidDidChange(off: false) }
@@ -1120,8 +1205,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             body()
             return
         }
-        let at = lidMove == nil ? lid.root.transform : nil
-        lidMove = nil
+        let at = lidSteps.isEmpty ? lidPose(lid) : nil
+        lidSteps = []
         self.lid?.restore()
         self.lid = nil
         body()
