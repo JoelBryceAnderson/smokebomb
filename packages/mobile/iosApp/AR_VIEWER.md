@@ -8,7 +8,6 @@ then you can:
 - look inside with x-ray and explode it
 - tap a part to see its name
 - throw the die and read which face lands up
-- turn it over to read the etching on the charging face
 
 It's written in Swift (RealityKit and ARKit) and embedded in the Compose app.
 It needs iOS 18 or later, and runs on iPhone and iPad.
@@ -33,8 +32,6 @@ It needs iOS 18 or later, and runs on iPhone and iPad.
 | `iosApp/ARViewer/DieFirmware.swift` | What the viewer needs from the firmware, the panels per die, screen axes |
 | `iosApp/ARViewer/ImuSynth.swift` | Die motion → IMU readings at exact 60 Hz ticks |
 | `iosApp/ARViewer/LiveScreens.swift` | The firmware's panels on the die's faces |
-| `iosApp/ARViewer/Etching.swift` | The laser etching on the lid, as the desktop simulator draws it |
-| `iosApp/ARViewer/Fonts/` | The etching's fonts (Pacifico, Space Grotesk; OFL) |
 | `iosApp/Firmware/RustDieFirmware.swift` | The firmware over the Rust C ABI (app target only) |
 | `scripts/build_firmware.sh` | Builds `packages/firmware/ffi` for the SDK Xcode is building for |
 | `iosApp/Resources/Models/` | Bundled `.usdz` files (a folder reference) |
@@ -286,37 +283,6 @@ RealityKit pose ──► ImuSynth ──► sb_die_tick(imu, touch) ──► s
 Switching between models with the same panels keeps the firmware running.
 Switching panels boots it again, and so does placing the die.
 
-## Etching
-
-The lid (the charging face, `ny`) carries the same laser etching as the
-desktop simulator (`drawEtching` in `packages/simulator/web-ui/src/shell.ts`):
-
-- the **Sugarcube** wordmark and the tagline, *Designed in Williamsburg, BK ·
-  Shake well before serving*, in the script
-- `SC-1 · S/N 000042`, the serial the simulator shows before a roll carries one
-- CE, the crossed-out bin and *Regulatory info in settings*
-
-`Etching.swift` draws it with Core Text into a 1024 px texture over the flat
-face, and lays it on a square frame mesh over the border band only, so it never
-covers the window or the live screen. It's tone-on-tone: 55 % grey ink, a
-little rough and metallic, 0.05 mm below the lid (the origin is the bottom
-centre, so the lid is y = 0).
-
-- **Which models:** the dice and the contract fixture. The x-rays, the
-  exploded x-ray and the line-up show none, and x-ray on a per-part model hides
-  it with the shell.
-- **Layouts:** the simulator's, by size. 34 mm: a 29 mm flat face, the script
-  hugging the 24 mm window. 30 mm: 25 mm, the script centred in the band. The
-  40 mm die has no layout in the simulator yet, so it takes the 30 mm one
-  scaled by 4/3.
-- **Fonts:** `Fonts/` has the firmware's Pacifico and Space Grotesk Bold
-  (`packages/firmware/assets/fonts`) as TrueType. If they're missing, it falls
-  back to Snell Roundhand and the system font.
-- It's not a part you can tap: a tap on the lid names the lid. The measured
-  bounds in the caption don't include it.
-- It uses the same texture orientation as the live screens, so if
-  `LiveScreens.flipVertically` is ever flipped, the etching follows.
-
 ## Gestures
 
 | Gesture | Does |
@@ -341,9 +307,6 @@ CI runs it on a simulator.
 - `DieRigTests`: explode distances, the shell fade and tap picking, on the
   contract fixture.
 - `ViewerLogicTests`: face-up, settling, ray picking, labels and captions.
-- `EtchingTests`: which models carry it, where it sits on the lid, that it
-  hides with the shell, and that the drawing stays in the border on all four
-  sides.
 - `FirmwareLoopTests`: IMU readings at rest, tilted, falling and spinning; the
   windup's limits; 60 Hz ticks at any frame rate; touch faces; screen axes.
 
