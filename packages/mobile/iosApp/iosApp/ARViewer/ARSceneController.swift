@@ -1075,11 +1075,17 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let out = pivot.orientation.act([0, -1, 0])
         let backedOut = seated.map { Self.moved($0, by: out * screwTravel(lid)) }
         let lying = DiePhysics.rotation(from: [0, 1, 0], [1, 0, 0], to: -toward, up)
-        let laid = lid.screws.enumerated().map { i, screw -> Transform in
-            let head = screw.visualBounds(relativeTo: screw).extents.x / 2 * pivot.scale.x
-            let spot = SIMD3<Float>(c.x, 0, c.z) + toward * s * DiePhysics.screwRowDistance
-                + side * (Float(i) - 1.5) * s * DiePhysics.screwSpacing + up * head
-            return Transform(scale: seated[i].scale, rotation: lying, translation: spot)
+        // In a row in front of the die, along the view's right; a screw's
+        // head radius off the table. (Step by step: as one expression it's
+        // too much for the type checker.)
+        let rowStart: SIMD3<Float> = SIMD3<Float>(c.x, 0, c.z) + toward * (s * DiePhysics.screwRowDistance)
+        let rowStep: SIMD3<Float> = side * (s * DiePhysics.screwSpacing)
+        var laid: [Transform] = []
+        for (i, screw) in lid.screws.enumerated() {
+            let head: Float = screw.visualBounds(relativeTo: screw).extents.x / 2 * pivot.scale.x
+            let along: Float = Float(i) - 1.5
+            let spot: SIMD3<Float> = rowStart + rowStep * along + up * head
+            laid.append(Transform(scale: seated[i].scale, rotation: lying, translation: spot))
         }
         lidSteps = [
             LidStep(duration: DiePhysics.screwTime, screws: zip(seated, backedOut).map { (from: $0, to: $1) },
