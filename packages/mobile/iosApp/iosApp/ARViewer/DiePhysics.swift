@@ -76,6 +76,13 @@ enum DiePhysics {
     /// Seconds for the studio camera to reframe.
     static let studioReframeTime: TimeInterval = 0.5
 
+    /// Seconds for the lid to come off (lifted, then swung over beside the cup) or go back on.
+    static let lidMoveTime: TimeInterval = 1.0
+    /// Off, the lid lies this many die sides from the cup's centre, to the view's right.
+    static let lidOffDistance: Float = 1.45
+    /// How far the lid lifts straight off the screws before it swings, in die sides.
+    static let lidPull: Float = 0.3
+
     /// Space between the held die's edge and the glass turn pad, in metres.
     static let menuPanelGap: Float = 0.008
     /// How far the pad sits in front of the menu screen's plane, in metres

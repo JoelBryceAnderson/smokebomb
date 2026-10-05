@@ -10,7 +10,9 @@ import UIKit
 /// these are up. The quads are rounded like the glass's mask. The sapphire
 /// window round each screen has a square hole for it, so the corners the
 /// rounding cuts off are filled with the window's own material: bezel, not
-/// a view into the die.
+/// a view into the die. In x-ray the quads stay square, the panel's whole
+/// pixel grid. Each quad has a black skirt down its edges into the die, so
+/// no angle sees past its edge where the hidden baked screen was.
 @MainActor
 final class LiveScreens {
     /// Flip if the frames show upside down on device (RealityKit texture
@@ -18,6 +20,8 @@ final class LiveScreens {
     static let flipVertically = false
     /// How far in front of the model's screen the quad sits, in metres.
     static let lift: Float = 0.00005
+    /// How far the black skirt runs back into the die past the baked screen, in metres.
+    static let skirtDepth: Float = 0.0005
     /// Segments in each rounded corner of the quad.
     static let cornerSegments = 8
 
@@ -43,8 +47,9 @@ final class LiveScreens {
     private var hidden: [Entity] = []
 
     /// Builds quads for every `Screen_<face>` in the rig. `reference` is the
-    /// rig's reference entity (the die's own metres).
-    init(rig: DieRig, reference: Entity, side: Int) {
+    /// rig's reference entity (the die's own metres). `rounded` rounds the
+    /// lit area like the glass's mask; off (x-ray) it stays square.
+    init(rig: DieRig, reference: Entity, side: Int, rounded: Bool = true) {
         self.side = side
         let blank = [UInt8](repeating: 0, count: side * side * 4)
         guard let blankImage = Self.image(blank, side: side) else { return }
@@ -63,13 +68,18 @@ final class LiveScreens {
             let depth = abs(simd_dot(bounds.extents, normal))
             guard width > 0, height > 0 else { continue }
 
-            let radius = min(width, height) * Self.cornerFraction(side: side)
+            let radius = rounded ? min(width, height) * Self.cornerFraction(side: side) : 0
             let quad = ModelEntity(mesh: Self.quad(width: width, height: height, radius: radius), materials: [Self.material(texture)])
             quad.name = "LiveScreen_\(face.rawValue)"
             parent.addChild(quad)
-            if let mesh = Self.corners(width: width, height: height, radius: radius) {
+            if radius > 0, let mesh = Self.corners(width: width, height: height, radius: radius) {
                 let window = rig.root.findEntity(named: "Window_\(face.rawValue)").flatMap(Self.firstMaterial)
                 quad.addChild(ModelEntity(mesh: mesh, materials: [window ?? sapphire]))
+            }
+            if let mesh = Self.skirt(width: width, height: height, depth: depth + Self.lift + Self.skirtDepth) {
+                var black = UnlitMaterial(color: .black)
+                black.faceCulling = .none
+                quad.addChild(ModelEntity(mesh: mesh, materials: [black]))
             }
             // Face the screen's way, on its outer surface, in the die's frame.
             let rotation = simd_quatf(simd_float3x3(columns: (right, up, normal)))
@@ -187,6 +197,34 @@ final class LiveScreens {
         var mesh = MeshDescriptor(name: "LiveScreenCorners")
         mesh.positions = MeshBuffer((outer + inner).map { SIMD3($0.x, $0.y, 0) })
         mesh.normals = MeshBuffer(Array(repeating: SIMD3<Float>(0, 0, 1), count: 2 * n))
+        mesh.primitives = .triangles(indices)
+        return try? MeshResource.generate(from: [mesh])
+    }
+
+    /// Black walls from the quad's square outline straight back into the die,
+    /// and a back to close them: whatever angle looks past the quad's edge
+    /// meets black, as it met the baked screen's sides before.
+    private static func skirt(width: Float, height: Float, depth: Float) -> MeshResource? {
+        let w = width / 2, h = height / 2
+        let square: [SIMD2<Float>] = [[w, -h], [w, h], [-w, h], [-w, -h]]
+        var positions: [SIMD3<Float>] = []
+        var normals: [SIMD3<Float>] = []
+        var indices: [UInt32] = []
+        for k in 0..<4 {
+            let a = square[k], b = square[(k + 1) % 4]
+            let inward = -simd_normalize(SIMD3((a.x + b.x) / 2, (a.y + b.y) / 2, 0))
+            let base = UInt32(positions.count)
+            positions += [SIMD3(a.x, a.y, 0), SIMD3(b.x, b.y, 0), SIMD3(b.x, b.y, -depth), SIMD3(a.x, a.y, -depth)]
+            normals += Array(repeating: inward, count: 4)
+            indices += [base, base + 1, base + 2, base, base + 2, base + 3]
+        }
+        let base = UInt32(positions.count)
+        positions += square.map { SIMD3($0.x, $0.y, -depth) }
+        normals += Array(repeating: SIMD3<Float>(0, 0, 1), count: 4)
+        indices += [base, base + 1, base + 2, base, base + 2, base + 3]
+        var mesh = MeshDescriptor(name: "LiveScreenSkirt")
+        mesh.positions = MeshBuffer(positions)
+        mesh.normals = MeshBuffer(normals)
         mesh.primitives = .triangles(indices)
         return try? MeshResource.generate(from: [mesh])
     }

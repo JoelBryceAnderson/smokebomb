@@ -4,7 +4,7 @@
 The real per-part models aren't exported yet. This one is crude boxes, but its
 prims are named exactly as AR_VIEWER.md's contract says (Shell, Lid,
 Window_<face>, Module_<face>, Screw_0..3, Pillar_0..3, Board, Cell,
-BalancePlate, Wiring), so explode, the x-ray fade and tap-to-name can be tried
+BalancePlate, Wiring), so explode, the x-ray fade and the lid can be tried
 on a phone today. Like the hand-written models, its root layer is text USD;
 run it through convert_usdz.py before bundling.
 

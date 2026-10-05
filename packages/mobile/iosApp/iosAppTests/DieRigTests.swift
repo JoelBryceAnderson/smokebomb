@@ -1,7 +1,7 @@
 import RealityKit
 import XCTest
 
-/// Explode, the shell fade and tap-to-name against the per-part contract fixture.
+/// Explode, the shell fade and taking the lid off, against the per-part contract fixture.
 @MainActor
 final class DieRigTests: XCTestCase {
     private func loadFixture() async throws -> (rig: DieRig, pivot: Entity) {
@@ -11,7 +11,7 @@ final class DieRigTests: XCTestCase {
         let entity = try await catalog.load(model)
         let pivot = Entity()
         pivot.addChild(entity)
-        return (DieRig(model: model, root: entity, reference: pivot, labels: .load(bundle: bundle)), pivot)
+        return (DieRig(model: model, root: entity, reference: pivot), pivot)
     }
 
     func testFindsContractParts() async throws {
@@ -67,18 +67,28 @@ final class DieRigTests: XCTestCase {
         XCTAssertNil(panel.root.parent)
     }
 
-    func testTapNamesTheOutermostLabelledPart() async throws {
-        let (rig, _) = try await loadFixture()
-        // Straight down onto the top face's centre: the sapphire window is first.
-        let down = rig.pick(origin: [0, 1, 0], direction: [0, -1, 0], seeThroughShell: false)
-        XCTAssertEqual(down?.name, "Window_py")
-        // With x-ray on, the window is looked through; next is the top display module.
-        let xray = rig.pick(origin: [0, 1, 0], direction: [0, -1, 0], seeThroughShell: true)
-        XCTAssertEqual(xray?.name, "Module_py")
-        XCTAssertEqual(xray?.label, "Display module: panel glass, driver chip and ribbon")
-        // From below, near a corner: a lid screw.
-        let screw = rig.pick(origin: [0.0115, -1, 0.0115], direction: [0, 1, 0], seeThroughShell: false)
-        XCTAssertEqual(screw?.label, "Lid screw: M1.0, also the charging contact")
-        XCTAssertNil(rig.pick(origin: [1, 1, 1], direction: [0, 1, 0], seeThroughShell: false))
+    func testLidComesOffAndGoesBackOn() async throws {
+        let (rig, pivot) = try await loadFixture()
+        let root = rig.root
+        let lidPrim = try XCTUnwrap(root.findEntity(named: "Lid"))
+        let screen = try XCTUnwrap(root.findEntity(named: "Screen_ny"))
+        let before = screen.position(relativeTo: pivot)
+
+        let lid = try XCTUnwrap(DieLid(dieRoot: root, reference: pivot, side: 0.030))
+        XCTAssertTrue(lidPrim.parent === lid.root, "the per-part lid moves over whole")
+        XCTAssertTrue(lid.root.findEntity(named: "Window_ny") != nil)
+        XCTAssertTrue(lid.root.findEntity(named: "Module_ny") != nil)
+        XCTAssertNil(lid.root.findEntity(named: "Pillar_0"), "the pillars stay in the cup")
+        XCTAssertNil(lid.root.findEntity(named: "Module_py"))
+        XCTAssertLessThan(simd_distance(screen.position(relativeTo: pivot), before), 1e-6, "nothing moves until the lid does")
+
+        lid.root.position = [0.05, 0, 0]
+        XCTAssertGreaterThan(simd_distance(screen.position(relativeTo: pivot), before), 0.04)
+
+        lid.restore()
+        XCTAssertNil(lid.root.parent)
+        XCTAssertTrue(lidPrim.parent === root)
+        XCTAssertLessThan(simd_distance(screen.position(relativeTo: pivot), before), 1e-6)
+        XCTAssertEqual(rig.measuredSize().x, 0.030, accuracy: 0.0001)
     }
 }

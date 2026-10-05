@@ -2,8 +2,8 @@ import RealityKit
 import UIKit
 
 /// A loaded model plus what the viewer found in it: the per-part prims of the
-/// naming contract (AR_VIEWER.md), and the parts that have labels. Features whose
-/// prims are missing switch off, so material-grouped models still work.
+/// naming contract (AR_VIEWER.md). Features whose prims are missing switch
+/// off, so material-grouped models still work.
 @MainActor
 final class DieRig {
     /// Window travel and module travel at full explode, in metres along the face normal.
@@ -11,18 +11,6 @@ final class DieRig {
     static let moduleTravel: Float = 0.014
     /// Shell opacity when x-ray is on for a per-part model.
     static let xrayShellOpacity: Float = 0.25
-
-    /// Parts that x-ray looks through: a tap prefers whatever is behind them.
-    /// Hits closer together than this (metres, along a unit ray) count as flush.
-    private static let flushTolerance: Float = 0.0002
-
-    private static let seeThrough: Set<String> = ["Shell", "SapphireWindows", "LidSeam", "ScrewSleevesAndSlots"]
-
-    struct Part {
-        let name: String
-        let label: String
-        let entity: Entity
-    }
 
     let model: SugarcubeModel
     /// The loaded tree.
@@ -33,9 +21,6 @@ final class DieRig {
     private(set) var shell: Entity?
     private var windows: [(entity: Entity, face: DieFace, base: SIMD3<Float>)] = []
     private var modules: [(entity: Entity, face: DieFace, base: SIMD3<Float>)] = []
-    /// Each mesh entity, mapped to the outermost labelled part that contains it.
-    private var pickable: [(mesh: Entity, part: Part)] = []
-    private var highlighted: (part: Part, materials: [ObjectIdentifier: [any Material]])?
 
     /// True when the model has Window_* or Module_* prims to explode.
     var canExplode: Bool { !windows.isEmpty || !modules.isEmpty }
@@ -43,7 +28,7 @@ final class DieRig {
     var canFadeShell: Bool { shell != nil && canExplode }
 
     /// `root` must already be a child of `reference`.
-    init(model: SugarcubeModel, root: Entity, reference: Entity, labels: PartLabels) {
+    init(model: SugarcubeModel, root: Entity, reference: Entity) {
         self.model = model
         self.root = root
         self.reference = reference
@@ -57,7 +42,6 @@ final class DieRig {
                 modules.append((m, face, m.position(relativeTo: reference)))
             }
         }
-        collectPickable(labels: labels)
     }
 
     // MARK: Explode and x-ray
@@ -87,93 +71,11 @@ final class DieRig {
         root.visualBounds(relativeTo: reference).extents
     }
 
-    // MARK: Picking
-
-    /// The labelled part under a world-space ray. With `seeThroughShell`, a part
-    /// behind the shell wins over the shell itself.
-    func pick(origin: SIMD3<Float>, direction: SIMD3<Float>, seeThroughShell: Bool) -> Part? {
-        var hits: [(t: Float, volume: Float, part: Part)] = []
-        for item in pickable {
-            guard let bounds = item.mesh.components[ModelComponent.self]?.mesh.bounds else { continue }
-            let worldFromLocal = item.mesh.transformMatrix(relativeTo: nil)
-            let local = PartPicker.ray(origin: origin, direction: direction, into: worldFromLocal)
-            if let t = PartPicker.hitDistance(origin: local.origin, direction: local.direction, boxMin: bounds.min, boxMax: bounds.max) {
-                let scale = simd_length(SIMD3(worldFromLocal.columns.0.x, worldFromLocal.columns.0.y, worldFromLocal.columns.0.z))
-                let e = bounds.extents * scale
-                hits.append((t, e.x * e.y * e.z, item.part))
-            }
-        }
-        if seeThroughShell, let inner = Self.nearest(hits.filter { !Self.isSeeThrough($0.part.name) }) {
-            return inner
-        }
-        return Self.nearest(hits)
-    }
-
-    /// The nearest hit. A part set flush into a bigger one (a screw in the lid) ties with it; the smaller wins.
-    private static func nearest(_ hits: [(t: Float, volume: Float, part: Part)]) -> Part? {
-        guard let first = hits.min(by: { $0.t < $1.t }) else { return nil }
-        return hits.filter { $0.t - first.t < flushTolerance }.min { $0.volume < $1.volume }?.part
-    }
+    // MARK: Hit testing
 
     /// Whether a world-space ray passes through the model's bounds at all.
     func contains(origin: SIMD3<Float>, direction: SIMD3<Float>) -> Bool {
         let bounds = root.visualBounds(relativeTo: nil)
         return PartPicker.hitDistance(origin: origin, direction: direction, boxMin: bounds.min, boxMax: bounds.max) != nil
-    }
-
-    /// Tints one part so it stands out; nil clears the highlight.
-    func highlight(_ part: Part?) {
-        if let old = highlighted {
-            visitModels(old.part.entity) { entity, model in
-                var model = model
-                if let materials = old.materials[ObjectIdentifier(entity)] { model.materials = materials }
-                entity.components.set(model)
-            }
-            highlighted = nil
-        }
-        guard let part else { return }
-        var saved: [ObjectIdentifier: [any Material]] = [:]
-        visitModels(part.entity) { entity, model in
-            saved[ObjectIdentifier(entity)] = model.materials
-            var model = model
-            model.materials = model.materials.map(Self.glowing(_:))
-            entity.components.set(model)
-        }
-        highlighted = (part, saved)
-    }
-
-    private static func glowing(_ material: any Material) -> any Material {
-        let glow = UIColor(red: 0.2, green: 0.85, blue: 1.0, alpha: 1)
-        if var pbr = material as? PhysicallyBasedMaterial {
-            pbr.emissiveColor = .init(color: glow)
-            pbr.emissiveIntensity = 0.8
-            return pbr
-        }
-        return UnlitMaterial(color: glow)
-    }
-
-    private static func isSeeThrough(_ name: String) -> Bool {
-        seeThrough.contains(name) || name.hasPrefix("Window_")
-    }
-
-    private func collectPickable(labels: PartLabels) {
-        visitModels(root) { mesh, _ in
-            // Walk up to the outermost labelled ancestor below the root, so a tap on a
-            // module's screen names the module, as the contract's parts are the unit.
-            var part: Part?
-            var current: Entity? = mesh
-            while let entity = current, entity !== root {
-                if let label = labels.label(for: entity.name) {
-                    part = Part(name: entity.name, label: label, entity: entity)
-                }
-                current = entity.parent
-            }
-            if let part { pickable.append((mesh, part)) }
-        }
-    }
-
-    private func visitModels(_ entity: Entity, _ body: (Entity, ModelComponent) -> Void) {
-        if let model = entity.components[ModelComponent.self] { body(entity, model) }
-        for child in entity.children { visitModels(child, body) }
     }
 }

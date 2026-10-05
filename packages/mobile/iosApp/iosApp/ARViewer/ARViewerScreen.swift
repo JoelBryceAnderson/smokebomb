@@ -108,7 +108,7 @@ private struct ARViewContainer: UIViewRepresentable {
     }
 }
 
-// MARK: - Status: caption, hints, part label, result
+// MARK: - Status: caption, hints, result
 
 private struct StatusOverlay: View {
     let model: ARViewerModel
@@ -140,9 +140,6 @@ private struct StatusOverlay: View {
             if let error = model.loadError {
                 Text(error).font(.footnote).foregroundStyle(.red).pill()
             }
-            if let part = model.selectedPart {
-                Text(part).font(.callout.weight(.medium)).pill()
-            }
             if let face = model.faceUp {
                 Text("Face up: \(face.label)").font(.callout.weight(.medium)).pill()
             }
@@ -152,7 +149,6 @@ private struct StatusOverlay: View {
         }
         .multilineTextAlignment(.center)
         .padding(.horizontal, 16)
-        .animation(.default, value: model.selectedPart)
         .animation(.default, value: model.faceUp)
     }
 }
@@ -164,15 +160,15 @@ private struct CompactControls: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            if model.canExplode {
+            if model.canExplode, !model.isLidOff {
                 ExplodeSlider(model: model)
                     .padding(.horizontal, 12)
                     .pill()
             }
-            HStack(spacing: 8) {
-                ViewButtons(model: model)
-                Spacer(minLength: 0)
-                SizeLock(model: model)
+            // Icons only when the labels don't fit the width.
+            ViewThatFits(in: .horizontal) {
+                viewRow
+                viewRow.labelStyle(.iconOnly)
             }
             .padding(.horizontal, 12)
             HStack(spacing: 8) {
@@ -181,6 +177,14 @@ private struct CompactControls: View {
             ModelPicker(model: model)
         }
         .padding(.bottom, 12)
+    }
+
+    private var viewRow: some View {
+        HStack(spacing: 8) {
+            ViewButtons(model: model)
+            Spacer(minLength: 0)
+            SizeLock(model: model)
+        }
     }
 }
 
@@ -286,11 +290,12 @@ private struct SidePanel: View {
                         model.toggleExplodedFile()
                     }
                 }
-                if model.canExplode {
-                    ExplodeSlider(model: model)
+                if model.canTakeLidOff {
+                    Toggle("Lid off", isOn: Binding(get: { model.isLidOff }, set: { _ in model.toggleLid() }))
+                        .disabled(!model.canToggleLid)
                 }
-                if let part = model.selectedPart {
-                    LabeledContent("Part", value: part)
+                if model.canExplode, !model.isLidOff {
+                    ExplodeSlider(model: model)
                 }
             }
             Section("Size") {
@@ -395,6 +400,14 @@ private struct ViewButtons: View {
             }
             .buttonStyle(.bordered)
             .tint(model.isXray ? .accentColor : .primary)
+        }
+        if model.canTakeLidOff {
+            Button { model.toggleLid() } label: {
+                Label(model.isLidOff ? "Lid on" : "Lid off", systemImage: model.isLidOff ? "square.stack.3d.down.forward.fill" : "square.stack.3d.down.forward")
+            }
+            .buttonStyle(.bordered)
+            .tint(model.isLidOff ? .accentColor : .primary)
+            .disabled(!model.canToggleLid)
         }
         if let other = model.explodedCounterpart {
             Button { model.toggleExplodedFile() } label: {

@@ -14,8 +14,9 @@ import UIKit.UIGestureRecognizerSubclass
 ///
 ///     placement (AnchorEntity, world)
 ///     ├── table   static collider, top face at y = 0
-///     └── pivot   position on the table, yaw, user scale; the physics body
-///         └── rig.root   the loaded model (its own metres, origin at the bottom centre)
+///     ├── pivot   position on the table, yaw, user scale; the physics body
+///     │   └── rig.root   the loaded model (its own metres, origin at the bottom centre)
+///     └── lid     with the lid off: the lid cut from the die (`DieLid`), on its own
 ///
 /// Table and die share the anchor so they share one physics simulation.
 ///
@@ -80,6 +81,19 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var dragTarget: SIMD2<Float>?
     /// The turn pad: a pane of glass beside the die while the menu is open.
     private var menuPanel: MenuPanel?
+    /// The lid, while it's off: cut from the die and moved on its own.
+    private var lid: DieLid?
+    /// Turning the die lid-up, to take the lid off once it's there.
+    private var lidOpening = false
+    /// The lid coming off (swung over to lie inside-up beside the cup) or going back on.
+    private struct LidMove {
+        let start: TimeInterval
+        let from: Transform
+        let to: Transform
+        /// Opening: the lid swings over about this axis. Closing: nil.
+        let swingAxis: SIMD3<Float>?
+    }
+    private var lidMove: LidMove?
     /// Seconds since the scene started, summed from frame times.
     private var time: TimeInterval = 0
 
@@ -102,6 +116,12 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var panMode: PanMode?
     /// The drag started on the die (a flick from there throws it).
     private var panOnDie = false
+    /// The drag or twist started on the lid (with it off): it turns or moves the lid.
+    private var panOnLid = false
+    private var twistOnLid = false
+    /// Where the finger took hold of the lid, from its origin, on the table (AR).
+    private var lidGrab: SIMD2<Float>?
+    private var lastPanY: CGFloat = 0
     private var lastPanX: CGFloat = 0
     private var pinchStartScale: Float = 1
 
@@ -181,6 +201,11 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         if windup != nil { stepWindup() } else if model.isRolling { trackRoll(dt: dt) }
         stepGlide()
+        if lidOpening, glide == nil {
+            lidOpening = false
+            beginLidOff()
+        }
+        stepLid()
         stepDrag(dt: Float(dt))
         if firmware != nil { stepFirmware() }
     }
@@ -207,21 +232,35 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     private func install(_ entity: Entity, as next: SugarcubeModel) {
         if model.isRolling { reset() }
-        rig?.highlight(nil)
+        // With the lid off, the new model's lid comes off too, where the old one lay.
+        let lidAt = lidMove == nil ? lid?.root.transform : nil
+        closeLidNow()
         rig?.root.removeFromParent()
         pivot.addChild(entity)
-        let rig = DieRig(model: next, root: entity, reference: pivot, labels: model.labels)
+        let rig = DieRig(model: next, root: entity, reference: pivot)
         self.rig = rig
         rig.setExplode(model.explode)
         rig.setShellFaded(model.shellFaded)
         updateBody()
         model.rigDidLoad(rig, measured: rig.measuredSize())
         syncFirmware()
-        if lockedInPlace, !held { frameDieOnTable(animated: false) }
+        if let lidAt, detachLid(at: lidAt) {
+            model.lidDidChange(off: true)
+        } else if lockedInPlace, !held {
+            frameDieOnTable(animated: false)
+        }
     }
 
-    func setExplode(_ e: Float) { rig?.setExplode(e) }
-    func setShellFaded(_ faded: Bool) { rig?.setShellFaded(faded) }
+    func setExplode(_ e: Float) {
+        guard lid == nil else { return }
+        rig?.setExplode(e)
+    }
+
+    func setShellFaded(_ faded: Bool) {
+        keepingLid { rig?.setShellFaded(faded) }
+        // The screens square up in x-ray, and round again after.
+        syncFirmware()
+    }
 
     func setScale(_ scale: Float) {
         pivot.scale = SIMD3(repeating: scale)
@@ -408,32 +447,40 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             tip(key.axis, key.direction)
             return
         }
-        guard model.isPlaced, let rig else {
-            _ = place(at: point)
-            return
-        }
-        guard let ray = arView.ray(through: point) else { return }
-        // With live screens, a tap on the die is a touch for the firmware
-        // (TouchTracker sent it); parts are named in x-ray.
-        if firmware != nil, !model.isXray, rig.contains(origin: ray.origin, direction: ray.direction) {
-            rig.highlight(nil)
-            model.selectedPart = nil
-            return
-        }
-        let part = rig.pick(origin: ray.origin, direction: ray.direction, seeThroughShell: model.isXray)
-        rig.highlight(part)
-        model.selectedPart = part?.label
+        // Once placed, a tap on the die is a touch for the firmware (TouchTracker sends it).
+        if !model.isPlaced { _ = place(at: point) }
     }
 
     @objc private func didPan(_ g: UIPanGestureRecognizer) {
-        guard model.isPlaced, !model.isRolling, !held, glide == nil, let rig, let placement else { return }
+        guard model.isPlaced, !model.isRolling, !held, glide == nil, !lidBusy, let rig, let placement else { return }
         let point = g.location(in: arView)
         switch g.state {
         case .began:
-            let onDie = arView.ray(through: point).map { rig.contains(origin: $0.origin, direction: $0.direction) } ?? false
+            let ray = arView.ray(through: point)
+            panOnLid = ray.map { lidIsNearest(origin: $0.origin, direction: $0.direction) } ?? false
+            let onDie = !panOnLid && (ray.map { rig.contains(origin: $0.origin, direction: $0.direction) } ?? false)
             panOnDie = onDie
             panMode = onDie && !lockedInPlace ? .move : .turn
             lastPanX = g.translation(in: arView).x
+            lastPanY = g.translation(in: arView).y
+            lidGrab = nil
+            if panOnLid, !lockedInPlace, let lid, let world = tablePoint(at: point) {
+                let local = placement.convert(position: world, from: nil)
+                lidGrab = SIMD2(lid.root.position.x - local.x, lid.root.position.z - local.z)
+            }
+        case .changed where panOnLid:
+            if let grab = lidGrab, let lid, let world = tablePoint(at: point) {
+                // AR: slide the lid along the table.
+                let local = placement.convert(position: world, from: nil)
+                lid.root.position.x = local.x + grab.x
+                lid.root.position.z = local.z + grab.y
+            } else {
+                // Studio: sideways turns it about the vertical, up and down tips it toward you.
+                let t = g.translation(in: arView)
+                turnLid(yaw: Float(t.x - lastPanX) * 0.01, pitch: Float(t.y - lastPanY) * 0.01)
+                lastPanX = t.x
+                lastPanY = t.y
+            }
         case .changed:
             if panMode == .move {
                 // Slide along the table: where the finger meets the plane, in the anchor's space.
@@ -449,20 +496,30 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         case .ended:
             let v = g.velocity(in: arView)
             let speed = hypot(v.x, v.y)
-            if panOnDie, speed > DiePhysics.flickThreshold, rig.model.isThrowable {
+            if panOnDie, lid == nil, speed > DiePhysics.flickThreshold, rig.model.isThrowable {
                 dragTarget = nil
                 throwDie(screenDirection: CGVector(dx: v.x, dy: v.y), flickSpeed: speed)
             } else {
                 restTransform = pivot.transform
             }
             panMode = nil
+            panOnLid = false
         default:
             panMode = nil
+            panOnLid = false
         }
     }
 
     @objc private func didTwist(_ g: UIRotationGestureRecognizer) {
-        guard model.isPlaced, !model.isRolling, !held, glide == nil else { return }
+        guard model.isPlaced, !model.isRolling, !held, glide == nil, !lidBusy else { return }
+        if g.state == .began {
+            twistOnLid = arView.ray(through: g.location(in: arView)).map { lidIsNearest(origin: $0.origin, direction: $0.direction) } ?? false
+        }
+        if twistOnLid {
+            turnLid(yaw: -Float(g.rotation), pitch: 0)
+            g.rotation = 0
+            return
+        }
         turn(by: -Float(g.rotation))
         g.rotation = 0
         if g.state == .ended { restTransform = pivot.transform }
@@ -476,7 +533,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     /// Spins the die about the table's vertical.
     func turn(by radians: Float) {
-        guard model.isPlaced, !model.isRolling, !held, glide == nil else { return }
+        guard model.isPlaced, !model.isRolling, !held, glide == nil, !lidBusy else { return }
         // About the die's centre, not the model's origin (its lid's centre),
         // which is off to one side whenever the die isn't lid-down.
         setPose(centre: centre, rotation: simd_quatf(angle: radians, axis: [0, 1, 0]) * pivot.orientation)
@@ -488,7 +545,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// Throws the die across the table. `screenDirection` is in view points
     /// (right, down); it's mapped onto the table as seen from the camera.
     func throwDie(screenDirection: CGVector, flickSpeed: CGFloat) {
-        guard model.isPlaced, !model.isRolling, !held, glide == nil, let rig, rig.model.isThrowable, let placement else { return }
+        guard model.isPlaced, !model.isRolling, !held, glide == nil, lid == nil, !lidOpening,
+              let rig, rig.model.isThrowable, let placement else { return }
         if model.explode > 0 { model.explode = 0 }
         dragTarget = nil
 
@@ -511,8 +569,6 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             ? SIMD3<Float>(0, DiePhysics.lockedTossLift, 0)
             : direction * speed + [0, DiePhysics.throwLift, 0]
         windup = Windup(start: time, base: pivot.transform, velocity: velocity, spin: (rollAxis + wobble) * spin)
-        rig.highlight(nil)
-        model.selectedPart = nil
         touchMask = 0
         model.rollDidStart()
     }
@@ -573,6 +629,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     func reset() {
         windup = nil
         glide = nil
+        closeLidNow()
         held = false
         model.isHeld = false
         hideMenuPanel()
@@ -603,6 +660,11 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// panels is placed and live screens are on. Swapping between models with
     /// the same panels keeps it running; other panels boot it afresh.
     func syncFirmware() {
+        // The screens are rebuilt on the whole die, then the lid comes off again.
+        keepingLid { syncFirmwareNow() }
+    }
+
+    private func syncFirmwareNow() {
         let wanted = model.liveScreens && model.isPlaced ? rig?.model.panel : nil
         if wanted != firmwarePanel {
             dropFirmware()
@@ -618,7 +680,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         screens?.remove()
         screens = nil
         if let firmware, let rig {
-            let live = LiveScreens(rig: rig, reference: pivot, side: firmware.panelSide)
+            let live = LiveScreens(rig: rig, reference: pivot, side: firmware.panelSide, rounded: !model.isXray)
             screens = live.isEmpty ? nil : live
             redraw()
         }
@@ -659,7 +721,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         // The menu opened: pick the die up with its front toward you. Closed:
         // set it back down.
         let front = firmware.menuFront
-        if let front, !held, !model.isRolling, glide == nil {
+        if let front, !held, !model.isRolling, glide == nil, lid == nil, !lidOpening {
             pickUp(showing: front)
         } else if front == nil, held, glide == nil {
             putDown()
@@ -791,7 +853,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// in the hand alike, it turns about the die's own axis nearest that one,
     /// so it ends square.
     func tip(_ axis: TurnAxis, _ direction: Int) {
-        guard model.isPlaced, !model.isRolling, glide == nil, let cam = cameraInAnchor else { return }
+        guard model.isPlaced, !model.isRolling, glide == nil, !lidBusy, let cam = cameraInAnchor else { return }
         dragTarget = nil
         let c = centre
         var toward = cam.position - c
@@ -873,20 +935,202 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     /// A finger down on the die touches the face under it, until it lifts
-    /// (or turns into a drag, a pinch or a twist). In x-ray, taps name parts instead.
+    /// (or turns into a drag, a pinch or a twist), in x-ray too. With the lid
+    /// off, a finger on the lid's screen touches −Y; the cup's open end has none.
     private func touchChanged(at point: CGPoint?) {
         var mask: UInt8 = 0
-        if let point, menuPanel?.contains(point, in: arView) != true, firmware != nil, model.isPlaced, !model.isRolling, !model.isXray,
-           let rig, let ray = arView.ray(through: point) {
-            let size = rig.model.bounds
-            let local = PartPicker.ray(origin: ray.origin, direction: ray.direction, into: pivot.transformMatrix(relativeTo: nil))
-            if let face = PartPicker.entryFace(
-                origin: local.origin, direction: local.direction,
-                boxMin: [-size.x / 2, 0, -size.z / 2], boxMax: [size.x / 2, size.y, size.z / 2]) {
-                mask = 1 << UInt8(face.index)
-            }
+        if let point, menuPanel?.contains(point, in: arView) != true, firmware != nil, model.isPlaced, !model.isRolling,
+           !lidBusy, let ray = arView.ray(through: point), let face = touchedFace(origin: ray.origin, direction: ray.direction) {
+            mask = 1 << UInt8(face.index)
         }
         touchMask = mask
+    }
+
+    /// The face a world-space ray first touches, on the die or the lid.
+    private func touchedFace(origin: SIMD3<Float>, direction: SIMD3<Float>) -> DieFace? {
+        guard let rig else { return nil }
+        let size = rig.model.bounds
+        let local = PartPicker.ray(origin: origin, direction: direction, into: pivot.transformMatrix(relativeTo: nil))
+        let boxMin = SIMD3<Float>(-size.x / 2, 0, -size.z / 2), boxMax = SIMD3<Float>(size.x / 2, size.y, size.z / 2)
+        var cup = PartPicker.hitDistance(origin: local.origin, direction: local.direction, boxMin: boxMin, boxMax: boxMax)
+        var face = PartPicker.entryFace(origin: local.origin, direction: local.direction, boxMin: boxMin, boxMax: boxMax)
+        guard let lid else { return face }
+        if face == .ny {
+            face = nil
+            cup = nil
+        }
+        if let hit = lidHit(lid, origin: origin, direction: direction), hit.distance < cup ?? .infinity {
+            return hit.face == .ny ? .ny : nil
+        }
+        return face
+    }
+
+    // MARK: The lid
+
+    /// The lid is on its way off or back on: hands off until it's there.
+    private var lidBusy: Bool { lidOpening || lidMove != nil }
+
+    /// Takes the lid off (the die turns lid-up, the lid lifts off and lies
+    /// inside-up beside it) or puts it back on.
+    func setLidOff(_ off: Bool) {
+        guard model.isPlaced, !model.isRolling, !held, windup == nil, glide == nil, !lidBusy else { return }
+        if off {
+            guard lid == nil else { return }
+            dragTarget = nil
+            lidOpening = true
+            model.lidDidChange(off: true)
+            let c = centre
+            glide(to: SIMD3(c.x, halfHeight, c.z), rotation: Self.lidUp(pivot.orientation),
+                  duration: DiePhysics.heldMoveTime, easeOut: false)
+        } else if let lid {
+            lidMove = LidMove(start: time, from: lid.root.transform, to: attachedLidTransform, swingAxis: nil)
+        }
+    }
+
+    /// Lid up, keeping the die's heading.
+    private static func lidUp(_ q: simd_quatf) -> simd_quatf {
+        var heading = q.act([1, 0, 0])
+        heading.y = 0
+        if simd_length(heading) < 1e-3 {
+            heading = q.act([0, 0, 1])
+            heading.y = 0
+        }
+        heading = simd_length(heading) < 1e-5 ? [1, 0, 0] : simd_normalize(heading)
+        return DiePhysics.rotation(from: DieFace.ny.normal, [1, 0, 0], to: [0, 1, 0], heading)
+    }
+
+    /// Where the lid sits on the die, in the anchor's space.
+    private var attachedLidTransform: Transform { pivot.transform }
+
+    /// The die is lid-up: cut the lid off and swing it over beside the cup.
+    private func beginLidOff() {
+        guard detachLid(at: nil), let lid, let rig, let cam = cameraInAnchor else {
+            model.lidDidChange(off: false)
+            return
+        }
+        let from = lid.root.transform
+        var side = cam.right
+        side.y = 0
+        side = simd_length(side) < 1e-5 ? [1, 0, 0] : simd_normalize(side)
+        // Tipping its top toward `side` turns it over, inside up.
+        let axis = simd_normalize(simd_cross([0, 1, 0], side))
+        let s = max(rig.model.bounds.x, rig.model.bounds.z) * pivot.scale.x
+        let c = centre
+        let rest = SIMD3<Float>(c.x, 0, c.z) + side * s * DiePhysics.lidOffDistance
+        let to = Transform(scale: from.scale, rotation: simd_quatf(angle: .pi, axis: axis) * from.rotation, translation: rest)
+        lidMove = LidMove(start: time, from: from, to: to, swingAxis: axis)
+        if lockedInPlace {
+            // Frame the cup and the lid together.
+            let mid = (SIMD3(c.x, halfHeight, c.z) + rest) / 2
+            frameStudio(centre: mid, half: [simd_distance(c, rest) / 2 + s * 0.6, s * 0.6], animated: true)
+        }
+    }
+
+    /// One frame of the lid coming off or going back on.
+    private func stepLid() {
+        guard let move = lidMove, let lid, let rig else { return }
+        let u = Float(min((time - move.start) / DiePhysics.lidMoveTime, 1))
+        let s = max(rig.model.bounds.x, rig.model.bounds.z) * pivot.scale.x
+        let up = SIMD3<Float>(0, 1, 0)
+        let smooth = { (x: Float) -> Float in x * x * (3 - 2 * x) }
+        var position: SIMD3<Float>
+        let rotation: simd_quatf
+        if let axis = move.swingAxis {
+            // Straight off the screws first, then over and down beside the cup.
+            let pull = smooth(min(u / 0.3, 1))
+            let swing = smooth(max(0, (u - 0.2) / 0.8))
+            position = simd_mix(move.from.translation, move.to.translation, SIMD3(repeating: swing))
+            position += up * (s * DiePhysics.lidPull * pull * (1 - swing) + s * 0.5 * sin(.pi * swing))
+            rotation = simd_quatf(angle: .pi * swing, axis: axis) * move.from.rotation
+        } else {
+            let e = smooth(u)
+            position = simd_mix(move.from.translation, move.to.translation, SIMD3(repeating: e))
+            position += up * s * 0.5 * sin(.pi * e)
+            rotation = simd_slerp(move.from.rotation, move.to.rotation, e)
+        }
+        lid.root.transform = Transform(scale: move.from.scale, rotation: rotation, translation: position)
+        guard u >= 1 else { return }
+        lidMove = nil
+        if move.swingAxis == nil { finishLidOn() }
+    }
+
+    /// The lid is back on the lid-up die: whole again, turned back over onto its lid.
+    private func finishLidOn() {
+        closeLidNow()
+        let c = centre
+        let over = simd_quatf(angle: .pi, axis: pivot.orientation.act([1, 0, 0])) * pivot.orientation
+        glide(to: SIMD3(c.x, halfHeight, c.z), rotation: over, duration: DiePhysics.heldMoveTime, easeOut: false)
+        frameDieOnTable(animated: true)
+    }
+
+    /// Cuts the lid off the die where it sits, or at `transform` (in the anchor's space).
+    private func detachLid(at transform: Transform?) -> Bool {
+        guard lid == nil, let rig, let placement, model.canTakeLidOff,
+              let cut = DieLid(dieRoot: rig.root, reference: pivot, side: rig.model.bounds.x)
+        else { return false }
+        placement.addChild(cut.root, preservingWorldTransform: true)
+        if let transform { cut.root.transform = transform }
+        lid = cut
+        return true
+    }
+
+    /// Puts the lid back on at once, wherever it was.
+    private func closeLidNow() {
+        lidOpening = false
+        lidMove = nil
+        lid?.restore()
+        lid = nil
+        if model.isLidOff { model.lidDidChange(off: false) }
+    }
+
+    /// Runs `body` on the whole die: the lid goes back on, then comes off
+    /// again where it lay. Mid-move, it just goes back on.
+    private func keepingLid(_ body: () -> Void) {
+        guard let lid else {
+            body()
+            return
+        }
+        let at = lidMove == nil ? lid.root.transform : nil
+        lidMove = nil
+        self.lid?.restore()
+        self.lid = nil
+        body()
+        if let at, detachLid(at: at) { return }
+        closeLidNow()
+    }
+
+    /// Whether a world-space ray meets the lid before the cup.
+    private func lidIsNearest(origin: SIMD3<Float>, direction: SIMD3<Float>) -> Bool {
+        guard let lid, let hit = lidHit(lid, origin: origin, direction: direction) else { return false }
+        guard let rig else { return true }
+        let bounds = rig.root.visualBounds(relativeTo: nil)
+        let cup = PartPicker.hitDistance(origin: origin, direction: direction, boxMin: bounds.min, boxMax: bounds.max)
+        return hit.distance < cup ?? .infinity
+    }
+
+    /// Where a world-space ray meets the lid's own box, and through which of the die's faces.
+    private func lidHit(_ lid: DieLid, origin: SIMD3<Float>, direction: SIMD3<Float>) -> (distance: Float, face: DieFace?)? {
+        let bounds = lid.root.visualBounds(relativeTo: lid.root)
+        let local = PartPicker.ray(origin: origin, direction: direction, into: lid.root.transformMatrix(relativeTo: nil))
+        guard let t = PartPicker.hitDistance(origin: local.origin, direction: local.direction, boxMin: bounds.min, boxMax: bounds.max)
+        else { return nil }
+        let face = PartPicker.entryFace(origin: local.origin, direction: local.direction, boxMin: bounds.min, boxMax: bounds.max)
+        return (t, face)
+    }
+
+    /// Turns the lid about its middle (yaw about the vertical, pitch about the
+    /// view's right), then sets it down on the table.
+    private func turnLid(yaw: Float, pitch: Float) {
+        guard let lid, let placement, let cam = cameraInAnchor else { return }
+        let root = lid.root
+        var right = cam.right
+        right.y = 0
+        right = simd_length(right) < 1e-5 ? [1, 0, 0] : simd_normalize(right)
+        let middle = root.visualBounds(relativeTo: placement).center
+        let q = simd_quatf(angle: pitch, axis: right) * simd_quatf(angle: yaw, axis: [0, 1, 0])
+        root.orientation = q * root.orientation
+        root.position = middle + q.act(root.position - middle)
+        root.position.y -= root.visualBounds(relativeTo: placement).min.y
     }
 }
 
