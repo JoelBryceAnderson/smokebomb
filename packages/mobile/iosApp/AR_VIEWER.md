@@ -34,7 +34,7 @@ It needs iOS 18 or later, and runs on iPhone and iPad.
 | `iosApp/ARViewer/LiveScreens.swift` | The firmware's panels on the die's faces |
 | `iosApp/Firmware/RustDieFirmware.swift` | The firmware over the Rust C ABI (app target only) |
 | `scripts/build_firmware.sh` | Builds `packages/firmware/ffi` for the SDK Xcode is building for |
-| `iosApp/Resources/Models/` | Bundled `.usdz` files (a folder reference) |
+| `iosApp/Resources/Models/` | Bundled `.usdz` files (a folder reference; Git LFS) |
 | `iosAppTests/` | `ARViewerTests`: true-size check, explode, picking, labels, face-up |
 | `scripts/etch_lids.py` | Bakes the charging face's laser etching into the lids |
 | `scripts/convert_usdz.py` | Binary-root conversion and ARKit checks |
@@ -142,6 +142,12 @@ many of its die shells have an `Etching`. It warns about any that don't.
 
 `Models` is a folder reference, so you don't need to run `xcodegen generate`
 just to add a file. The picker lists only models that are actually bundled.
+
+The converted models are in Git LFS (`.gitattributes`), so install it once
+(`brew install git-lfs && git lfs install`) before you clone or pull. Without
+it you get small pointer files instead of models, and the picker shows none of
+them. The contract fixture stays in plain git. Commit only the converted files,
+and re-export rarely: every version stays in LFS storage.
 
 To load models from a server later, implement `ModelSource`, which has
 `isAvailable` and `url(for:)`, and pass it to `ModelCatalog`. Nothing else
