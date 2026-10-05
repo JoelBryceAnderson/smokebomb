@@ -61,21 +61,33 @@ function paper() {
 function frame() {
   return `
     <rect x="44" y="44" width="936" height="936" rx="196" fill="none" stroke="${C.red}" stroke-width="22"/>
-    <rect x="76" y="76" width="872" height="872" rx="168" fill="none" stroke="${C.navy}" stroke-width="6"/>
-    <g fill="${C.navy}" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="44" letter-spacing="10" text-anchor="middle">
-      <text x="512" y="196">★ PURE CANE ★</text>
-    </g>`;
+    <rect x="76" y="76" width="872" height="872" rx="168" fill="none" stroke="${C.navy}" stroke-width="6"/>`;
 }
 
-function glove(x, y, flip = 1) {
-  // A thumbs-up fist at (x, y) = centre of the fist, thumb to the inside.
-  const s = flip;
+// Where the thumbs-up glove's cuff opens, in mascot coordinates: the arm ends here.
+const GLOVE = { x: 822, y: 336, tilt: -12 };
+const CUFF = [
+  GLOVE.x - 100 * Math.sin((GLOVE.tilt * Math.PI) / 180),
+  GLOVE.y + 100 * Math.cos((GLOVE.tilt * Math.PI) / 180),
+];
+
+function glove() {
+  // A puffy cartoon glove giving a thumbs up: one soft outline for the fist
+  // and the bent thumb, knuckle bumps down the curled fingers, a flared cuff
+  // with a rolled edge, and a few "ta-da" ticks off the thumb.
+  const { x, y, tilt } = GLOVE;
+  const fist = `M-46,-10
+    C-62,-48 -54,-98 -30,-112 C-12,-122 6,-110 2,-90 C-2,-70 -10,-52 -2,-38
+    C14,-48 36,-46 46,-30 C64,-26 66,-4 50,0 C68,4 68,26 50,28
+    C66,34 62,54 40,56 C18,64 -30,62 -44,48 C-62,34 -62,6 -46,-10 Z`;
   return `
-    <g transform="translate(${x},${y}) scale(${s},1)" stroke="${C.ink}" stroke-width="12" stroke-linejoin="round" stroke-linecap="round">
-      <path class="solid-w" d="M-40,48 L-50,84 L50,84 L40,48 Z" fill="${C.sugarTop}"/>
-      <rect class="solid-w" x="-46" y="-104" width="40" height="92" rx="20" fill="${C.sugarTop}"/>
-      <rect class="solid-w" x="-52" y="-40" width="104" height="90" rx="34" fill="${C.sugarTop}"/>
-      <path d="M8,-14 Q30,-14 50,-14 M8,10 Q30,10 50,10 M8,32 Q28,32 46,32" fill="none" stroke-width="8"/>
+    <g transform="translate(${x},${y}) rotate(${tilt})" stroke="${C.ink}" stroke-width="12" stroke-linejoin="round" stroke-linecap="round">
+      <path class="solid-w" d="M-36,52 C-46,70 -54,84 -52,94 C-20,108 30,108 54,94 C54,84 46,68 40,52 Z" fill="${C.sugarTop}"/>
+      <path d="M-48,82 C-16,94 26,94 50,82" fill="none" stroke-width="8"/>
+      <path class="solid-w" d="${fist}" fill="${C.sugarTop}"/>
+      <path d="M50,0 C40,4 30,2 20,-4 M50,28 C40,32 30,30 20,24 M-2,-38 C-14,-30 -26,-28 -36,-32" fill="none" stroke-width="8"/>
+      <path d="M-24,40 C-10,46 6,46 18,40" fill="none" stroke-width="6"/>
+      <path d="M-58,-100 L-78,-108 M-46,-132 L-58,-148 M14,-118 L30,-130" fill="none" stroke-width="9"/>
     </g>`;
 }
 
@@ -161,10 +173,10 @@ function mascot() {
       <!-- arm on the hip (left), thumbs-up arm (right) -->
       <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
         <path d="M334,470 C250,462 238,560 300,582"/>
-        <path d="M716,450 C790,452 822,452 822,418"/>
+        <path d="M716,450 C790,452 ${CUFF[0]},${CUFF[1] + 30} ${CUFF[0]},${CUFF[1] - 4}"/>
       </g>
       ${hipGlove(306, 584)}
-      ${glove(822, 336, -1)}
+      ${glove()}
       <!-- face -->
       ${eye(445)}
       ${eye(540)}
@@ -180,15 +192,38 @@ function mascot() {
     </g>`;
 }
 
+// The ribbon: an arched band from x0 to x1 whose middle rises by `lift`,
+// `h` deep, with notched tails tucked behind each end.
+const RIBBON = { x0: 158, x1: 866, y: 850, lift: 92, h: 172 };
+
 function banner() {
+  const { x0, x1, y, lift, h } = RIBBON;
+  const mid = (x0 + x1) / 2;
+  // A quadratic's peak is half its control point's height, so the control
+  // point sits at 2 * lift.
+  const arc = (dy) => `${x0},${y + dy} Q${mid},${y + dy - 2 * lift} ${x1},${y + dy}`;
+  const top = -h / 2;
+  const bot = h / 2;
+  const tail = (sx) => {
+    // Mirror about the centre for the right tail.
+    const X = (v) => (sx > 0 ? v : 2 * mid - v);
+    return `
+      <path class="solid" d="M${X(x0 + 40)},${y + top + 40} L${X(x0 - 64)},${y + top + 52} L${X(x0 - 28)},${y + 24}
+        L${X(x0 - 60)},${y + bot + 8} L${X(x0 + 46)},${y + bot + 14} Z" fill="${C.redDark}"/>
+      <path class="solid" d="M${X(x0)},${y + bot} L${X(x0 + 46)},${y + bot + 14} L${X(x0 + 40)},${y + bot - 14} Z" fill="${C.navy}"/>`;
+  };
   return `
+    <defs><path id="ribbon-line" d="M${arc(0)}"/></defs>
     <g class="banner" stroke="${C.navy}" stroke-width="10" stroke-linejoin="round">
-      <path class="solid" d="M130,800 L232,800 L232,890 L130,890 L170,845 Z" fill="${C.redDark}"/>
-      <path class="solid" d="M894,800 L792,800 L792,890 L894,890 L854,845 Z" fill="${C.redDark}"/>
-      <path class="solid" d="M192,770 Q512,738 832,770 L832,868 Q512,836 192,868 Z" fill="${C.red}"/>
+      ${tail(1)}
+      ${tail(-1)}
+      <path class="solid" d="M${arc(top)} L${x1},${y + bot} Q${mid},${y + bot - 2 * lift} ${x0},${y + bot} Z" fill="${C.red}"/>
+      <path d="M${arc(top + 14)} M${arc(bot - 14)}" fill="none" stroke="${C.paper}" stroke-width="4" opacity="0.7"/>
     </g>
-    <text class="word" x="512" y="830" text-anchor="middle" font-family="Pacifico" font-size="94"
-      fill="${C.paper}" stroke="${C.navy}" stroke-width="5" paint-order="stroke">Sugarcube</text>`;
+    <text class="word" font-family="Pacifico" font-size="108" dy="22" text-anchor="middle"
+      fill="${C.paper}" stroke="${C.navy}" stroke-width="7" paint-order="stroke">
+      <textPath href="#ribbon-line" startOffset="50%">Sugarcube</textPath>
+    </text>`;
 }
 
 // --- Variants --------------------------------------------------------------
@@ -207,23 +242,35 @@ function defs() {
     </defs>`;
 }
 
-// Centre of the mascot and banner, and the distance from it to their farthest
-// points (the thumb and the ribbon tails), for fitting into Android's circle.
-const CONTENT = { cx: 512, cy: 568, r: 500 };
+// The mascot's own drawing box (sparkles to thumb, top of thumb to shoes),
+// and where and how big it sits on the box art: the feet tuck behind the ribbon.
+const MASCOT = { cx: 549, cy: 494, at: [506, 424], scale: 1.1 };
+
+function placedMascot() {
+  const [x, y] = MASCOT.at;
+  const k = MASCOT.scale;
+  return `<g transform="translate(${x - MASCOT.cx * k},${y - MASCOT.cy * k}) scale(${k})">${mascot()}</g>`;
+}
+
+// Android foreground fit, measured from the drawing (see fitAndroid): the
+// centre of the art and the scale that puts its farthest point on the
+// 66 dp safe circle of the 108 dp layer.
+let ANDROID_FIT = { tx: 0, ty: 0, s: 1 };
 
 function svg(variant) {
   let body;
   if (variant === "full") {
-    body = paper() + frame() + mascot() + banner();
+    body = paper() + frame() + placedMascot() + banner();
   } else if (variant === "android-bg") {
     body = paper();
+  } else if (variant === "android-art" || variant === "mono-art") {
+    // Unscaled, for measuring.
+    body = `<g id="art">${variant === "mono-art" ? placedMascot() : placedMascot() + banner()}</g>`;
   } else {
-    // Android foreground and monochrome: the mascot and ribbon, scaled to sit
-    // inside the 66 dp safe circle of the 108 dp layer.
-    const s = (1024 * 33) / 108 / CONTENT.r;
-    const tx = 512 - CONTENT.cx * s;
-    const ty = 512 - CONTENT.cy * s;
-    const content = variant === "mono" ? mascot() : mascot() + banner();
+    // Android foreground and monochrome: the mascot and ribbon, fitted inside
+    // the safe circle so no launcher mask (circle, squircle, teardrop) cuts them.
+    const { tx, ty, s } = ANDROID_FIT[variant];
+    const content = variant === "mono" ? placedMascot() : placedMascot() + banner();
     body = `<g transform="translate(${tx},${ty}) scale(${s})">${content}</g>`;
     if (variant === "mono") {
       // A mask, so the black cut-outs become holes rather than black ink.
@@ -272,6 +319,10 @@ async function main() {
   fs.writeFileSync(path.join(path.dirname(IOS_SET), "Contents.json"), CATALOG_CONTENTS);
 
   // Android: adaptive layers (108 dp) plus legacy launchers (48 dp).
+  ANDROID_FIT = {
+    "android-fg": await fitAndroid(page, "android-art"),
+    mono: await fitAndroid(page, "mono-art"),
+  };
   for (const [name, k] of Object.entries(DENSITIES)) {
     const dir = path.join(ANDROID_RES, `mipmap-${name}`);
     const layer = Math.round(108 * k);
@@ -288,6 +339,44 @@ async function main() {
     fs.writeFileSync(path.join(anydpi, `${name}.xml`), ADAPTIVE);
   }
   await browser.close();
+}
+
+// Renders `variant` unscaled and measures its visible pixels: the centre of
+// their bounding box, and the farthest of them from it. Returns the transform
+// that puts that farthest pixel on the safe circle (33 of 108 dp from centre).
+async function fitAndroid(page, variant) {
+  const n = 1024;
+  await page.setViewportSize({ width: n, height: n });
+  await page.setContent(`<style>${CSS}</style>${svg(variant)}`);
+  await page.evaluate(() => document.fonts.ready);
+  const png = (await page.screenshot({ omitBackground: true })).toString("base64");
+  const { cx, cy, r } = await page.evaluate(async ([b64, n]) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = n;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const a = ctx.getImageData(0, 0, n, n).data;
+    let [x0, y0, x1, y1] = [n, n, 0, 0];
+    const pts = [];
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if (a[(y * n + x) * 4 + 3] > 8) {
+          x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+          y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+          pts.push(x, y);
+        }
+      }
+    }
+    const [cx, cy] = [(x0 + x1 + 1) / 2, (y0 + y1 + 1) / 2];
+    let r = 0;
+    for (let i = 0; i < pts.length; i += 2) r = Math.max(r, Math.hypot(pts[i] + 0.5 - cx, pts[i + 1] + 0.5 - cy));
+    return { cx, cy, r };
+  }, [png, n]);
+  const s = (n * 33) / 108 / r;
+  return { tx: n / 2 - cx * s, ty: n / 2 - cy * s, s };
 }
 
 const IOS_CONTENTS = `{
