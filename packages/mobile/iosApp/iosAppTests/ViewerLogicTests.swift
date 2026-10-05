@@ -96,6 +96,73 @@ final class ViewerLogicTests: XCTestCase {
         let lineup = ModelCatalog.all.first { $0.id == "sugarcube_lineup" }
         XCTAssertEqual(lineup?.sizeLabel, "156.0 × 40.0 × 40.0 mm")
     }
+
+    // MARK: Size and colour
+
+    @MainActor
+    func testStartsOnThe30mmRainbow() {
+        XCTAssertEqual(viewer().selected?.id, "sugarcube_30_rainbow")
+    }
+
+    @MainActor
+    func testSizesAndColours() {
+        let viewer = viewer()
+        XCTAssertEqual(viewer.sizes, ["30 mm", "34 mm", "40 mm"])
+        XCTAssertEqual(viewer.colours.map(\.variant), ["Rainbow", "Colour"])
+        viewer.chooseSize("34 mm")
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_34")
+        XCTAssertEqual(viewer.colours.map(\.variant), ["16-grey", "1-bit"])
+        viewer.choose(viewer.colours[1])
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_34_1bit")
+    }
+
+    @MainActor
+    func testChangingSizeKeepsTheColourWhereItCan() {
+        let viewer = viewer()
+        viewer.choose(viewer.colours[1])
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_30")
+        viewer.chooseSize("40 mm")
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_40")
+    }
+
+    @MainActor
+    func testXrayStaysOnAcrossSizeAndColour() {
+        let viewer = viewer()
+        viewer.toggleXray()
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_30_xray")
+        // The 30 mm dice share an x-ray: choosing the other colour keeps it, and x-ray off goes to that colour.
+        viewer.choose(viewer.colours[1])
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_30_xray")
+        XCTAssertEqual(viewer.die?.id, "sugarcube_30")
+        viewer.chooseSize("34 mm")
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_34_xray")
+        XCTAssertEqual(viewer.die?.id, "sugarcube_34")
+        viewer.toggleXray()
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_34")
+    }
+
+    @MainActor
+    func testExplodedXrayRemembersTheColour() {
+        let viewer = viewer()
+        viewer.toggleXray()
+        viewer.toggleExplodedFile()
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_30_xray_exploded")
+        viewer.choose(viewer.colours[1])
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_30_xray_exploded")
+        viewer.toggleXray()
+        XCTAssertEqual(viewer.selected?.id, "sugarcube_30")
+    }
+
+    /// A viewer with every catalog model available, whether or not it's bundled.
+    @MainActor
+    private func viewer() -> ARViewerModel {
+        ARViewerModel(catalog: ModelCatalog(source: EverythingSource()), labels: try! PartLabels(json: Data("{}".utf8)))
+    }
+}
+
+private struct EverythingSource: ModelSource {
+    func isAvailable(_ model: SugarcubeModel) -> Bool { model.kind != .fixture }
+    func url(for model: SugarcubeModel) async throws -> URL { throw URLError(.fileDoesNotExist) }
 }
 
 private extension simd_float4x4 {

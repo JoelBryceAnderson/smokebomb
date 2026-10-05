@@ -178,41 +178,64 @@ private struct CompactControls: View {
             HStack(spacing: 8) {
                 RollButtons(model: model)
             }
-            ModelCarousel(model: model)
+            ModelPicker(model: model)
         }
         .padding(.bottom, 12)
     }
 }
 
-private struct ModelCarousel: View {
+/// Size, then colour: a row of chips each, over the camera view.
+private struct ModelPicker: View {
     let model: ARViewerModel
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(model.models) { item in
-                        Button { model.select(item) } label: {
-                            VStack(spacing: 1) {
-                                Text(item.size).font(.caption.weight(.semibold))
-                                Text(item.variant).font(.caption2)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                        }
-                        .buttonStyle(.plain)
-                        .background(item == model.selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial), in: Capsule())
-                        .foregroundStyle(item == model.selected ? Color.white : Color.primary)
-                        .id(item.id)
-                    }
+        VStack(spacing: 6) {
+            if model.sizes.count > 1 {
+                ChipRow(items: model.sizes, id: \.self, label: { $0 }, isSelected: { $0 == model.die?.size }) {
+                    model.chooseSize($0)
                 }
-                .padding(.horizontal, 12)
             }
-            .onChange(of: model.selected) { _, selected in
-                guard let id = selected?.id else { return }
-                withAnimation { proxy.scrollTo(id, anchor: .center) }
+            if model.colours.count > 1 {
+                ChipRow(items: model.colours, id: \.id, label: { $0.variant }, isSelected: { $0 == model.die }) {
+                    model.choose($0)
+                }
             }
         }
+    }
+}
+
+private struct ChipRow<Item, ID: Hashable>: View {
+    let items: [Item]
+    let id: KeyPath<Item, ID>
+    let label: (Item) -> String
+    let isSelected: (Item) -> Bool
+    let action: (Item) -> Void
+
+    var body: some View {
+        // Centred when it fits, scrolling when it doesn't.
+        ViewThatFits(in: .horizontal) {
+            chips
+            ScrollView(.horizontal, showsIndicators: false) { chips }
+        }
+    }
+
+    private var chips: some View {
+        HStack(spacing: 8) {
+            ForEach(items, id: id) { item in
+                let selected = isSelected(item)
+                Button { action(item) } label: {
+                    Text(label(item))
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .background(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial), in: Capsule())
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, 12)
     }
 }
 
@@ -224,18 +247,21 @@ private struct SidePanel: View {
     var body: some View {
         Form {
             Section("Model") {
-                ForEach(model.models) { item in
-                    Button { model.select(item) } label: {
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(item.title)
-                                Text(item.sizeLabel).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if item == model.selected { Image(systemName: "checkmark").foregroundStyle(.tint) }
-                        }
+                if model.sizes.count > 1 {
+                    Picker("Size", selection: Binding(get: { model.die?.size ?? "" }, set: { model.chooseSize($0) })) {
+                        ForEach(model.sizes, id: \.self) { Text($0).tag($0) }
                     }
-                    .foregroundStyle(.primary)
+                    .pickerStyle(.segmented)
+                }
+                if model.colours.count > 1 {
+                    Picker("Colour", selection: Binding(get: { model.die?.id ?? "" }, set: { id in
+                        if let die = model.colours.first(where: { $0.id == id }) { model.choose(die) }
+                    })) {
+                        ForEach(model.colours) { Text($0.variant).tag($0.id) }
+                    }
+                }
+                if let die = model.die {
+                    LabeledContent("Measures", value: die.sizeLabel)
                 }
             }
             Section("Roll") {
