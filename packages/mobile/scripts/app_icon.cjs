@@ -9,6 +9,7 @@
 // The art is SVG, rendered by Chromium through Playwright:
 //   npm i -g playwright   (or use any install that `require` can find)
 //   node packages/mobile/scripts/app_icon.cjs
+// ICON_POSE=jump draws him mid-jump with a fist up instead.
 
 const fs = require("fs");
 const path = require("path");
@@ -112,6 +113,79 @@ function glove() {
 // The front face's centre line, which the legs and boots mirror about.
 const FACE_X = 490;
 
+// "stand" (thumbs up, on the ribbon) or "jump" (mid-air, fist up).
+let POSE = process.env.ICON_POSE || "stand";
+
+function standLegs() {
+  return `
+      <!-- legs and boots, mirrored about the front face's centre -->
+      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
+        <path d="M${FACE_X - 38},632 Q${FACE_X - 44},672 ${FACE_X - 50},706"/>
+        <path d="M${FACE_X + 38},632 Q${FACE_X + 44},672 ${FACE_X + 50},706"/>
+      </g>
+      ${boot(FACE_X - 50, 706, 1)}
+      ${boot(FACE_X + 50, 706, -1)}`;
+}
+
+function jumpLegs() {
+  // Knees tucked: the legs kink out and the boots kick back, toes down,
+  // with whoosh lines trailing below.
+  return `
+      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <path d="M${FACE_X - 38},632 Q${FACE_X - 92},650 ${FACE_X - 74},690"/>
+        <path d="M${FACE_X + 38},632 Q${FACE_X + 92},650 ${FACE_X + 74},690"/>
+      </g>
+      <g transform="rotate(24 ${FACE_X - 74} 690)">${boot(FACE_X - 74, 690, 1)}</g>
+      <g transform="rotate(-24 ${FACE_X + 74} 690)">${boot(FACE_X + 74, 690, -1)}</g>
+      <g stroke="${C.ink}" stroke-width="9" stroke-linecap="round" fill="none">
+        <path d="M${FACE_X - 34},752 Q${FACE_X - 28},772 ${FACE_X - 34},790"/>
+        <path d="M${FACE_X},758 L${FACE_X},796"/>
+        <path d="M${FACE_X + 34},752 Q${FACE_X + 28},772 ${FACE_X + 34},790"/>
+      </g>`;
+}
+
+function standArms() {
+  return `
+      <!-- arm on the hip (left), thumbs-up arm (right) -->
+      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
+        <path d="M334,470 C250,462 238,560 300,582"/>
+        <path d="M716,450 C790,452 ${CUFF[0]},${CUFF[1] + 30} ${CUFF[0]},${CUFF[1] - 4}"/>
+      </g>
+      ${hipGlove(306, 584)}
+      ${glove()}`;
+}
+
+function jumpArms() {
+  // Right arm punches straight up into a fist; the left swings out low.
+  return `
+      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
+        <path d="M716,446 C788,438 822,390 830,342"/>
+        <path d="M334,480 C270,486 236,520 222,566"/>
+      </g>
+      ${hipGlove(220, 580)}
+      ${fist(836, 278, 14)}
+      <path d="M766,246 L744,232 M782,206 L768,186" stroke="${C.ink}" stroke-width="11" stroke-linecap="round" fill="none"/>`;
+}
+
+function fist(x, y, tilt = 0) {
+  // A raised cartoon fist seen from the front, wrist at the bottom: four
+  // knuckle bumps across the top, the thumb folded across the fingers, and
+  // a flared cuff.
+  const hand = `M-50,26 C-62,0 -58,-38 -40,-50 C-32,-64 -14,-66 -8,-54
+    C0,-68 18,-68 22,-54 C30,-66 48,-64 50,-48 C62,-44 64,-20 56,-6
+    C62,14 56,32 42,40 C20,50 -32,48 -50,26 Z`;
+  const thumb = "M-52,-4 C-32,-18 8,-20 28,-8 C36,-2 32,12 22,12 C2,10 -30,12 -48,20 Z";
+  const cuff = "M-36,38 C-44,54 -48,64 -50,76 C-20,88 24,88 50,74 C46,62 40,50 36,38 Z";
+  return `
+    <g transform="translate(${x},${y}) rotate(${tilt}) scale(0.82)" stroke="${C.ink}" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
+      <path class="solid-w" d="${cuff}" fill="${C.sugarTop}"/>
+      <path d="M-46,64 C-14,76 22,76 46,62" fill="none" stroke-width="9"/>
+      <path class="solid-w" d="${hand}" fill="${C.sugarTop}"/>
+      <path d="M-8,-54 C-10,-46 -10,-38 -8,-30 M22,-54 C22,-46 22,-38 23,-30 M50,-48 C48,-40 48,-32 49,-26" fill="none" stroke-width="7"/>
+      <path class="solid-w" d="${thumb}" fill="${C.sugarTop}"/>
+    </g>`;
+}
+
 function boot(x, y, side) {
   // A chubby cartoon boot with its ankle at (x, y): a round toe turned
   // outward (side 1 is the left foot), a pink cuff and a shine on the toe.
@@ -185,15 +259,10 @@ function mascot() {
       <ellipse class="solid" cx="${cx}" cy="448" rx="27" ry="44" fill="${C.ink}"/>
       <path class="cut" d="M${cx + 4},${448 - 4} L${cx + 30},${448 - 34} L${cx + 30},${448 - 4} Z" fill="${C.sugar}"/>
     </g>`;
+  const tilt = POSE === "jump" ? `rotate(-5 ${FACE_X} 480)` : "";
   return `
-    <g class="mascot">
-      <!-- legs and boots, mirrored about the front face's centre -->
-      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
-        <path d="M${FACE_X - 38},632 Q${FACE_X - 44},672 ${FACE_X - 50},706"/>
-        <path d="M${FACE_X + 38},632 Q${FACE_X + 44},672 ${FACE_X + 50},706"/>
-      </g>
-      ${boot(FACE_X - 50, 706, 1)}
-      ${boot(FACE_X + 50, 706, -1)}
+    <g class="mascot" transform="${tilt}">
+      ${POSE === "jump" ? jumpLegs() : standLegs()}
       <!-- the cube -->
       <path class="solid-w" d="${side}" fill="${C.sugarSide}"/>
       <path class="solid-w" d="${top}" fill="${C.sugarTop}"/>
@@ -201,13 +270,7 @@ function mascot() {
       <path d="${edges}" fill="none" stroke="${C.ink}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="${outline}" fill="none" stroke="${C.ink}" stroke-width="14" stroke-linejoin="round"/>
       <g class="grain" fill="${C.sugarSide}">${grains.join("")}</g>
-      <!-- arm on the hip (left), thumbs-up arm (right) -->
-      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
-        <path d="M334,470 C250,462 238,560 300,582"/>
-        <path d="M716,450 C790,452 ${CUFF[0]},${CUFF[1] + 30} ${CUFF[0]},${CUFF[1] - 4}"/>
-      </g>
-      ${hipGlove(306, 584)}
-      ${glove()}
+      ${POSE === "jump" ? jumpArms() : standArms()}
       <!-- face -->
       ${eye(445)}
       ${eye(540)}
@@ -291,10 +354,13 @@ function defs() {
 // The mascot's own drawing box (sparkles to thumb, top of thumb to shoes),
 // and where and how big it sits on the box art: the feet tuck behind the ribbon.
 const MASCOT = { cx: 549, cy: 494, at: [506, 404], scale: 1.08 };
+// Jumping, he's a little smaller and higher, so the raised fist clears the
+// border and there's air between his boots and the ribbon.
+const MASCOT_JUMP = { at: [500, 388], scale: 0.95 };
 
 function placedMascot() {
-  const [x, y] = MASCOT.at;
-  const k = MASCOT.scale;
+  const [x, y] = POSE === "jump" ? MASCOT_JUMP.at : MASCOT.at;
+  const k = POSE === "jump" ? MASCOT_JUMP.scale : MASCOT.scale;
   return `<g transform="translate(${x - MASCOT.cx * k},${y - MASCOT.cy * k}) scale(${k})">${mascot()}</g>`;
 }
 
@@ -458,7 +524,7 @@ const ADAPTIVE = `<?xml version="1.0" encoding="utf-8"?>
 </adaptive-icon>
 `;
 
-module.exports = { svg, CSS };
+module.exports = { svg, CSS, setPose: (p) => (POSE = p) };
 
 if (require.main === module) {
   main().catch((e) => {
