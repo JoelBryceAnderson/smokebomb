@@ -42,6 +42,18 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      # The AR viewer's models are in Git LFS. Fetch them through a cache keyed
+      # on their object ids, so a run only spends LFS bandwidth when they change.
+      - name: List LFS objects
+        working-directory: .
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-objects
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-objects') }}
+      - name: Pull LFS objects
+        working-directory: .
+        run: git lfs pull
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

@@ -24,7 +24,19 @@ final class ARViewerModel {
     /// library); nil means baked screens only, as in the tests.
     @ObservationIgnored var makeFirmware: DieFirmwareFactory?
 
+    /// AR's own availability (camera access, device support). It doesn't
+    /// matter with AR off.
     var availability = Availability.checking
+
+    /// AR on: the camera and your table. Off (the default): the die locked in
+    /// place on a virtual table, like the desktop simulator; it needs no camera
+    /// and runs anywhere. Remembered.
+    var augmented: Bool {
+        didSet { UserDefaults.standard.set(augmented, forKey: Self.augmentedKey) }
+    }
+    /// Whether this device can do AR at all.
+    let arSupported: Bool
+    private static let augmentedKey = "simulator.augmented"
     let models: [SugarcubeModel]
     private(set) var selected: SugarcubeModel?
     /// The die to go back to when x-ray is switched off.
@@ -69,7 +81,11 @@ final class ARViewerModel {
         self.catalog = catalog
         self.labels = labels
         models = catalog.available
-        selected = models.first { $0.kind == .die } ?? models.first
+        selected = models.first { $0.id == ModelCatalog.defaultID } ?? models.first { $0.kind == .die } ?? models.first
+        let supported = ARWorldTrackingConfiguration.isSupported
+        let saved = UserDefaults.standard.object(forKey: Self.augmentedKey) as? Bool
+        arSupported = supported
+        augmented = supported && (saved ?? false)
     }
 
     // MARK: Availability
@@ -112,7 +128,7 @@ final class ARViewerModel {
 
     var hint: String? {
         if isCoaching { return nil }
-        if !isPlaced { return planeFound ? "Tap the table to place the die" : "Move your device slowly to find the table" }
+        if augmented, !isPlaced { return planeFound ? "Tap the table to place the die" : "Move your device slowly to find the table" }
         if isHeld { return "Menu: tip it with the turn pad · touch the front face" }
         return nil
     }
@@ -127,6 +143,58 @@ final class ARViewerModel {
         faceUp = nil
         loadError = nil
         scene?.show(model)
+    }
+
+    /// The models you pick by size and colour: the dice (and, in debug builds, the per-part test model).
+    var dice: [SugarcubeModel] {
+        models.filter { $0.kind == .die || $0.kind == .fixture }
+    }
+
+    /// The die behind what's showing: itself, or the one an x-ray belongs to.
+    var die: SugarcubeModel? {
+        guard let selected else { return nil }
+        switch selected.kind {
+        case .die, .fixture: return selected
+        case .xray, .explodedXray: return dieBeforeXray ?? catalog.model(id: selected.die)
+        case .lineup: return nil
+        }
+    }
+
+    /// "30 mm", "34 mm", "40 mm": the sizes there's a die for, in catalog order.
+    var sizes: [String] {
+        dice.map(\.size).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+    }
+
+    /// The colours of the chosen size.
+    var colours: [SugarcubeModel] {
+        dice.filter { $0.size == die?.size }
+    }
+
+    /// Another size, keeping the colour where that size has it, and keeping x-ray on.
+    func chooseSize(_ size: String) {
+        guard size != die?.size else { return }
+        let options = dice.filter { $0.size == size }
+        guard let next = options.first(where: { $0.variant == die?.variant }) ?? options.first else { return }
+        choose(next)
+    }
+
+    /// Another die. In x-ray it stays in x-ray: on the same file when the dice
+    /// share one, or on the new die's x-ray, or back to the die if it has none.
+    func choose(_ next: SugarcubeModel) {
+        guard next != die, let current = selected else { return }
+        guard current.kind == .xray || current.kind == .explodedXray else {
+            select(next)
+            return
+        }
+        let currentXray = current.kind == .xray ? current.id : current.exploded
+        if next.xray != nil, next.xray == currentXray {
+            dieBeforeXray = next
+        } else if let xray = catalog.model(id: next.xray), models.contains(xray) {
+            select(xray)
+            dieBeforeXray = next
+        } else {
+            select(next)
+        }
     }
 
     var isXray: Bool {

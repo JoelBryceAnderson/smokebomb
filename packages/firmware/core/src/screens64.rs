@@ -24,7 +24,7 @@ use crate::menu::{AppIcon, Draft, Page, PlayMode, Setup, Value};
 use crate::nest::{ChargeView, Label, NestFace, Screen};
 use crate::palette64 as pal;
 use crate::pigs::{Locked, Outcome, Symbol, Throw, Token};
-use crate::screens::{self, Ctx, BOOT_FADE, BOOT_STEP, BOOT_STEPS, FACE_START, LOOP_END};
+use crate::screens::{self, Ctx, FACE_START};
 use crate::smoke::Special;
 use crate::sprites64 as spr;
 use crate::tier64::{H1, T1, T2};
@@ -313,100 +313,20 @@ pub fn draw_idle<A: AssetStore, T: Target>(
 
 // ---------- boot (C1) ----------
 
-/// Pip slots for a value, in units of the pip grid (as the 96×96 boot).
-fn pip_slots(value: u8) -> &'static [(i8, i8)] {
-    match value {
-        1 => &[(0, 0)],
-        2 => &[(-1, -1), (1, 1)],
-        3 => &[(-1, -1), (1, 1), (0, 0)],
-        4 => &[(-1, -1), (1, 1), (1, -1), (-1, 1)],
-        5 => &[(-1, -1), (1, 1), (1, -1), (-1, 1), (0, 0)],
-        _ => &[(-1, -1), (1, 1), (1, -1), (-1, 1), (-1, 0), (1, 0)],
-    }
-}
-
-/// Pip grid spacing, px.
-const PIP_STEP: f32 = 14.0;
-
-fn draw_pips<T: Target>(p: &mut Painter<T>, value: u8, colour: Color, alpha: f32) {
-    for &(sx, sy) in pip_slots(value) {
-        draw_centered(
-            p,
-            &spr::PIP,
-            sx as f32 * PIP_STEP,
-            sy as f32 * PIP_STEP,
-            1.0,
-            style(colour, alpha),
-        );
-    }
-}
-
-/// The boot on one face: the pips count round as on the 96×96 die (same
-/// timing), then the top face shows the sugar cube and writes `sugarcube`
-/// under it, with a gold sparkle.
+/// The boot on one face: the 96×96 die's animation, drawn smooth through
+/// the 64×64 transform: the pips slide and grow between values, the top
+/// face's centre pip squares up into a sugar cube that wiggles and bursts
+/// into crystals, and `Sugarcube` writes itself on in the script with a
+/// glint riding the pen. In colour: white pips and cube, sugar crystals and
+/// a gold glint.
 pub fn draw_boot<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, index: usize, top: bool, t: f32) {
-    let t = t - if top { 0.0 } else { index as f32 * 0.05 };
-    if t < 0.0 {
-        return;
-    }
-    if top && t >= LOOP_END {
-        in_pixels(c, |p| draw_boot_finale(p, t - LOOP_END));
-        return;
-    }
-    let v0 = if top { 6 } else { FACE_START[index] };
-    let val = |k: u32| ((v0 as u32 - 1 + k) % 6 + 1) as u8;
-    let appear = (t / 0.25).min(1.0);
-    let steps_t = t - 0.25;
-    let fade = ((steps_t - BOOT_STEP * BOOT_STEPS as f32) / BOOT_FADE).clamp(0.0, 1.0);
-    // Pixel pips can't slide by fractions: each step lands at once, half
-    // way through the 96×96 die's tween.
-    let value = if steps_t < 0.0 {
-        v0
-    } else {
-        let k = floorf(steps_t / BOOT_STEP) as u32;
-        let into = steps_t - k as f32 * BOOT_STEP;
-        val((k + (into >= 0.11) as u32).min(BOOT_STEPS))
+    let ink = screens::BootInk {
+        pips: pal::WHITE,
+        crystals: pal::SUGAR,
+        word: pal::WHITE,
+        glint: pal::GOLD,
     };
-    in_pixels(c, |p| draw_pips(p, value, pal::WHITE, appear * (1.0 - fade)));
-}
-
-fn draw_boot_finale<T: Target>(p: &mut Painter<T>, u: f32) {
-    let fade = 1.0 - ((u - 3.8) / 0.4).clamp(0.0, 1.0);
-    if fade <= 0.0 {
-        return;
-    }
-    // The last pips go as the cube arrives.
-    if u < 0.35 {
-        draw_pips(p, 5, pal::WHITE, 1.0 - u / 0.35);
-    }
-    let cube = (u / 0.3).min(1.0) * fade;
-    // The 15×15 cube at 2×, its layers placed from the shared box (each
-    // layer alone is shorter than the cube).
-    let (x, y) = (-15.0, -27.0);
-    draw_glyph(p, &spr::CUBE_TOP, x, y, 2.0, style(pal::WHITE, cube));
-    draw_glyph(p, &spr::CUBE_LEFT, x, y, 2.0, style(Color::hex(0xC9CCD3), cube));
-    draw_glyph(p, &spr::CUBE_RIGHT, x, y, 2.0, style(pal::DIM, cube));
-    // `sugarcube` writes itself on, a letter at a time.
-    const WORD: &str = "sugarcube";
-    let w = (((u - 1.15) / 0.95).clamp(0.0, 1.0) * WORD.len() as f32 + 0.999) as usize;
-    if u >= 1.15 && w > 0 {
-        let x0 = -floorf(TEXT.measure(WORD) as f32 / 2.0);
-        TEXT.draw(
-            p,
-            &WORD[..w.min(WORD.len())],
-            x0,
-            10.0,
-            1.0,
-            Align::Left,
-            style(pal::WHITE, fade),
-        );
-    }
-    // A sparkle on the cube's corner.
-    let s = (u - 2.25) / 0.5;
-    if (0.0..1.0).contains(&s) {
-        let a = sinf(core::f32::consts::PI * s);
-        draw_centered(p, &spr::SPARKLE, 15.0, -24.0, 1.0, style(pal::GOLD, a * fade));
-    }
+    screens::draw_boot_in(c, index, top, t, ink);
 }
 
 // ---------- menu (C3): the die picker and the other pages ----------

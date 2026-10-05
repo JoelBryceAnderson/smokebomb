@@ -7,7 +7,10 @@ import UIKit
 /// turned to that face's screen axes (`DieFace.screenAxes`, the firmware's
 /// `orientation::BASES`), so frames land the way the hardware shows them,
 /// whatever the model's own UVs. The model's baked screens are hidden while
-/// these are up.
+/// these are up. The quads are rounded like the glass's mask. The sapphire
+/// window round each screen has a square hole for it, so the corners the
+/// rounding cuts off are filled with the window's own material: bezel, not
+/// a view into the die.
 @MainActor
 final class LiveScreens {
     /// Flip if the frames show upside down on device (RealityKit texture
@@ -15,6 +18,19 @@ final class LiveScreens {
     static let flipVertically = false
     /// How far in front of the model's screen the quad sits, in metres.
     static let lift: Float = 0.00005
+    /// Segments in each rounded corner of the quad.
+    static let cornerSegments = 8
+
+    /// The glass's ink mask rounds the lit area, as the web simulator draws it
+    /// (`geometry.ts` `maskTexels` / `texelsPerPx`): 14 px on the 96×96 panel,
+    /// 10.75 px on the 64×64. A fraction of the side, so it fits any quad.
+    static func cornerFraction(side: Int) -> Float {
+        switch side {
+        case 96: return 14 / 96
+        case 64: return 10.75 / 64
+        default: return 0.15
+        }
+    }
 
     private struct Screen {
         let quad: ModelEntity
@@ -32,6 +48,7 @@ final class LiveScreens {
         self.side = side
         let blank = [UInt8](repeating: 0, count: side * side * 4)
         guard let blankImage = Self.image(blank, side: side) else { return }
+        let sapphire = Self.sapphire(in: rig.root)
         for face in DieFace.allCases {
             guard let screen = rig.root.findEntity(named: "Screen_\(face.rawValue)"),
                   let parent = screen.parent,
@@ -46,9 +63,14 @@ final class LiveScreens {
             let depth = abs(simd_dot(bounds.extents, normal))
             guard width > 0, height > 0 else { continue }
 
-            let quad = ModelEntity(mesh: Self.quad(width: width, height: height), materials: [Self.material(texture)])
+            let radius = min(width, height) * Self.cornerFraction(side: side)
+            let quad = ModelEntity(mesh: Self.quad(width: width, height: height, radius: radius), materials: [Self.material(texture)])
             quad.name = "LiveScreen_\(face.rawValue)"
             parent.addChild(quad)
+            if let mesh = Self.corners(width: width, height: height, radius: radius) {
+                let window = rig.root.findEntity(named: "Window_\(face.rawValue)").flatMap(Self.firstMaterial)
+                quad.addChild(ModelEntity(mesh: mesh, materials: [window ?? sapphire]))
+            }
             // Face the screen's way, on its outer surface, in the die's frame.
             let rotation = simd_quatf(simd_float3x3(columns: (right, up, normal)))
             let centre = bounds.center + normal * (depth / 2 + Self.lift)
@@ -98,17 +120,98 @@ final class LiveScreens {
         return material
     }
 
-    /// A quad in the XY plane facing +Z, with the image's top row along +Y.
-    private static func quad(width: Float, height: Float) -> MeshResource {
+    /// A rounded quad in the XY plane facing +Z, with the image's top row
+    /// along +Y: a fan from the centre round the outline, each corner an arc
+    /// of `radius`, UVs mapped straight from position so the panel isn't
+    /// squashed, just cut at the corners like the glass's mask.
+    private static func quad(width: Float, height: Float, radius: Float) -> MeshResource {
         let w = width / 2, h = height / 2
-        let (bottom, top): (Float, Float) = flipVertically ? (1, 0) : (0, 1)
+        let r = max(0, min(radius, w, h))
+        let outline = roundedOutline(width: width, height: height, radius: r)
+        let points = [SIMD2<Float>(0, 0)] + outline
+        func uv(_ p: SIMD2<Float>) -> SIMD2<Float> {
+            let v = (p.y + h) / height
+            return [(p.x + w) / width, flipVertically ? 1 - v : v]
+        }
+        var indices: [UInt32] = []
+        for i in 0..<outline.count {
+            indices += [0, UInt32(1 + i), UInt32(1 + (i + 1) % outline.count)]
+        }
         var mesh = MeshDescriptor(name: "LiveScreen")
-        mesh.positions = MeshBuffer([[-w, -h, 0], [w, -h, 0], [w, h, 0], [-w, h, 0]])
-        mesh.normals = MeshBuffer(Array(repeating: SIMD3<Float>(0, 0, 1), count: 4))
-        mesh.textureCoordinates = MeshBuffer([[0, bottom], [1, bottom], [1, top], [0, top]])
-        mesh.primitives = .triangles([0, 1, 2, 0, 2, 3])
+        mesh.positions = MeshBuffer(points.map { SIMD3($0.x, $0.y, 0) })
+        mesh.normals = MeshBuffer(Array(repeating: SIMD3<Float>(0, 0, 1), count: points.count))
+        mesh.textureCoordinates = MeshBuffer(points.map(uv))
+        mesh.primitives = .triangles(indices)
         // A fallback that can't fail: a plain plane, if the custom mesh is refused.
-        return (try? MeshResource.generate(from: [mesh])) ?? .generatePlane(width: width, height: height)
+        return (try? MeshResource.generate(from: [mesh]))
+            ?? .generatePlane(width: width, height: height, cornerRadius: r)
+    }
+
+    /// The windows' material, to fill the corners with: the model's own
+    /// `SapphireWindows`, else glossy near-black sapphire as the models have it
+    /// (diffuse 0.004, roughness 0.05, clearcoat 1).
+    private static func sapphire(in root: Entity) -> RealityKit.Material {
+        if let windows = root.findEntity(named: "SapphireWindows"), let material = firstMaterial(windows) {
+            return material
+        }
+        var material = PhysicallyBasedMaterial()
+        material.baseColor = .init(tint: UIColor(red: 0.004, green: 0.004, blue: 0.005, alpha: 1))
+        material.roughness = 0.05
+        material.metallic = 0.0
+        material.clearcoat = 1.0
+        material.clearcoatRoughness = 0.02
+        return material
+    }
+
+    /// The first material on an entity or anything under it.
+    private static func firstMaterial(_ entity: Entity) -> RealityKit.Material? {
+        if let material = entity.components[ModelComponent.self]?.materials.first { return material }
+        for child in entity.children {
+            if let material = firstMaterial(child) { return material }
+        }
+        return nil
+    }
+
+    /// The four corners the rounding cuts off the quad, in the quad's plane:
+    /// the square outline stitched to the rounded one, point for point.
+    private static func corners(width: Float, height: Float, radius: Float) -> MeshResource? {
+        let outer = roundedOutline(width: width, height: height, radius: 0)
+        let inner = roundedOutline(width: width, height: height, radius: radius)
+        let n = outer.count
+        var indices: [UInt32] = []
+        for k in 0..<n {
+            let next = (k + 1) % n
+            let (o0, o1, i0, i1) = (UInt32(k), UInt32(next), UInt32(n + k), UInt32(n + next))
+            indices += [o0, o1, i1, o0, i1, i0]
+        }
+        var mesh = MeshDescriptor(name: "LiveScreenCorners")
+        mesh.positions = MeshBuffer((outer + inner).map { SIMD3($0.x, $0.y, 0) })
+        mesh.normals = MeshBuffer(Array(repeating: SIMD3<Float>(0, 0, 1), count: 2 * n))
+        mesh.primitives = .triangles(indices)
+        return try? MeshResource.generate(from: [mesh])
+    }
+
+    /// A rounded rectangle's outline about the origin, counter-clockwise from
+    /// the bottom-right corner's arc, `cornerSegments + 1` points a corner, so
+    /// any two outlines line up point for point.
+    private static func roundedOutline(width: Float, height: Float, radius: Float) -> [SIMD2<Float>] {
+        let w = width / 2, h = height / 2
+        let r = max(0, min(radius, w, h))
+        // Corner centres with each arc's start angle.
+        let corners: [(SIMD2<Float>, Float)] = [
+            ([w - r, -h + r], -.pi / 2),
+            ([w - r, h - r], 0),
+            ([-w + r, h - r], .pi / 2),
+            ([-w + r, -h + r], .pi),
+        ]
+        var outline: [SIMD2<Float>] = []
+        for (centre, start) in corners {
+            for k in 0...cornerSegments {
+                let a = start + Float(k) / Float(cornerSegments) * (.pi / 2)
+                outline.append(centre + r * SIMD2(cos(a), sin(a)))
+            }
+        }
+        return outline
     }
 
     private static func image(_ rgba: [UInt8], side: Int) -> CGImage? {

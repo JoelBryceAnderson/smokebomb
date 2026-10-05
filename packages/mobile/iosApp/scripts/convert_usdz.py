@@ -293,6 +293,13 @@ def report_prims(stage, report):
     report.note(
         f"per-part prims: {len(found)}/12 windows+modules, {len(present)}/{len(contract)} other contract parts"
     )
+    # The lid's laser etching (AR_VIEWER.md): one per die shell.
+    shells = [p for p in Usd.PrimRange(default) if p.GetName() == "Shell" and p.IsA(UsdGeom.Mesh)]
+    etched = [s for s in shells if s.GetParent().GetChild("Etching")]
+    if shells:
+        report.note(f"etching: {len(etched)}/{len(shells)} die shell(s)")
+        if len(etched) < len(shells):
+            report.warn("a die's lid has no Etching mesh; the export should carry it (AR_VIEWER.md)")
 
 
 def run_usdchecker(path, report):

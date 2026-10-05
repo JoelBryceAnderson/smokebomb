@@ -29,8 +29,9 @@ final class MenuPanel {
     ]
 
     let root = Entity()
-    /// Pane width, in metres.
+    /// Pane width and height, in metres.
     let width: Float
+    let height: Float
     private var keyEntities: [ObjectIdentifier: (entity: Entity, key: Key)] = [:]
 
     /// A pane sized to a die of side `side` metres.
@@ -38,7 +39,7 @@ final class MenuPanel {
         let keySize = side * 0.55
         let spacing = keySize * 1.25
         width = spacing * 2.6
-        let height = spacing * 4.6
+        height = spacing * 4.6
         root.name = "MenuPanel"
 
         var glass = PhysicallyBasedMaterial()

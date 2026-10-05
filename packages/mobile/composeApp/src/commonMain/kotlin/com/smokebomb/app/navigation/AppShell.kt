@@ -23,15 +23,16 @@ import com.smokebomb.app.screens.ThemeStoreScreen
 /** Top-level destinations in the bottom bar. */
 enum class Destination(val label: String, val glyph: String) {
     Die("Die", "⚅"),
-    Ar("AR", "◰"),
+    // The die simulator: the real firmware on a die in AR, or on a virtual table.
+    Ar("Simulator", "◰"),
     History("History", "☰"),
     Store("Store", "◈"),
     Settings("Settings", "⚙"),
 }
 
 /**
- * Navigation shell: a bottom bar over the tabs. The AR tab shows only where the
- * platform has an [ArViewer] (iOS). Deeper stacks (roll detail,
+ * Navigation shell: a bottom bar over the tabs. The Simulator tab shows only where
+ * the platform has an [ArViewer] (iOS). Deeper stacks (roll detail,
  * theme detail, DFU progress) will move this to navigation-compose.
  */
 @Composable

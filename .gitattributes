@@ -1,0 +1,4 @@
+# The AR viewer's converted models (packages/mobile/iosApp/AR_VIEWER.md) are in
+# Git LFS. The contract fixture is small and generated, so it stays in plain git.
+packages/mobile/iosApp/iosApp/Resources/Models/*.usdz filter=lfs diff=lfs merge=lfs -text
+packages/mobile/iosApp/iosApp/Resources/Models/sugarcube_contract_fixture.usdz !filter !diff !merge -text

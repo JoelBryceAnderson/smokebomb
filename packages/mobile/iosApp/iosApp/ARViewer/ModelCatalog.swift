@@ -81,9 +81,9 @@ final class ModelCatalog {
     nonisolated static let all: [SugarcubeModel] = {
         let mm30 = SIMD3<Float>(repeating: 0.030), mm34 = SIMD3<Float>(repeating: 0.034), mm40 = SIMD3<Float>(repeating: 0.040)
         return [
-            SugarcubeModel(id: "sugarcube_30", size: "30 mm", variant: "Colour", kind: .die, bounds: mm30, massKg: 0.055,
-                           xray: "sugarcube_30_xray"),
             SugarcubeModel(id: "sugarcube_30_rainbow", size: "30 mm", variant: "Rainbow", kind: .die, bounds: mm30, massKg: 0.055,
+                           xray: "sugarcube_30_xray"),
+            SugarcubeModel(id: "sugarcube_30", size: "30 mm", variant: "Colour", kind: .die, bounds: mm30, massKg: 0.055,
                            xray: "sugarcube_30_xray"),
             SugarcubeModel(id: "sugarcube_34", size: "34 mm", variant: "16-grey", kind: .die, bounds: mm34, massKg: 0.082,
                            xray: "sugarcube_34_xray"),
@@ -107,6 +107,9 @@ final class ModelCatalog {
                            bounds: mm30, massKg: 0.055),
         ]
     }()
+
+    /// What the viewer shows first: the 30 mm rainbow die.
+    nonisolated static let defaultID = "sugarcube_30_rainbow"
 
     let source: ModelSource
     private var loaded: [String: Entity] = [:]

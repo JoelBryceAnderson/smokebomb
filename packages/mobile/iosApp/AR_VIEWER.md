@@ -1,9 +1,10 @@
 # AR viewer
 
-The **AR** tab, iOS only. You place a Sugarcube on your table at true size,
-then you can:
+The **Simulator** tab, iOS only (it began as the AR tab). You place a
+Sugarcube at true size, on your real table through the camera or on a
+virtual one (see [AR on or off](#ar-on-or-off)), then you can:
 
-- switch between the models
+- choose the die's size and colour (it starts on the 30 mm Rainbow)
 - turn and move the die, and scale it if you unlock true size
 - look inside with x-ray and explode it
 - tap a part to see its name
@@ -16,6 +17,59 @@ It needs iOS 18 or later, and runs on iPhone and iPad.
 - **iPad:** the controls sit in a side panel next to the camera view. The panel
   includes a control pad: drag on it to turn the die, flick it to throw the
   die, while you watch the table.
+
+## Choosing a die
+
+The controls pick a die by **size** (30, 34, 40 mm) and then **colour**, the
+variants of that size (30 mm: Rainbow, Colour; 34 mm: 16-grey, 1-bit). The
+viewer starts on the 30 mm Rainbow (`ModelCatalog.defaultID`).
+
+- Changing size keeps the colour when the new size has it, otherwise takes
+  that size's first colour.
+- The **X-ray** toggle switches between the die and its x-ray. X-ray stays on
+  while you change size or colour, and switching it off returns to the die you
+  chose. Dice of one size share an x-ray.
+- The 30 mm x-ray also offers the pre-exploded file.
+
+Only dice are offered (and, in debug builds, the per-part test model as a
+30 mm colour). The line-up stays in the catalog and its tests, but isn't in
+the picker.
+
+## AR on or off
+
+The tab is labelled **Simulator**. A small **AR** pane on the left edge of
+the view switches where the die is. AR is **off** by default.
+
+- **Off:** the die is on a virtual table in a dark studio, seen from a fixed
+  camera close up (32° field of view, looking from the front right, as the
+  desktop simulator frames it). It's placed straight away and locked in place:
+  - Dragging turns the die rather than moving it.
+  - A flick on the die, or **Roll**, winds up low (1.5 cm,
+    `lockedWindupLift`), then tosses the die straight up (`lockedTossLift`,
+    about 2 cm at the top), so it stays in frame. It's still a real throw to
+    the firmware: picked up, shaken, airborne for a few ticks, a hard landing
+    (`cargo test -p smokebomb-ffi` checks this). It tumbles inside a tight ring
+    of walls (`lockedCorralFactor`). Once it's at rest, it slides back to its spot,
+    keeping the face it landed on. The slide is gentle enough
+    (`lockedReturnAcceleration`, about 0.04 g) that the firmware still reads
+    the die as resting, so the reveal isn't cut short.
+  - The camera frames the die to fit the view's shape (`studioDieFraming`).
+    When the menu opens, the die lifts a little (`studioHeldHeight`) and the
+    camera glides back to take in the die and its turn pad. It glides in
+    again when the menu closes.
+  - Everything else works the same: live firmware screens, touch, the menu
+    and its turn pad, x-ray, explode and tap-to-name.
+  - It needs no camera, so it also runs without camera access, on devices
+    without AR, and in the iOS Simulator.
+- **On:** the die is on your real table through the camera, and moves and
+  rolls freely. This needs camera access and an AR-capable device. If camera
+  access is off, the tab offers **Use without AR**.
+
+Switching rebuilds the view, so the die is placed again and the firmware
+reboots. The choice is remembered. The pane is hidden on devices without AR.
+The studio's framing is `studioFieldOfView` and `studioCameraDistance` in
+`DiePhysics.swift`; the studio itself is `buildStudio()` in
+`ARSceneController.swift`.
 
 ## Where things are
 
@@ -34,7 +88,7 @@ It needs iOS 18 or later, and runs on iPhone and iPad.
 | `iosApp/ARViewer/LiveScreens.swift` | The firmware's panels on the die's faces |
 | `iosApp/Firmware/RustDieFirmware.swift` | The firmware over the Rust C ABI (app target only) |
 | `scripts/build_firmware.sh` | Builds `packages/firmware/ffi` for the SDK Xcode is building for |
-| `iosApp/Resources/Models/` | Bundled `.usdz` files (a folder reference) |
+| `iosApp/Resources/Models/` | Bundled `.usdz` files (a folder reference; Git LFS) |
 | `iosAppTests/` | `ARViewerTests`: true-size check, explode, picking, labels, face-up |
 | `scripts/convert_usdz.py` | Binary-root conversion and ARKit checks |
 | `scripts/make_contract_fixture.py` | Generates the per-part stand-in model |
@@ -54,6 +108,34 @@ cd packages/mobile/iosApp/scripts
 python3 -m pip install -r requirements.txt     # usd-core
 python3 convert_usdz.py ~/Downloads/sugarcube_*.usdz
 ```
+
+### The lid's etching
+
+Each die's export carries the laser etching the desktop simulator draws on the
+charging face (`drawEtching` in `packages/simulator/web-ui/src/shell.ts`):
+
+- the **Sugarcube** wordmark and *Designed in Williamsburg, BK · Shake well
+  before serving*, in Pacifico
+- `SC-1 · S/N 000042` (the simulator's serial before a roll carries one)
+- CE, the crossed-out bin and *Regulatory info in settings*, in Space Grotesk
+
+The fonts are the firmware's (`packages/firmware/assets/fonts`).
+
+The lid's flat faces round the window are a mesh of their own, `Etching`,
+next to the die's `Shell`, on the same points and normals. It has UVs across
+the flat face and a copy of the shell's material with the etching in its
+colour, roughness/metallic and normal textures. Where it's marked: 55 % toward
+the simulator's grey ink (`rgb(150,152,156)`), roughness 0.7 and metallic
+0.3, with the edges as a slight recess. Everything else is the shell's own
+look, including a tinted titanium's colour and an x-ray's opacity.
+
+| Die | Flat face | Window | Script lines |
+|---|---|---|---|
+| 30 mm | 25 mm | 17.5 mm | centred in the band |
+| 34 mm | 29 mm | 24 mm | the lowest tail 0.8 mm off the window |
+| 40 mm | 35 mm | 26 mm | centred in the band |
+
+The bin sits in the gap after "CE".
 
 For each file, the script does what `usdcat in.usdz -o tmp.usdc` and then
 `usdzip` would do:
@@ -78,7 +160,8 @@ It then checks the result. It never changes geometry; it reports problems.
 - **`usdchecker --arkit`:** run as well when that tool is on your PATH.
   `pip install usd-core` doesn't include the command-line tools.
 
-At the end it prints how many per-part contract prims each file has.
+At the end it prints how many per-part contract prims each file has, and how
+many of its die shells have an `Etching`. It warns about any that don't.
 
 - To check files that are already bundled without rewriting them, add `--check-only`.
 - The exit status is 1 if any file has errors.
@@ -100,6 +183,14 @@ At the end it prints how many per-part contract prims each file has.
 
 `Models` is a folder reference, so you don't need to run `xcodegen generate`
 just to add a file. The picker lists only models that are actually bundled.
+A die's `size` puts it under that size and its `variant` is its colour; dice
+of a size are offered in catalog order.
+
+The converted models are in Git LFS (`.gitattributes`), so install it once
+(`brew install git-lfs && git lfs install`) before you clone or pull. Without
+it you get small pointer files instead of models, and the picker shows none of
+them. The contract fixture stays in plain git. Commit only the converted files,
+and re-export rarely: every version stays in LFS storage.
 
 To load models from a server later, implement `ModelSource`, which has
 `isAvailable` and `url(for:)`, and pass it to `ModelCatalog`. Nothing else
@@ -125,6 +216,10 @@ Today's models group geometry by material. These names work today:
 - in the x-rays, `Internal_<part>` and the wiring `Internal_w_*`
 
 Tapping any of these names it.
+
+`Etching` (the lid's etching, above) sits next to each `Shell`. It has no label,
+so a tap on the lid still names the shell, and the screws flush with it still
+win their taps.
 
 Per-part models put every physical part in its own prim under the default prim:
 
@@ -259,6 +354,9 @@ RealityKit pose ──► ImuSynth ──► sb_die_tick(imu, touch) ──► s
     model's UVs.
   - Pixels are sampled nearest-neighbour and unlit.
   - The baked screens are hidden while live screens are on.
+  - The quads' corners are rounded like the glass's mask. The sapphire
+    window has a square hole for the screen, so the corners the rounding
+    cuts off are filled with the window's own material.
   - The quads ride along with explode.
   - If a frame shows upside down on device, flip `LiveScreens.flipVertically`.
 - **Haptics.** The firmware's haptic effects play on the phone.

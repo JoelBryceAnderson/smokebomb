@@ -55,7 +55,7 @@ Screen code has no target checks.
   | grey | secondary text |
 
 - **Screens with a 64×64 design:**
-  - boot and logo,
+  - boot and logo: the 96×96 animation (sliding pips, the sugar cube, crystals, the script wordmark) drawn smooth through the 64×64 transform, in white with sugar crystals and a gold glint,
   - idle (die icon, setup and face number),
   - roll animation (violet sugar, orange embers, gold sparks),
   - result, including max, fumble, pools, d100 and 10d100,

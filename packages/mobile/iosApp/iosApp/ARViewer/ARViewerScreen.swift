@@ -1,9 +1,10 @@
 import RealityKit
 import SwiftUI
 
-/// The AR tab. On iPhone (or any compact width) the controls float over the
-/// camera; on iPad they sit in a side panel next to it, with a control pad for
-/// turning and throwing the die while you watch it on the table.
+/// The Simulator tab: the die, with the real firmware, on your table through
+/// the camera (AR on) or on a virtual table (AR off). On iPhone (or any compact
+/// width) the controls float over the view; on iPad they sit in a side panel
+/// next to it, with a control pad for turning and throwing the die.
 struct ARViewerScreen: View {
     @Bindable var model: ARViewerModel
     @Environment(\.horizontalSizeClass) private var widthClass
@@ -11,22 +12,10 @@ struct ARViewerScreen: View {
 
     var body: some View {
         Group {
-            switch model.availability {
-            case .checking:
-                ProgressView()
-            case .unsupported:
-                Unavailable(
-                    title: "AR isn't available here",
-                    message: "The AR viewer needs a device with an A12 chip or later and a rear camera. It doesn't run in the Simulator.")
-            case .cameraDenied:
-                Unavailable(
-                    title: "Camera access is off",
-                    message: "The AR viewer shows the die on your table through the camera. Turn on camera access for Sugarcube in Settings.",
-                    action: ("Open Settings", {
-                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-                    }))
-            case .ready:
-                // One structure for both widths, so resizing in Split View keeps the AR session and the placed die.
+            if model.augmented, model.availability != .ready {
+                arUnavailable
+            } else {
+                // One structure for both widths, so resizing in Split View keeps the session and the placed die.
                 HStack(spacing: 0) {
                     stage
                         .overlay(alignment: .bottom) {
@@ -40,21 +29,53 @@ struct ARViewerScreen: View {
                 }
             }
         }
-        .task { await model.checkAvailability() }
+        // AR needs camera access; the studio doesn't.
+        .task(id: model.augmented) {
+            if model.augmented { await model.checkAvailability() }
+        }
         .onChange(of: scenePhase) { _, phase in
             // Coming back from Settings with camera access changed.
-            if phase == .active, model.availability == .cameraDenied {
+            if phase == .active, model.augmented, model.availability == .cameraDenied {
                 Task { await model.checkAvailability() }
             }
         }
     }
 
+    @ViewBuilder private var arUnavailable: some View {
+        let withoutAR = ("Use without AR", { model.augmented = false })
+        switch model.availability {
+        case .checking, .ready:
+            ProgressView()
+        case .unsupported:
+            Unavailable(
+                title: "AR isn't available here",
+                message: "AR needs a device with an A12 chip or later and a rear camera. The die can still run on a virtual table.",
+                action: withoutAR)
+        case .cameraDenied:
+            Unavailable(
+                title: "Camera access is off",
+                message: "AR shows the die on your table through the camera. Turn on camera access for Sugarcube in Settings, or use the die on a virtual table.",
+                action: ("Open Settings", {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }),
+                secondary: withoutAR)
+        }
+    }
+
     private var stage: some View {
         ZStack(alignment: .top) {
-            ARViewContainer(model: model)
+            // A new view, session and scene when AR is switched on or off.
+            ARViewContainer(model: model, augmented: model.augmented)
+                .id(model.augmented)
                 .ignoresSafeArea(edges: .top)
             StatusOverlay(model: model)
                 .padding(.top, 8)
+        }
+        .overlay(alignment: .leading) {
+            if model.arSupported {
+                ARPane(model: model)
+                    .padding(.leading, 12)
+            }
         }
     }
 }
@@ -63,6 +84,7 @@ struct ARViewerScreen: View {
 
 private struct ARViewContainer: UIViewRepresentable {
     let model: ARViewerModel
+    let augmented: Bool
 
     final class Coordinator {
         var scene: ARSceneController?
@@ -71,7 +93,7 @@ private struct ARViewContainer: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> ARView {
-        let scene = ARSceneController(model: model)
+        let scene = ARSceneController(model: model, augmented: augmented)
         context.coordinator.scene = scene
         model.scene = scene
         scene.start()
@@ -156,41 +178,64 @@ private struct CompactControls: View {
             HStack(spacing: 8) {
                 RollButtons(model: model)
             }
-            ModelCarousel(model: model)
+            ModelPicker(model: model)
         }
         .padding(.bottom, 12)
     }
 }
 
-private struct ModelCarousel: View {
+/// Size, then colour: a row of chips each, over the camera view.
+private struct ModelPicker: View {
     let model: ARViewerModel
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(model.models) { item in
-                        Button { model.select(item) } label: {
-                            VStack(spacing: 1) {
-                                Text(item.size).font(.caption.weight(.semibold))
-                                Text(item.variant).font(.caption2)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                        }
-                        .buttonStyle(.plain)
-                        .background(item == model.selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial), in: Capsule())
-                        .foregroundStyle(item == model.selected ? Color.white : Color.primary)
-                        .id(item.id)
-                    }
+        VStack(spacing: 6) {
+            if model.sizes.count > 1 {
+                ChipRow(items: model.sizes, id: \.self, label: { $0 }, isSelected: { $0 == model.die?.size }) {
+                    model.chooseSize($0)
                 }
-                .padding(.horizontal, 12)
             }
-            .onChange(of: model.selected) { _, selected in
-                guard let id = selected?.id else { return }
-                withAnimation { proxy.scrollTo(id, anchor: .center) }
+            if model.colours.count > 1 {
+                ChipRow(items: model.colours, id: \.id, label: { $0.variant }, isSelected: { $0 == model.die }) {
+                    model.choose($0)
+                }
             }
         }
+    }
+}
+
+private struct ChipRow<Item, ID: Hashable>: View {
+    let items: [Item]
+    let id: KeyPath<Item, ID>
+    let label: (Item) -> String
+    let isSelected: (Item) -> Bool
+    let action: (Item) -> Void
+
+    var body: some View {
+        // Centred when it fits, scrolling when it doesn't.
+        ViewThatFits(in: .horizontal) {
+            chips
+            ScrollView(.horizontal, showsIndicators: false) { chips }
+        }
+    }
+
+    private var chips: some View {
+        HStack(spacing: 8) {
+            ForEach(items, id: id) { item in
+                let selected = isSelected(item)
+                Button { action(item) } label: {
+                    Text(label(item))
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .background(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial), in: Capsule())
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, 12)
     }
 }
 
@@ -202,18 +247,21 @@ private struct SidePanel: View {
     var body: some View {
         Form {
             Section("Model") {
-                ForEach(model.models) { item in
-                    Button { model.select(item) } label: {
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(item.title)
-                                Text(item.sizeLabel).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if item == model.selected { Image(systemName: "checkmark").foregroundStyle(.tint) }
-                        }
+                if model.sizes.count > 1 {
+                    Picker("Size", selection: Binding(get: { model.die?.size ?? "" }, set: { model.chooseSize($0) })) {
+                        ForEach(model.sizes, id: \.self) { Text($0).tag($0) }
                     }
-                    .foregroundStyle(.primary)
+                    .pickerStyle(.segmented)
+                }
+                if model.colours.count > 1 {
+                    Picker("Colour", selection: Binding(get: { model.die?.id ?? "" }, set: { id in
+                        if let die = model.colours.first(where: { $0.id == id }) { model.choose(die) }
+                    })) {
+                        ForEach(model.colours) { Text($0.variant).tag($0.id) }
+                    }
+                }
+                if let die = model.die {
+                    LabeledContent("Measures", value: die.sizeLabel)
                 }
             }
             Section("Roll") {
@@ -299,6 +347,31 @@ private struct ControlPad: View {
             .disabled(!model.isPlaced)
             .accessibilityLabel("Die control pad")
             .accessibilityHint("Drag sideways to turn the die. Flick to throw it.")
+    }
+}
+
+// MARK: - AR pane
+
+/// A small pane on the left edge: AR on (the camera and your table) or off
+/// (the die locked in place on a virtual table).
+private struct ARPane: View {
+    @Bindable var model: ARViewerModel
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: model.augmented ? "arkit" : "cube")
+                .font(.title3)
+                .foregroundStyle(model.augmented ? Color.accentColor : Color.secondary)
+            Text("AR").font(.caption.weight(.semibold))
+            Toggle("AR", isOn: $model.augmented)
+                .labelsHidden()
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("AR")
+        .accessibilityValue(model.augmented ? "On" : "Off")
     }
 }
 
@@ -388,6 +461,7 @@ private struct Unavailable: View {
     let title: String
     let message: String
     var action: (String, () -> Void)?
+    var secondary: (String, () -> Void)?
 
     var body: some View {
         ContentUnavailableView {
@@ -397,6 +471,9 @@ private struct Unavailable: View {
         } actions: {
             if let action {
                 Button(action.0, action: action.1).buttonStyle(.borderedProminent)
+            }
+            if let secondary {
+                Button(secondary.0, action: secondary.1).buttonStyle(.bordered)
             }
         }
     }
