@@ -62,6 +62,24 @@ int32_t sb_die_menu_front(const SbDie *die);
 /// Sets the wall clock, seconds since local midnight.
 void sb_die_set_local_time(SbDie *die, uint32_t seconds);
 
+/// The phone link: the app's BLE messages, passed straight across as JSON
+/// text in the shape the desktop simulator's /phone WebSocket uses
+/// ("GetInventory", {"SetEnabledModes":13}, {"Roll":{...}}, ...).
+///
+/// Connects the app (the die greets it with Hello and its inventory, as over
+/// BLE) or lets it go. While connected the die answers each message and,
+/// after each tick, reports a new roll or a mode picked on the die.
+void sb_die_phone_connect(SbDie *die, bool connected);
+
+/// One message from the app, NUL-terminated JSON. False if it isn't one.
+bool sb_die_phone_send(SbDie *die, const char *message);
+
+/// The next message for the app: its length in bytes, 0 if there's none.
+/// When `len` is more than that length it's copied into `out`,
+/// NUL-terminated, and taken off the queue; otherwise it stays, so call
+/// again with a bigger buffer.
+size_t sb_die_phone_receive(SbDie *die, char *out, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

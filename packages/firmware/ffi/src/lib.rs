@@ -9,13 +9,20 @@
 //! Nothing here knows about the chip; the boundary is the HAL, as for the
 //! desktop simulator.
 
+use std::ffi::{c_char, CStr};
 use std::mem::MaybeUninit;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+
+pub mod phone;
 
 use smokebomb_core::target::DisplayTarget;
 use smokebomb_core::{Firmware, TICK_HZ};
 use smokebomb_hal::{Face, Grey96, HapticEffect, ImuSample, Rgb64, Target, TargetId, FACE_COUNT};
 use smokebomb_hal_simulator::{SimHandle, SimPlatform};
+use smokebomb_shared::protocol::Inventory;
+use smokebomb_shared::{DieKind, ModeId, ModeSet, SignedRoll};
+
+use phone::{PhoneDie, PhoneLink};
 
 pub const SB_PANEL_GREY96: u8 = 0;
 pub const SB_PANEL_RGB64: u8 = 1;
@@ -42,6 +49,43 @@ enum Core {
     Rgb(Box<Firmware<SimPlatform<Rgb64>>>),
 }
 
+/// Runs `$e` with `$fw` bound to whichever firmware build the die runs.
+macro_rules! with_fw {
+    ($core:expr, $fw:ident => $e:expr) => {
+        match $core {
+            Core::Grey($fw) => $e,
+            Core::Rgb($fw) => $e,
+        }
+    };
+}
+
+/// The die as the phone link sees it.
+struct Linked<'a> {
+    core: &'a mut Core,
+    sim: &'a SimHandle,
+}
+
+impl PhoneDie for Linked<'_> {
+    fn inventory(&self) -> Inventory {
+        with_fw!(&*self.core, fw => fw.inventory())
+    }
+    fn set_enabled_modes(&mut self, modes: ModeSet) {
+        with_fw!(&mut *self.core, fw => fw.set_enabled_modes(modes))
+    }
+    fn unlock_mode(&mut self, mode: ModeId) {
+        with_fw!(&mut *self.core, fw => fw.unlock_mode(mode))
+    }
+    fn set_die(&mut self, kind: DieKind, count: u8) {
+        with_fw!(&mut *self.core, fw => fw.set_die(kind, count))
+    }
+    fn last_roll(&self) -> Option<&SignedRoll> {
+        with_fw!(&*self.core, fw => fw.last_roll())
+    }
+    fn battery_percent(&self) -> u8 {
+        self.sim.lock().battery_percent
+    }
+}
+
 /// A running die.
 pub struct SbDie {
     sim: SimHandle,
@@ -49,6 +93,7 @@ pub struct SbDie {
     target: TargetId,
     side: u32,
     ticks: u64,
+    phone: PhoneLink,
 }
 
 /// Boots the firmware in place on the heap (at ~150 KB it's too big for a
@@ -86,6 +131,7 @@ impl SbDie {
             target,
             side,
             ticks: 0,
+            phone: PhoneLink::default(),
         })
     }
 
@@ -99,10 +145,11 @@ impl SbDie {
             s.touch_mask = touch_mask & 0x3f;
         }
         // A failed tick (a HAL error) is skipped, as the simulator does.
-        let _ = match &mut self.core {
-            Core::Grey(fw) => fw.tick(),
-            Core::Rgb(fw) => fw.tick(),
-        };
+        let _ = with_fw!(&mut self.core, fw => fw.tick());
+        self.phone.after_tick(&Linked {
+            core: &mut self.core,
+            sim: &self.sim,
+        });
         self.sim.lock().frame_seq
     }
 
@@ -173,6 +220,36 @@ impl SbDie {
 
     pub fn set_local_time(&mut self, seconds: u32) {
         self.sim.lock().set_local_time(seconds % 86_400);
+    }
+
+    /// The app connects to the die (it greets with `Hello` and its
+    /// inventory, as over BLE) or lets it go. The die's Bluetooth icon
+    /// follows.
+    pub fn phone_connect(&mut self, connected: bool) {
+        self.sim.lock().ble_connected = connected;
+        self.phone.set_connected(
+            &Linked {
+                core: &mut self.core,
+                sim: &self.sim,
+            },
+            connected,
+        );
+    }
+
+    /// One message from the app, as JSON ([`phone`]). False if it isn't one.
+    pub fn phone_send(&mut self, json: &str) -> bool {
+        self.phone.receive(
+            &mut Linked {
+                core: &mut self.core,
+                sim: &self.sim,
+            },
+            json,
+        )
+    }
+
+    /// The next message for the app, as JSON, taken off the queue.
+    pub fn phone_receive(&mut self) -> Option<String> {
+        self.phone.pop()
     }
 }
 
@@ -291,6 +368,45 @@ pub unsafe extern "C" fn sb_die_set_local_time(die: *mut SbDie, seconds: u32) {
     if let Some(d) = die.as_mut() {
         guard((), || d.set_local_time(seconds));
     }
+}
+
+/// # Safety
+/// `die` is NULL or a live die.
+#[no_mangle]
+pub unsafe extern "C" fn sb_die_phone_connect(die: *mut SbDie, connected: bool) {
+    if let Some(d) = die.as_mut() {
+        guard((), || d.phone_connect(connected));
+    }
+}
+
+/// # Safety
+/// `die` is NULL or a live die; `message` is NULL or a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn sb_die_phone_send(die: *mut SbDie, message: *const c_char) -> bool {
+    let (Some(d), false) = (die.as_mut(), message.is_null()) else {
+        return false;
+    };
+    let Ok(text) = CStr::from_ptr(message).to_str() else {
+        return false;
+    };
+    guard(false, || d.phone_send(text))
+}
+
+/// # Safety
+/// `die` is NULL or a live die; `out` is NULL or points to `len` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn sb_die_phone_receive(die: *mut SbDie, out: *mut u8, len: usize) -> usize {
+    let Some(d) = die.as_mut() else { return 0 };
+    guard(0, || {
+        let Some(next) = d.phone.next() else { return 0 };
+        let n = next.len();
+        if !out.is_null() && len > n {
+            std::ptr::copy_nonoverlapping(next.as_ptr(), out, n);
+            *out.add(n) = 0;
+            d.phone.pop();
+        }
+        n
+    })
 }
 
 /// The face order the C ABI uses, for callers in Rust.

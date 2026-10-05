@@ -169,6 +169,9 @@ fn header_matches() {
         "sb_die_next_haptic",
         "sb_die_mode",
         "sb_die_set_local_time",
+        "sb_die_phone_connect",
+        "sb_die_phone_send",
+        "sb_die_phone_receive",
     ] {
         assert!(h.contains(&format!("{f}(")), "{f} declared");
     }
@@ -335,5 +338,89 @@ fn the_locked_in_place_toss_reads_as_a_roll() {
             "panel {panel}: mode is {}",
             die.mode()
         );
+    }
+}
+
+fn drain(die: &mut SbDie) -> Vec<String> {
+    std::iter::from_fn(|| die.phone_receive()).collect()
+}
+
+/// The app's link to the die on the phone: the same JSON as the desktop
+/// simulator's `/phone` WebSocket.
+#[test]
+fn the_app_connects_sets_the_die_up_and_hears_its_rolls() {
+    let mut die = SbDie::new(SB_PANEL_RGB64).unwrap();
+    run(&mut die, UP_Y, 8.0);
+    assert!(drain(&mut die).is_empty(), "nothing for an app that isn't there");
+
+    die.phone_connect(true);
+    let greeting = drain(&mut die);
+    assert_eq!(greeting.len(), 2);
+    assert!(
+        greeting[0].starts_with(r#"{"Hello":{"firmware_version":"#),
+        "{}",
+        greeting[0]
+    );
+    assert_eq!(
+        greeting[1],
+        r#"{"Inventory":{"licensed":15,"enabled":15,"active":"Dice"}}"#
+    );
+
+    // Settings from the app, each answered with the inventory.
+    assert!(die.phone_send(r#"{"SetEnabledModes":4}"#));
+    assert_eq!(
+        drain(&mut die),
+        [r#"{"Inventory":{"licensed":15,"enabled":5,"active":"Dice"}}"#],
+        "Dice stays on"
+    );
+    assert!(die.phone_send(r#"{"SetDie":{"kind":"D6","count":2}}"#));
+    assert_eq!(drain(&mut die).len(), 1);
+    assert!(!die.phone_send("not json"));
+
+    // A throw: the roll goes to the app, with the dice it set.
+    throw(&mut die);
+    run(&mut die, UP_X, 1.5);
+    let sent = drain(&mut die);
+    let roll = sent
+        .iter()
+        .find(|m| m.starts_with(r#"{"Roll":"#))
+        .expect("the roll is sent");
+    assert!(roll.contains("D6"), "the dice the app set: {roll}");
+
+    // And it's kept for a history sync.
+    assert!(die.phone_send(r#"{"SyncHistory":{"since_counter":0}}"#));
+    let history = drain(&mut die);
+    assert_eq!(history.len(), 2, "{history:?}");
+    assert!(history[0].starts_with(r#"{"HistoryItem":{"#));
+    assert_eq!(history[1], r#"{"HistoryItem":null}"#);
+
+    die.phone_connect(false);
+    assert!(die.phone_send(r#""GetInventory""#), "still a message");
+    assert!(drain(&mut die).is_empty(), "but nobody to answer");
+}
+
+#[test]
+fn c_abi_phone_link() {
+    unsafe {
+        let die = sb_die_new(SB_PANEL_GREY96);
+        sb_die_phone_connect(die, true);
+        // Ask how long the next message is, then take it.
+        let n = sb_die_phone_receive(die, std::ptr::null_mut(), 0);
+        assert!(n > 0);
+        let mut small = vec![0u8; n];
+        assert_eq!(
+            sb_die_phone_receive(die, small.as_mut_ptr(), small.len()),
+            n,
+            "too small: it stays"
+        );
+        let mut buf = vec![0u8; n + 1];
+        assert_eq!(sb_die_phone_receive(die, buf.as_mut_ptr(), buf.len()), n);
+        assert_eq!(buf[n], 0);
+        assert!(std::str::from_utf8(&buf[..n]).unwrap().starts_with(r#"{"Hello""#));
+        let msg = std::ffi::CString::new(r#""GetInventory""#).unwrap();
+        assert!(sb_die_phone_send(die, msg.as_ptr()));
+        assert!(!sb_die_phone_send(die, std::ptr::null()));
+        assert!(!sb_die_phone_send(std::ptr::null_mut(), msg.as_ptr()));
+        sb_die_free(die);
     }
 }
