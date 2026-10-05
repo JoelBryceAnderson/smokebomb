@@ -52,8 +52,13 @@ enum DiePhysics {
     /// Where the studio camera starts, in metres from the die; it then frames
     /// the die (`studioDieFraming`) to fit the view.
     static let studioCameraDistance: Float = 0.2
-    /// Locked in place (AR off), a roll goes straight up this fast, in m/s.
-    static let lockedTossLift: Float = 0.45
+    /// Locked in place (AR off), the windup lifts the die only this far, in
+    /// metres, so it stays in the studio's close frame. The push still reads
+    /// as a pick-up (about 0.1 g).
+    static let lockedWindupLift: Float = 0.015
+    /// …and the roll goes straight up this fast, in m/s: about 2 cm at the
+    /// top, ~5 ticks in the air (free fall), landing at 2.8–4.7 g (an impact).
+    static let lockedTossLift: Float = 0.25
     /// …and lands inside walls this many die sides from its centre: room to
     /// tumble over an edge, not to wander off.
     static let lockedCorralFactor: Float = 1.4
@@ -118,9 +123,9 @@ enum DiePhysics {
 
     /// The die's offset from its spot and its rocking, `t` seconds into the
     /// windup: an eased lift, then a shake that starts from rest (1 − cos).
-    static func windup(at t: TimeInterval) -> (offset: SIMD3<Float>, rock: simd_quatf) {
+    static func windup(at t: TimeInterval, lift: Float = windupLift) -> (offset: SIMD3<Float>, rock: simd_quatf) {
         let u = Float(min(max(t / windupLiftTime, 0), 1))
-        var offset = SIMD3<Float>(0, windupLift * u * u * (3 - 2 * u), 0)
+        var offset = SIMD3<Float>(0, lift * u * u * (3 - 2 * u), 0)
         var rock = simd_quatf(angle: 0, axis: [0, 1, 0])
         if t > windupLiftTime {
             let ts = Float(t - windupLiftTime)

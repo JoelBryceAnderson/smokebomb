@@ -27,9 +27,12 @@ the view switches where the die is. AR is **off** by default.
   camera close up (32° field of view, looking from the front right, as the
   desktop simulator frames it). It's placed straight away and locked in place:
   - Dragging turns the die rather than moving it.
-  - A flick on the die, or **Roll**, winds up, then tosses the die straight
-    up. It tumbles inside a tight ring of walls (`lockedTossLift`,
-    `lockedCorralFactor`). Once it's at rest, it slides back to its spot,
+  - A flick on the die, or **Roll**, winds up low (1.5 cm,
+    `lockedWindupLift`), then tosses the die straight up (`lockedTossLift`,
+    about 2 cm at the top), so it stays in frame. It's still a real throw to
+    the firmware: picked up, shaken, airborne for a few ticks, a hard landing
+    (`cargo test -p smokebomb-ffi` checks this). It tumbles inside a tight ring
+    of walls (`lockedCorralFactor`). Once it's at rest, it slides back to its spot,
     keeping the face it landed on. The slide is gentle enough
     (`lockedReturnAcceleration`, about 0.04 g) that the firmware still reads
     the die as resting, so the reveal isn't cut short.

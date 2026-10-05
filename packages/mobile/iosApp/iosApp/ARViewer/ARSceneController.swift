@@ -524,7 +524,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             release(w)
             return
         }
-        let (offset, rock) = DiePhysics.windup(at: t)
+        let (offset, rock) = DiePhysics.windup(at: t, lift: lockedInPlace ? DiePhysics.lockedWindupLift : DiePhysics.windupLift)
         pivot.position = w.base.translation + offset
         pivot.orientation = rock * w.base.rotation
     }
