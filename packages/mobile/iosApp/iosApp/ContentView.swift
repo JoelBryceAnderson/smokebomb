@@ -5,7 +5,7 @@ import UIKit
 /// Hosts the shared Compose UI.
 struct ComposeView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIViewController {
-        MainViewControllerKt.MainViewController()
+        MainViewControllerKt.MainViewController(arViewer: ARViewerFactory())
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}

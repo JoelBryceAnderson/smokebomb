@@ -39,6 +39,7 @@ smokebomb/
     │   ├── hal/                smokebomb-hal: peripheral traits (Display, Imu, Touch, Ble, SecureElement, ...)
     │   │   ├── simulator/      smokebomb-hal-simulator: in-memory peripherals + scripted IMU input
     │   │   └── nrf54l15/       smokebomb-hal-nrf54l15: production board (stub)
+    │   ├── ffi/                smokebomb-ffi: C ABI for the phone (IMU + touch in, six panels out), linked by the iOS app
     │   └── zephyr/             Zephyr app shell that calls into Rust (not built yet)
     ├── simulator/
     │   ├── server/             smokebomb-simulator: world model (die pose → IMU), firmware on the simulator HAL, serves the UI
@@ -549,7 +550,7 @@ and iOS arm64 plus the arm64 simulator.
   `VerifyResult`, the service UUID).
 - `composeApp/commonMain`:
   - `App` with the theme and the onboarding gate
-  - `navigation/AppShell`: bottom bar with Die, History, Store and Settings
+  - `navigation/AppShell`: bottom bar with Die, AR (iOS only), History, Store and Settings
   - `screens/*`
   - `network/ApiClient`, stubbed until Ktor is added
 - **BLE:** the common `BleManager` interface plus
@@ -564,9 +565,19 @@ and iOS arm64 plus the arm64 simulator.
   syncs the die's kept rolls on each connect and adds live ones, keeping each
   roll once (by die and signature). In memory only for now; server history
   isn't merged in yet.
-- `iosApp/`: a SwiftUI host that embeds `MainViewController()`. The Xcode
-  project is generated from `project.yml` with XcodeGen, so no `.pbxproj` is
-  kept in git.
+- `iosApp/`: a SwiftUI host that embeds `MainViewController(arViewer:)`. The
+  Xcode project is generated from `project.yml` with XcodeGen, so no
+  `.pbxproj` is kept in git. It targets iOS 18 on iPhone and iPad.
+- **AR viewer (iOS):** a RealityKit `ARView` in Swift
+  (`iosApp/iosApp/ARViewer/`). Compose shows it in the AR tab through the
+  common `ar/ArViewer` interface: on iOS, `UIKitArViewer` embeds a view
+  controller made by Swift's `ARViewerFactory`. It shows the die at true size
+  on a detected table. With live screens it runs the firmware core on the
+  phone through `packages/firmware/ffi`, a C ABI over the core and the
+  simulator HAL: the die's motion goes in as IMU readings, a finger on a face
+  goes in as a touch, and the six panels come out as textures on the faces.
+  Details, the model naming contract and the physics constants are in
+  [AR_VIEWER.md](../packages/mobile/iosApp/AR_VIEWER.md).
 
 ## Nx
 

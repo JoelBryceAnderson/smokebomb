@@ -1,0 +1,4 @@
+module SmokebombFirmware {
+    header "smokebomb_ffi.h"
+    export *
+}

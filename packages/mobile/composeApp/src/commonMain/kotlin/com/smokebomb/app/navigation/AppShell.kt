@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.smokebomb.app.ar.ArViewer
 import com.smokebomb.app.ble.DieLinks
 import com.smokebomb.app.history.RollHistory
 import com.smokebomb.app.network.ApiClient
@@ -22,23 +23,26 @@ import com.smokebomb.app.screens.ThemeStoreScreen
 /** Top-level destinations in the bottom bar. */
 enum class Destination(val label: String, val glyph: String) {
     Die("Die", "⚅"),
+    Ar("AR", "◰"),
     History("History", "☰"),
     Store("Store", "◈"),
     Settings("Settings", "⚙"),
 }
 
 /**
- * Navigation shell: a bottom bar over four tabs. Deeper stacks (roll detail,
+ * Navigation shell: a bottom bar over the tabs. The AR tab shows only where the
+ * platform has an [ArViewer] (iOS). Deeper stacks (roll detail,
  * theme detail, DFU progress) will move this to navigation-compose.
  */
 @Composable
-fun AppShell(links: DieLinks, history: RollHistory, api: ApiClient) {
+fun AppShell(links: DieLinks, history: RollHistory, api: ApiClient, arViewer: ArViewer? = null) {
     var current by rememberSaveable { mutableStateOf(Destination.Die) }
+    val destinations = Destination.entries.filter { it != Destination.Ar || arViewer != null }
 
     Scaffold(
         bottomBar = {
             NavigationBar {
-                Destination.entries.forEach { dest ->
+                destinations.forEach { dest ->
                     NavigationBarItem(
                         selected = dest == current,
                         onClick = { current = dest },
@@ -52,6 +56,7 @@ fun AppShell(links: DieLinks, history: RollHistory, api: ApiClient) {
         val modifier = Modifier.padding(padding)
         when (current) {
             Destination.Die -> DieScreen(links, modifier)
+            Destination.Ar -> arViewer?.Content(modifier)
             Destination.History -> RollHistoryScreen(history, modifier)
             Destination.Store -> ThemeStoreScreen(api, modifier)
             Destination.Settings -> SettingsScreen(modifier)

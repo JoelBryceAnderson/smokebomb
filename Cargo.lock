@@ -1714,6 +1714,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "smokebomb-ffi"
+version = "0.1.0"
+dependencies = [
+ "smokebomb-core",
+ "smokebomb-hal",
+ "smokebomb-hal-simulator",
+]
+
+[[package]]
 name = "smokebomb-firmware"
 version = "0.1.0"
 dependencies = [

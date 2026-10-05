@@ -6,6 +6,11 @@ on:
   pull_request:
     paths:
       - "packages/mobile/**"
+      # The iOS app links the firmware core (packages/firmware/ffi).
+      - "packages/firmware/**"
+      - "packages/shared/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/ci-mobile.yml"
 
 concurrency:
@@ -46,6 +51,8 @@ jobs:
         run: ./gradlew :shared:iosSimulatorArm64Test
       - name: Link Compose framework
         run: ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
+      - name: Rust targets for iOS (the app links the firmware core)
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
       - name: Generate Xcode project
         run: |
           brew install xcodegen
@@ -55,3 +62,14 @@ jobs:
         run: |
           xcodebuild -project iosApp.xcodeproj -target iosApp -configuration Debug \
             -sdk iphonesimulator -arch arm64 CODE_SIGNING_ALLOWED=NO build
+      - name: AR viewer tests (simulator)
+        working-directory: packages/mobile/iosApp
+        run: |
+          # The first available iPhone simulator; device names change between runner images.
+          UDID=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(d["udid"] for runtime, ds in sorted(devices.items(), reverse=True) if "iOS" in runtime
+                     for d in ds if d["name"].startswith("iPhone")))')
+          xcodebuild test -project iosApp.xcodeproj -scheme ARViewerTests \
+            -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO

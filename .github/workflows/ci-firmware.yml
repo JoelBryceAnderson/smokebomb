@@ -37,7 +37,7 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy (host crates)
-        run: cargo clippy -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-hal-nrf54l15 -p smokebomb-assets-build --all-targets -- -D warnings
+        run: cargo clippy -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-hal-nrf54l15 -p smokebomb-assets-build -p smokebomb-ffi --all-targets -- -D warnings
       - name: Clippy (firmware, simulator board)
         run: cargo clippy -p smokebomb-firmware --features simulator -- -D warnings
       - name: Clippy (firmware, nRF54L15 board)
@@ -49,7 +49,7 @@ jobs:
           cargo clippy -p smokebomb-zephyr --target thumbv8m.main-none-eabihf -- -D warnings
           cargo clippy -p smokebomb-zephyr --target thumbv8m.main-none-eabihf --features bench -- -D warnings
       - name: Test (includes the screen snapshots)
-        run: cargo test -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-hal-nrf54l15 -p smokebomb-assets-build
+        run: cargo test -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-hal-nrf54l15 -p smokebomb-assets-build -p smokebomb-ffi
       - name: Upload snapshot differences
         if: failure()
         uses: actions/upload-artifact@v4

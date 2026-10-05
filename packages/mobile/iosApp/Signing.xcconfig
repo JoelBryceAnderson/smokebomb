@@ -1,0 +1,8 @@
+// Signing for running on your own device. Put your team in Local.xcconfig
+// (git-ignored), so `xcodegen generate` doesn't wipe it:
+//
+//   cp Local.xcconfig.example Local.xcconfig   # then set DEVELOPMENT_TEAM
+//
+// Without it the app still builds for the Simulator.
+SUGARCUBE_BUNDLE_ID = com.smokebomb.app
+#include? "Local.xcconfig"

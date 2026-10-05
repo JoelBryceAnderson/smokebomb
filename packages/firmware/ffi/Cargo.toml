@@ -1,0 +1,17 @@
+[package]
+name = "smokebomb-ffi"
+description = "C ABI for running the firmware core on a phone: IMU and touch in, six face frames out"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# staticlib for the iOS app; rlib so the tests can call it directly.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+smokebomb-core.workspace = true
+smokebomb-hal.workspace = true
+smokebomb-hal-simulator.workspace = true

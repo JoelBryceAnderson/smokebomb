@@ -1,0 +1,27 @@
+{
+  "_about": "Labels shown when a part is tapped in the AR viewer. Keys are prim names; a key ending in * matches any name with that prefix, and the longest match wins. Keys starting with _ are ignored.",
+
+  "Shell": "Titanium shell",
+  "Lid": "Lid: the bottom face, held by four screws",
+  "Window_*": "Sapphire window",
+  "Module_*": "Display module: panel glass, driver chip and ribbon",
+  "Screen_*": "OLED screen",
+  "Screw_*": "Lid screw: M1.0, also the charging contact",
+  "Pillar_*": "Screw pillar",
+  "Board": "Main board",
+  "Cell": "Battery cell",
+  "BalancePlate": "Tungsten balance plate",
+  "Wiring": "Wiring",
+
+  "SapphireWindows": "Sapphire windows",
+  "LidScrews": "Lid screw: M1.0, also the charging contact",
+  "ScrewSleevesAndSlots": "Screw sleeves and slots",
+  "LidSeam": "Lid seam",
+  "Internal_battery": "Battery cell",
+  "Internal_board": "Main board",
+  "Internal_tungsten": "Tungsten balance plate",
+  "Internal_pillar": "Screw pillar",
+  "Internal_fpc": "Display ribbon (FPC)",
+  "Internal_w_*": "Wiring",
+  "Internal_*": "Internal part"
+}

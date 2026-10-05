@@ -1,0 +1,5 @@
+// Copy to Local.xcconfig (git-ignored) and fill in.
+// Your team ID: Xcode > Settings > Accounts, or developer.apple.com > Membership.
+DEVELOPMENT_TEAM = ABCDE12345
+// If com.smokebomb.app is taken on your team, use your own:
+// SUGARCUBE_BUNDLE_ID = com.yourname.sugarcube

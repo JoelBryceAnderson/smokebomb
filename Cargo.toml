@@ -9,6 +9,7 @@ members = [
     "packages/firmware/hal/nrf54l15",
     "packages/firmware/zephyr/rust",
     "packages/firmware/assets-build",
+    "packages/firmware/ffi",
     "packages/simulator/server",
     "packages/server",
 ]
