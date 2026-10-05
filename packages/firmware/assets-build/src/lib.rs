@@ -15,6 +15,8 @@ use std::io::Read;
 
 use smokebomb_shared::assets::*;
 
+pub mod tier_fonts;
+
 /// Space Grotesk Bold, the fontsource build the mockup used (SIL Open Font License, see `assets/fonts/OFL.txt`).
 pub const SPACE_GROTESK_BOLD_WOFF: &[u8] =
     include_bytes!("../../assets/fonts/space-grotesk-latin-700-normal.woff");

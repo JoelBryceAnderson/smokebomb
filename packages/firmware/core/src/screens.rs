@@ -7,7 +7,6 @@ use core::fmt::Write as _;
 use heapless::{String, Vec};
 use libm::{cosf, fabsf, floorf, powf, roundf, sinf, sqrtf};
 use smokebomb_hal::{AssetStore, Grey96, Target};
-use smokebomb_shared::types::MAX_POT_DICE;
 use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
 use crate::display::{DUD, FG};
@@ -15,7 +14,7 @@ use crate::font::{fit_px, Align, Fonts, SCRIPT};
 use crate::gfx::{segment_distance, triangle_distance, Painter, Style};
 use crate::menu::{AppIcon, Draft, PlayMode, Setup, Value};
 use crate::nest::{ChargeView, ClockView, Label, NestFace, Screen};
-use crate::pigs::{throw_label, Locked, Outcome, Symbol, Throw, Token};
+use crate::pigs::{Locked, Outcome, Symbol, Throw, Token};
 use crate::smoke::Special;
 
 /// The lit area's half-size in canvas units.
@@ -38,11 +37,6 @@ impl<A: AssetStore, T: Target> Ctx<'_, '_, A, T> {
     fn script(&mut self, text: &str, x: f32, y: f32, px: u16, reveal: f32, style: Style) {
         self.fonts
             .draw_script(self.assets, self.painter, text, x, y, px, reveal, style);
-    }
-
-    fn text_left(&mut self, text: &str, x: f32, y: f32, px: u16, style: Style) {
-        self.fonts
-            .draw(self.assets, self.painter, text, x, y, px, Align::Left, style);
     }
 
     /// Draw with the content moved by `(ox, oy)` canvas units (before the
@@ -307,37 +301,105 @@ pub fn setup_label(die: DieKind, count: u8) -> String<24> {
     s
 }
 
-/// The wake/setup label: the setup's icon (a die's solid, a bomb, a banknote)
-/// above its name, at `alpha` (already including the 85%).
+// ---------- table screens (brief 3, 1.2) ----------
+//
+// Read from across the table: T1, the answer in 1–3 characters or one
+// glyph, over at most one T2 word, and nothing smaller. Sizes are canvas px
+// whose capitals (0.70 of the size, × K panel px each) land on the 34 mm
+// die's tiers.
+
+/// T1 for 1–2 characters: 28.3 px caps.
+pub const T1_PX: u16 = 70;
+/// T1 for 3 characters, its floor: 20.2 px caps.
+pub const T1_FLOOR_PX: u16 = 50;
+/// T2: 14.2 px caps.
+pub const T2_PX: u16 = 35;
+/// H1, a held screen's value: 17.0 px caps.
+pub const H1_PX: u16 = 42;
+/// H2, a held screen's titles and labels: 7.3 px caps.
+pub const H2_PX: u16 = 18;
+/// T1's and T2's cap heights in canvas units, and the gap between them.
+const T1_CAP: f32 = 49.0;
+const T2_CAP: f32 = 24.5;
+const T1_GAP: f32 = 12.0;
+
+/// The centres of T1 (`h1` tall) and T2, centred together on the face.
+fn table_layout(h1: f32) -> (f32, f32) {
+    let top = -(h1 + T1_GAP + T2_CAP) / 2.0;
+    (top + h1 / 2.0, top + h1 + T1_GAP + T2_CAP / 2.0)
+}
+
+/// T1's size for `text`: the target for 1–2 characters, the floor for 3.
+fn t1_px(text: &str) -> u16 {
+    if text.chars().count() <= 2 {
+        T1_PX
+    } else {
+        T1_FLOOR_PX
+    }
+}
+
+/// A T1 answer centred on `y`.
+fn draw_t1<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, text: &str, y: f32, value: u8, alpha: f32) {
+    c.text(text, 0.0, y, t1_px(text), Style::new(value, alpha, 18.0));
+}
+
+/// A T2 word centred on `y`.
+fn draw_t2<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, text: &str, y: f32, value: u8, alpha: f32) {
+    c.text(text, 0.0, y, T2_PX, Style::new(value, alpha, 8.0));
+}
+
+/// A player's token as T1, centred on `y`: an initial, or a symbol drawn
+/// as tall as T1's capitals.
+fn draw_t1_token<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, token: Token, y: f32, alpha: f32) {
+    match (token.initial(), token.as_symbol()) {
+        (_, Some(symbol)) => {
+            draw_symbol(c, symbol, 0.0, y, T1_CAP, Style::new(FG, alpha, 12.0));
+            c.painter.note_icon(T1_CAP, alpha);
+        }
+        (Some(ch), _) => {
+            let mut s: String<2> = String::new();
+            let _ = s.push(ch);
+            draw_t1(c, &s, y, FG, alpha);
+        }
+        _ => {}
+    }
+}
+
+/// The wake/setup label (a table screen): the setup's icon (a die's solid,
+/// a bomb) as T1, and the dice, or `ready`, as T2. Pass the Pot shows the
+/// bills in hand.
 pub fn draw_wake_label<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, setup: Setup, label: &str, alpha: f32) {
+    let _ = label;
     if let Setup::Roll(DieKind::PassThePot, n) = setup {
         draw_bills_in_hand(c, n, alpha);
         return;
     }
-    crate::icons::draw_setup_icon(c, setup, 0.0, -21.0, 36.0, alpha);
-    c.text(
-        label,
-        0.0,
-        44.0,
-        fit_px(label, 28, 150.0),
-        Style::new(FG, alpha, 8.0),
-    );
+    let r = 27.0;
+    let (y1, y2) = table_layout(2.0 * r);
+    crate::icons::draw_setup_icon(c, setup, 0.0, y1, r, alpha);
+    c.painter.note_icon(2.0 * r, alpha);
+    let word = match setup {
+        Setup::Roll(die, n) => crate::table::dice(die, n),
+        _ => {
+            let mut s = String::new();
+            let _ = s.push_str("ready");
+            s
+        }
+    };
+    draw_t2(c, &word, y2, FG, alpha);
 }
 
-/// Pass the Pot between rolls: three bills with the ones you roll lit, how
-/// and how many that is (C2). A tap says a hold changes it.
+/// Pass the Pot between rolls: the bills in hand as T1, `bills` as T2.
 fn draw_bills_in_hand<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, n: u8, alpha: f32) {
-    for i in 0..MAX_POT_DICE {
-        let x = (i as f32 - (MAX_POT_DICE as f32 - 1.0) / 2.0) * 46.0;
-        let a = if i < n as usize { alpha } else { alpha * 0.2 };
-        crate::icons::draw_banknote(c, x, -18.0, 18.0, a);
-    }
-    let mut label: String<16> = String::new();
-    let _ = write!(label, "{n} bill{}", if n == 1 { "" } else { "s" });
-    c.text(&label, 0.0, 34.0, 26, Style::new(FG, alpha, 8.0));
+    let mut digits: String<2> = String::new();
+    let _ = write!(digits, "{n}");
+    let (y1, y2) = table_layout(T1_CAP);
+    draw_t1(c, &digits, y1, FG, alpha);
+    draw_t2(c, if n == 1 { "bill" } else { "bills" }, y2, FG, alpha);
 }
 
-/// Pig Toss between throws: the pig, and whose go it is (or who won).
+/// Pig Toss between throws: whose go it is as T1, `turn` as T2 (or once
+/// someone has won, `wins`).
 pub fn draw_pigs_label<A: AssetStore, T: Target>(
     c: &mut Ctx<A, T>,
     setup: Setup,
@@ -345,46 +407,13 @@ pub fn draw_pigs_label<A: AssetStore, T: Target>(
     won: bool,
     alpha: f32,
 ) {
-    crate::icons::draw_setup_icon(c, setup, 0.0, -21.0, 36.0, alpha);
-    let after = if won { " wins!" } else { " to roll" };
-    tagged(c, "", token, after, 44.0, 28, Style::new(FG, alpha, 8.0));
+    let _ = setup;
+    let (y1, y2) = table_layout(T1_CAP);
+    draw_t1_token(c, token, y1, alpha);
+    draw_t2(c, if won { "wins" } else { "turn" }, y2, FG, alpha);
 }
 
 // ---------- players' tokens ----------
-
-/// A line of text with a player's token in it, centred at `y`: `before`,
-/// the initial or symbol, then `after`, at up to `max_px`.
-#[allow(clippy::too_many_arguments)]
-fn tagged<A: AssetStore, T: Target>(
-    c: &mut Ctx<A, T>,
-    before: &str,
-    token: Token,
-    after: &str,
-    y: f32,
-    max_px: u16,
-    style: Style,
-) {
-    let mut line: String<40> = String::new();
-    let _ = write!(line, "{before}{}{after}", token.initial().unwrap_or('W'));
-    let px = fit_px(&line, max_px, 150.0);
-    let Some(symbol) = token.as_symbol() else {
-        c.text(&line, 0.0, y, px, style);
-        return;
-    };
-    // A symbol takes about a capital's room.
-    let h = px as f32 * 0.78;
-    let w = h * 1.15;
-    let wb = c.fonts.measure(c.assets, before, px);
-    let wa = c.fonts.measure(c.assets, after, px);
-    let x0 = -(wb + w + wa) / 2.0;
-    if !before.is_empty() {
-        c.text_left(before, x0, y, px, style);
-    }
-    draw_symbol(c, symbol, x0 + wb + w / 2.0, y, h, style);
-    if !after.is_empty() {
-        c.text_left(after, x0 + wb + w, y, px, style);
-    }
-}
 
 /// A player's symbol, centred on `(cx, cy)`, `h` canvas units tall.
 pub fn draw_symbol<A: AssetStore, T: Target>(
@@ -473,159 +502,58 @@ pub fn draw_symbol<A: AssetStore, T: Target>(
 
 // ---------- results (C6) ----------
 
-/// Big number size by character count (canvas px).
-fn big_size(chars: usize) -> f32 {
-    match chars {
-        0..=2 => 94.0,
-        3 => 66.0,
-        4 => 52.0,
-        5 | 6 => 40.0,
-        _ => 32.0,
-    }
-}
-
-/// A roll's result: every face except the one facing down shows this.
-/// A max says so in its label; a dud greys out and says "dud" (C6).
+/// A roll's result: the total as T1 over the dice, or `MAX` / `DUD`, as
+/// T2 (C6). A dud is the dud grey. Pass the Pot shows its dice as glyphs.
 pub fn draw_result<A: AssetStore, T: Target>(
     c: &mut Ctx<A, T>,
     record: &RollRecord,
     special: Option<Special>,
     alpha: f32,
 ) {
-    let setup = setup_label(record.die, record.values.len() as u8);
-    let mut label: String<32> = String::new();
-    let _ = match special {
-        Some(Special::Max) => write!(label, "max {setup}"),
-        Some(Special::Dud) => write!(label, "dud"),
-        None => write!(label, "{setup}"),
-    };
     let value = if special == Some(Special::Dud) { DUD } else { FG };
     if !record.die.is_numeric() {
-        draw_pot_tokens(c, &record.values, value, alpha);
-        let style = Style::new(value, alpha, 8.0);
-        match pot_summary_lines(&record.values) {
-            (one, None) => c.text(&one, 0.0, 54.0, fit_px(&one, 22, 150.0), style),
-            (top, Some(bottom)) => {
-                let px = fit_px(&top, 22, 150.0).min(fit_px(&bottom, 22, 150.0));
-                c.text(&top, 0.0, 44.0, px, style);
-                c.text(&bottom, 0.0, 44.0 + px as f32 * 1.1, px, style);
-            }
-        }
+        draw_pot_result(c, &record.values, value, alpha);
         return;
     }
-
-    let mut big: String<8> = String::new();
-    let _ = write!(big, "{}", record.total());
-    let mut parts: String<48> = String::new();
-    if record.values.len() > 1 {
-        for (i, v) in record.values.iter().enumerate() {
-            let _ = write!(parts, "{}{v}", if i > 0 { "+" } else { "" });
-        }
-        if parts.len() > 18 {
-            parts.clear();
-        }
-    }
-    let has_parts = !parts.is_empty();
-    let px = roundf(big_size(big.len()) * if has_parts { 0.85 } else { 1.0 }) as u16;
-    c.text(
-        &big,
-        0.0,
-        if has_parts { 0.0 } else { -12.0 },
-        px,
-        Style::new(value, alpha, 18.0),
-    );
-    c.text(
-        &label,
-        0.0,
-        if has_parts { 56.0 } else { 54.0 },
-        fit_px(&label, 22, 150.0),
-        Style::new(value, alpha, 8.0),
-    );
-    if has_parts {
-        let px = if parts.len() > 10 { 14 } else { 17 };
-        c.text(&parts, 0.0, -60.0, px, Style::new(value, alpha * 0.7, 8.0));
-    }
-}
-
-/// What a Pass the Pot throw asks for, in words: `1 left · 1 pot`, or
-/// `keep` / `keep all` when every bill stays.
-pub fn pot_summary(values: &[u8]) -> String<32> {
-    let parts = pot_parts(values);
-    join(&parts)
-}
-
-/// [`pot_summary`] on one line, or split over two when one line would have
-/// to shrink below [`POT_LABEL_MIN_PX`]: `1 left · 1 right` over `1 pot`.
-pub fn pot_summary_lines(values: &[u8]) -> (String<32>, Option<String<32>>) {
-    let parts = pot_parts(values);
-    let one = join(&parts);
-    if parts.len() < 2 || fit_px(&one, 22, 150.0) >= POT_LABEL_MIN_PX {
-        return (one, None);
-    }
-    let split = parts.len().div_ceil(2);
-    (join(&parts[..split]), Some(join(&parts[split..])))
-}
-
-/// The smallest the result label gets on one line before it wraps.
-const POT_LABEL_MIN_PX: u16 = 20;
-
-fn pot_parts(values: &[u8]) -> Vec<String<12>, 3> {
-    let (mut left, mut right, mut pot) = (0, 0, 0);
-    for &v in values {
-        match PotFace::from_raw(v) {
-            PotFace::Left => left += 1,
-            PotFace::Right => right += 1,
-            PotFace::Pot => pot += 1,
-            PotFace::Keep => {}
-        }
-    }
-    let mut parts = Vec::new();
-    for (n, word) in [(left, "left"), (right, "right"), (pot, "pot")] {
-        if n > 0 {
-            let mut s = String::new();
-            let _ = write!(s, "{n} {word}");
-            let _ = parts.push(s);
-        }
-    }
-    if parts.is_empty() {
-        let mut s = String::new();
-        let _ = write!(s, "{}", if values.len() > 1 { "keep all" } else { "keep" });
-        let _ = parts.push(s);
-    }
-    parts
-}
-
-fn join(parts: &[String<12>]) -> String<32> {
-    let mut s = String::new();
-    for (i, p) in parts.iter().enumerate() {
-        let _ = write!(s, "{}{p}", if i > 0 { " · " } else { "" });
-    }
-    s
-}
-
-/// Pass the Pot glyphs in a row: arrows pass left or right, the pot glyph
-/// feeds the pot, a dot keeps.
-fn draw_pot_tokens<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, values: &[u8], value: u8, alpha: f32) {
-    let n = values.len();
-    let sz = match n {
-        1 => 64.0,
-        2 => 50.0,
-        _ => 40.0,
+    let total = crate::table::total(record.total());
+    let dice = crate::table::dice(record.die, record.values.len() as u8);
+    let word = match special {
+        Some(Special::Max) => "MAX",
+        Some(Special::Dud) => "DUD",
+        None => dice.as_str(),
     };
+    let (y1, y2) = table_layout(T1_CAP);
+    draw_t1(c, &total, y1, value, alpha);
+    draw_t2(c, word, y2, value, alpha * 0.85);
+}
+
+/// A Pass the Pot result: the dice as T1 glyphs in a row (arrows pass left
+/// or right, the pot glyph feeds the pot, a dot keeps), and as T2 `keep`
+/// or how many bills leave the hand, `−2`.
+fn draw_pot_result<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, values: &[u8], value: u8, alpha: f32) {
+    let n = values.len().max(1);
+    let sz = match n {
+        1 => 70.0,
+        2 => 58.0,
+        _ => 46.0,
+    };
+    let h = sz * 0.84;
+    let (y1, y2) = table_layout(h);
     let gap = sz * 1.15;
-    let y = -12.0;
     let style = Style::new(value, alpha, 14.0);
     for (i, &v) in values.iter().enumerate() {
         let x = (i as f32 - (n as f32 - 1.0) / 2.0) * gap;
         match PotFace::from_raw(v) {
-            PotFace::Keep => c.painter.fill_circle(x, y, sz * 0.13, style),
-            PotFace::Pot => draw_pot(c, x, y, sz, style),
+            PotFace::Keep => c.painter.fill_circle(x, y1, sz * 0.2, style),
+            PotFace::Pot => draw_pot(c, x, y1, sz, style),
             dir @ (PotFace::Left | PotFace::Right) => {
                 let d = if dir == PotFace::Right { 1.0 } else { -1.0 };
-                draw_pass_arrow(c, x, y, sz, d, style);
+                draw_pass_arrow(c, x, y1, sz, d, style);
             }
         }
     }
+    c.painter.note_icon(h, alpha);
+    draw_t2(c, &crate::table::pot(values), y2, value, alpha * 0.85);
 }
 
 /// A bold arrow for passing a bill: a round-capped shaft into a solid,
@@ -638,8 +566,8 @@ fn draw_pass_arrow<A: AssetStore, T: Target>(
     d: f32,
     style: Style,
 ) {
-    let (l, hl, hw) = (sz * 0.44, sz * 0.36, sz * 0.27);
-    let (shaft_w, round) = (sz * 0.13, sz * 0.035);
+    let (l, hl, hw) = (sz * 0.44, sz * 0.36, sz * 0.42);
+    let (shaft_w, round) = (sz * 0.2, sz * 0.035);
     let tip = x + d * (l - round);
     let base = x + d * (l - hl);
     let head = [(tip, y), (base, y - hw), (base, y + hw)];
@@ -729,11 +657,29 @@ fn ramp(t: f32, at: f32, over: f32) -> f32 {
     ((t - at) / over).clamp(0.0, 1.0)
 }
 
+/// A heart, centred on `(cx, cy)`, `h` canvas units tall: a smooch.
+fn draw_heart<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, cx: f32, cy: f32, h: f32, style: Style) {
+    let r = h * 0.28;
+    let top = cy - h / 2.0 + r;
+    c.painter.fill_circle(cx - r * 0.95, top, r, style);
+    c.painter.fill_circle(cx + r * 0.95, top, r, style);
+    c.painter.fill_triangle(
+        [
+            (cx - r * 1.9, top + r * 0.3),
+            (cx + r * 1.9, top + r * 0.3),
+            (cx, cy + h / 2.0),
+        ],
+        style,
+    );
+}
+
 /// What a throw says once the pigs have settled, `t` seconds after the die
-/// landed: the throw's points pop in big, the turn's points count up beside
-/// the player's total, and then the screen says what to do next. The pigs themselves are
-/// [`crate::pigfx`]. A bust dims to the dud colour and passes the die by
-/// itself, so it only asks for the next player to shake.
+/// landed. First the throw: its points as T1 (`+15`) over what scored
+/// (`Strut`, `Twin`) as T2; an oops is the dud grey, the turn's points lost
+/// (`−20`, or `0`) over `OOPS`; a smooch a heart over the banked score lost
+/// (`−40`, or `kiss`). Then the resting screen: the player's token over the
+/// turn so far (`+35`), or after an oops or a smooch, whose go it is now.
+/// The pigs themselves are [`crate::pigfx`].
 pub fn draw_pig_score<A: AssetStore, T: Target>(
     c: &mut Ctx<A, T>,
     throw: &Throw,
@@ -743,114 +689,60 @@ pub fn draw_pig_score<A: AssetStore, T: Target>(
     alpha: f32,
 ) {
     use pig_score::*;
-    let smooch = throw.outcome == Outcome::Smooch;
-    // A bust and a smooch both lose the turn and pass the die.
-    let lost = throw.outcome != Outcome::Score(0) && !matches!(throw.outcome, Outcome::Score(_));
-    let value = if lost { DUD } else { FG };
-    let style = |a: f32, glow: f32| Style::new(value, alpha * a, glow);
-    let banked = throw.banked_before;
-
-    // The big word or number, popping in and settling.
-    let pop = ramp(t, POP_AT, 0.35);
-    if pop > 0.0 {
-        let mut big: String<8> = String::new();
-        let _ = match throw.outcome {
-            Outcome::Smooch => write!(big, "SMOOCH!"),
-            Outcome::Bust => write!(big, "OOPS"),
-            Outcome::Score(p) => write!(big, "+{p}"),
-        };
-        let px = big_size(big.len()).min(52.0) * if smooch { 0.62 } else { 0.8 };
-        let over = 1.0 - pop;
-        c.text(
-            &big,
-            0.0,
-            -12.0,
-            roundf(px * (1.0 + 0.7 * over * over)) as u16,
-            style((pop * 3.0).min(1.0), 14.0),
-        );
-    }
-
-    let label_a = ramp(t, LABEL_AT, 0.25);
-    if label_a > 0.0 {
-        let mut label: String<32> = String::new();
-        let _ = match throw.outcome {
-            Outcome::Smooch => write!(label, "The pigs touched!"),
-            Outcome::Bust if throw.turn_before > 0 => write!(label, "Lost {}", throw.turn_before),
-            Outcome::Bust => write!(label, "Nothing to lose"),
-            Outcome::Score(_) => write!(label, "{}", throw_label(throw.poses, false)),
-        };
-        c.text(
-            &label,
-            0.0,
-            13.0,
-            fit_px(&label, 17, 150.0),
-            style(label_a * 0.85, 6.0),
-        );
-    }
-
     let token = |p: u8| tokens.get(p as usize).copied().unwrap_or(Token::default_for(p));
-    let turn_a = ramp(t, TURN_AT, 0.25);
-    if turn_a > 0.0 && lost && !(smooch && banked > 0) {
-        tagged(
-            c,
-            "Pass to ",
-            token(next_player),
-            "",
-            36.0,
-            24,
-            style(turn_a, 10.0),
-        );
-    } else if turn_a > 0.0 {
-        let mut line: String<24> = String::new();
-        let _ = match throw.outcome {
-            // The whole banked score counts down to nothing.
-            Outcome::Smooch if banked > 0 => {
-                let k = ramp(t, TURN_AT, COUNT_S);
-                let shown = roundf(banked as f32 * (1.0 - k * k)) as u16;
-                write!(line, "Score {shown}")
+    let rest = ramp(t, PROMPT_AT, 0.3);
+    let first = 1.0 - rest;
+    let pop = ramp(t, POP_AT, 0.35);
+    let word_a = alpha * ramp(t, LABEL_AT, 0.25) * first;
+    let (y1, y2) = table_layout(T1_CAP);
+    if pop > 0.0 && first > 0.0 {
+        let a = alpha * (pop * 3.0).min(1.0) * first;
+        let over = 1.0 - pop;
+        let grow = 1.0 + 0.4 * over * over;
+        match throw.outcome {
+            Outcome::Score(n) => {
+                let big = crate::table::signed(n as i32);
+                c.shifted(0.0, y1, grow, |c| draw_t1(c, &big, 0.0, FG, a));
+                draw_t2(c, crate::table::throw_word(throw), y2, FG, word_a);
             }
-            Outcome::Smooch | Outcome::Bust => Ok(()),
-            Outcome::Score(p) => {
-                // Counts up from what the turn was to what it is now.
-                let k = ramp(t, TURN_AT, COUNT_S);
-                let eased = 1.0 - (1.0 - k) * (1.0 - k);
-                let turn = throw.turn_before + roundf(p as f32 * eased) as u16;
-                // The turn's points, then what the player would have in all.
-                write!(line, "{turn} · {}", banked + turn)
+            Outcome::Bust => {
+                let lost = crate::table::signed(-(throw.turn_before as i32));
+                c.shifted(0.0, y1, grow, |c| draw_t1(c, &lost, 0.0, DUD, a));
+                draw_t2(c, "OOPS", y2, DUD, word_a);
             }
-        };
-        c.text(&line, 0.0, 36.0, fit_px(&line, 24, 150.0), style(turn_a, 10.0));
+            Outcome::Smooch => {
+                draw_heart(c, 0.0, y1, T1_CAP * grow, Style::new(FG, a, 12.0));
+                c.painter.note_icon(T1_CAP, a);
+                let word = if throw.banked_before > 0 {
+                    crate::table::signed(-(throw.banked_before as i32))
+                } else {
+                    let mut s = String::new();
+                    let _ = s.push_str("kiss");
+                    s
+                };
+                draw_t2(c, &word, y2, FG, word_a);
+            }
+        }
     }
-
-    // The bottom row: whose turn it is, then what to do next.
-    let prompt = ramp(t, PROMPT_AT, 0.3);
-    let who_a = ramp(t, WHO_AT, 0.25) * (1.0 - prompt);
-    if who_a > 0.0 && !lost {
-        tagged(c, "", token(throw.player), "", 66.0, 14, style(who_a * 0.7, 0.0));
+    if rest <= 0.0 {
+        return;
     }
-    if prompt > 0.0 {
-        if lost {
-            tagged(
+    let a = alpha * rest;
+    match throw.outcome {
+        Outcome::Score(n) if !throw.won => {
+            draw_t1_token(c, token(throw.player), y1, a);
+            draw_t2(
                 c,
-                "",
-                token(next_player),
-                ": shake to roll",
-                66.0,
-                15,
-                style(prompt * 0.9, 6.0),
+                &crate::table::signed((throw.turn_before + n) as i32),
+                y2,
+                FG,
+                a,
             );
-        } else {
-            c.text("Shake to roll again", 0.0, 56.0, 14, style(prompt * 0.7, 0.0));
-            // The action that matters breathes a little.
-            let breathe = 0.85 + 0.15 * sinf((t - PROMPT_AT) * 4.0);
-            let line = "Hold to bank & pass";
-            c.text(
-                line,
-                0.0,
-                72.0,
-                fit_px(line, 15, 150.0),
-                style(prompt * breathe, 6.0),
-            );
+        }
+        Outcome::Score(_) => {}
+        _ => {
+            draw_t1_token(c, token(next_player), y1, a);
+            draw_t2(c, "turn", y2, FG, a);
         }
     }
 }
@@ -866,60 +758,26 @@ pub mod lock_in {
     pub const NEXT_AT: f32 = 2.0;
 }
 
-/// A bank locking in, `t` seconds after the tap: a padlock swings shut with
-/// a flash and a burst of sparks, the banked points turn into the player's
-/// new total and count up, then the screen says who has the die. `fade`
-/// (0–1) takes it away when it has been up a while.
+/// A bank locking in, `t` seconds after the hold: the banked points as T1
+/// over a padlock (T2) that swings shut with a flash and a burst of sparks;
+/// the points turn into the player's new total and count up; then whose go
+/// it is, as between turns. `fade` (0–1) takes it away when it has been up
+/// a while.
 pub fn draw_locked<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, l: &Locked, next: Token, t: f32, fade: f32) {
     use core::f32::consts::PI;
     use lock_in::*;
     let alpha = ramp(t, 0.0, 0.15) * fade;
+    let next_a = ramp(t, NEXT_AT, 0.3);
+    let (y1, y2) = table_layout(T1_CAP);
+    if next_a >= 1.0 {
+        draw_t1_token(c, next, y1, alpha);
+        draw_t2(c, "turn", y2, FG, alpha);
+        return;
+    }
+    let alpha = alpha * (1.0 - next_a);
     let style = |a: f32, glow: f32| Style::new(FG, alpha * a, glow);
 
-    // The padlock: open at first, its shackle lifted, then it drops shut.
-    let closing = (t / SNAP_AT).clamp(0.0, 1.0);
-    let lift = 13.0 * (1.0 - closing * closing);
-    let top = -26.0;
-    let snapped = t >= SNAP_AT;
-    let flash = if snapped {
-        (1.0 - (t - SNAP_AT) / 0.5).max(0.0)
-    } else {
-        0.0
-    };
-    let lock = style(1.0, 6.0 + 14.0 * flash);
-    let dark = Style::new(0, alpha, 0.0);
-    c.painter
-        .stroke_arc(0.0, top - lift, 13.0, PI, 2.0 * PI, 4.5, lock);
-    c.painter.stroke_paths(
-        &[
-            &[(-13.0, top - lift), (-13.0, top - lift + 11.0)],
-            &[(13.0, top - lift), (13.0, top - lift + 11.0)],
-        ],
-        4.5,
-        lock,
-    );
-    c.painter.fill_rect(-21.0, top, 42.0, 31.0, lock);
-    c.painter.fill_circle(0.0, top + 12.0, 4.5, dark);
-    c.painter.fill_rect(-1.6, top + 12.0, 3.2, 9.0, dark);
-
-    // The flash and the sparks as it snaps shut.
-    if snapped {
-        let u = ((t - SNAP_AT) / 0.55).min(1.0);
-        if u < 1.0 {
-            let ring = Style::new(FG, alpha * (1.0 - u), 8.0);
-            c.painter
-                .stroke_arc(0.0, top + 5.0, 26.0 + 46.0 * u, 0.0, 2.0 * PI, 3.0, ring);
-            for k in 0..10 {
-                let a = k as f32 * PI / 5.0 + 0.3;
-                let r = 30.0 + 40.0 * u * (0.7 + 0.3 * ((k % 3) as f32 / 2.0));
-                let dot = Style::new(FG, alpha * (1.0 - u), 4.0);
-                c.painter
-                    .fill_circle(cosf(a) * r, top + 5.0 + sinf(a) * r, 2.6 * (1.0 - 0.6 * u), dot);
-            }
-        }
-    }
-
-    // The number under it: the points, then the new total counting up.
+    // The number: the points, then the new total counting up.
     let count = ramp(t, COUNT_AT, COUNT_S);
     let eased = 1.0 - (1.0 - count) * (1.0 - count);
     let mut big: String<8> = String::new();
@@ -928,27 +786,46 @@ pub fn draw_locked<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, l: &Locked, next
     } else {
         write!(big, "{}", l.before + roundf(l.points as f32 * eased) as u16)
     };
-    let done = COUNT_AT + COUNT_S;
-    // A pulse as the count lands.
-    let pulse = if t >= done {
-        1.0 + 0.18 * (1.0 - (t - done) / 0.3).max(0.0)
-    } else {
-        1.0
-    };
-    let px = roundf(big_size(big.len()).min(52.0) * 0.85 * pulse) as u16;
-    c.text(&big, 0.0, 34.0, px, style(1.0, 12.0));
+    draw_t1(c, &big, y1, FG, alpha);
 
-    let next_a = ramp(t, NEXT_AT, 0.3);
-    if next_a > 0.0 {
-        tagged(
-            c,
-            "",
-            next,
-            " · shake to roll",
-            66.0,
-            16,
-            style(next_a * 0.85, 4.0),
-        );
+    // The padlock as T2, 26 units tall: open at first, then it drops shut.
+    let k = 0.55;
+    let closing = (t / SNAP_AT).clamp(0.0, 1.0);
+    let lift = 8.0 * (1.0 - closing * closing);
+    let body_top = y2 - 13.0 + 26.0 * 0.38;
+    let snapped = t >= SNAP_AT;
+    let flash = if snapped {
+        (1.0 - (t - SNAP_AT) / 0.5).max(0.0)
+    } else {
+        0.0
+    };
+    let lock = style(1.0, 6.0 + 14.0 * flash);
+    let dark = Style::new(0, alpha, 0.0);
+    let (sr, sw) = (13.0 * k, 4.5 * k);
+    let shackle = body_top - lift;
+    c.painter.stroke_arc(0.0, shackle, sr, PI, 2.0 * PI, sw, lock);
+    c.painter.stroke_paths(
+        &[
+            &[(-sr, shackle), (-sr, shackle + 11.0 * k)],
+            &[(sr, shackle), (sr, shackle + 11.0 * k)],
+        ],
+        sw,
+        lock,
+    );
+    c.painter.fill_rect(-21.0 * k, body_top, 42.0 * k, 31.0 * k, lock);
+    c.painter.fill_circle(0.0, body_top + 12.0 * k, 4.5 * k, dark);
+    c.painter.note_icon(26.0, alpha);
+    if snapped {
+        let u = ((t - SNAP_AT) / 0.55).min(1.0);
+        if u < 1.0 {
+            for i in 0..10 {
+                let a = i as f32 * PI / 5.0 + 0.3;
+                let r = 20.0 + 30.0 * u * (0.7 + 0.3 * ((i % 3) as f32 / 2.0));
+                let dot = Style::new(FG, alpha * (1.0 - u), 4.0);
+                c.painter
+                    .fill_circle(cosf(a) * r, y2 + sinf(a) * r, 2.6 * (1.0 - 0.6 * u), dot);
+            }
+        }
     }
 }
 
@@ -974,9 +851,9 @@ pub mod pig_win {
     }
 }
 
-/// The win screen, `t` seconds in: a happy pig face bounces in with a burst
-/// of sparks, then who won, their score, and how to start again. `fade`
-/// (0–1) takes it away when it has been up a while.
+/// The win screen, `t` seconds in: the winner's token pops in as T1 with a
+/// burst of sparks, over `wins`. `fade` (0–1) takes it away when it has
+/// been up a while.
 pub fn draw_pig_win<A: AssetStore, T: Target>(
     c: &mut Ctx<A, T>,
     winner: Token,
@@ -985,21 +862,13 @@ pub fn draw_pig_win<A: AssetStore, T: Target>(
     fade: f32,
 ) {
     use core::f32::consts::PI;
+    let _ = total;
     let alpha = ramp(t, 0.0, 0.2) * fade;
-    let style = |a: f32, glow: f32| Style::new(FG, alpha * a, glow);
-
-    // The pig pops in with an overshoot, then bobs gently.
+    let (y1, y2) = table_layout(T1_CAP);
     let pop = ramp(t, 0.0, 0.45);
     let over = 1.0 - pop;
     let scale = (1.0 - over * over * over) * (1.0 + 0.25 * sinf(pop * PI));
-    let bob = if pop >= 1.0 {
-        2.0 * sinf((t - 0.45) * 3.5)
-    } else {
-        0.0
-    };
-    c.shifted(0.0, -22.0 + bob, scale.max(0.01), |c| draw_happy_pig(c, alpha));
-
-    // Sparks as it lands.
+    c.shifted(0.0, y1, scale.max(0.01), |c| draw_t1_token(c, winner, 0.0, alpha));
     let u = ((t - 0.35) / 0.7).clamp(0.0, 1.0);
     if t > 0.35 && u < 1.0 {
         for k in 0..12 {
@@ -1007,105 +876,43 @@ pub fn draw_pig_win<A: AssetStore, T: Target>(
             let r = 36.0 + 42.0 * u * (0.7 + 0.3 * ((k % 3) as f32 / 2.0));
             let dot = Style::new(FG, alpha * (1.0 - u), 4.0);
             c.painter
-                .fill_circle(cosf(a) * r, -22.0 + sinf(a) * r, 2.6 * (1.0 - 0.6 * u), dot);
+                .fill_circle(cosf(a) * r, y1 + sinf(a) * r, 2.6 * (1.0 - 0.6 * u), dot);
         }
     }
-
-    let words = ramp(t, 0.6, 0.3);
-    if words > 0.0 {
-        let breathe = 0.8 + 0.2 * sinf((t - 0.6) * 5.0);
-        tagged(c, "", winner, " WINS!", 36.0, 22, style(words * breathe, 10.0));
-        let mut score: String<16> = String::new();
-        let _ = write!(score, "{total} points");
-        c.text(&score, 0.0, 56.0, 13, style(words * 0.75, 0.0));
-    }
-    let prompt = ramp(t, 1.6, 0.3);
-    if prompt > 0.0 {
-        c.text("Hold for next game", 0.0, 72.0, 12, style(prompt * 0.7, 0.0));
-    }
-}
-
-/// A happy pig's face, centred on the origin, about 60 units across: round
-/// head and ears, smiling closed eyes, a snout, and rosy cheeks.
-fn draw_happy_pig<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, alpha: f32) {
-    use core::f32::consts::PI;
-    let face = Style::new(FG, alpha, 10.0);
-    let dark = Style::new(0, alpha, 0.0);
-    let r = 24.0;
-    // Ears: triangles poking up from the top of the head, a dark inner fold.
-    for s in [-1.0f32, 1.0] {
-        c.painter
-            .fill_triangle([(s * 11.0, -20.0), (s * 25.0, -12.0), (s * 24.0, -31.0)], face);
-        c.painter.fill_triangle(
-            [(s * 15.0, -19.0), (s * 22.0, -15.0), (s * 21.5, -25.0)],
-            Style::new(0, alpha * 0.45, 0.0),
-        );
-    }
-    c.painter.fill_circle(0.0, 0.0, r, face);
-    // Happy closed eyes: little upturned arcs.
-    for s in [-1.0f32, 1.0] {
-        c.painter
-            .stroke_arc(s * 9.0, -5.0, 4.0, PI * 1.1, PI * 1.9, 2.4, dark);
-    }
-    // Rosy cheeks.
-    for s in [-1.0f32, 1.0] {
-        c.painter
-            .fill_circle(s * 15.0, 5.0, 3.2, Style::new(0, alpha * 0.25, 0.0));
-    }
-    // The snout: a dark oval rim round a lighter one, with two nostrils.
-    let (sw, sh, sy) = (10.0, 6.5, 5.0);
-    let oval = |w: f32, h: f32| {
-        move |x: f32, y: f32| {
-            let (u, v) = (x / w, (y - sy) / h);
-            (sqrtf(u * u + v * v) - 1.0) * w.min(h)
-        }
-    };
-    c.painter.shape(
-        (-sw - 1.0, sy - sh - 1.0, sw + 1.0, sy + sh + 1.0),
-        dark,
-        oval(sw, sh),
-    );
-    c.painter.shape(
-        (-sw, sy - sh, sw, sy + sh),
-        Style::new(FG, alpha, 0.0),
-        oval(sw - 2.0, sh - 2.0),
-    );
-    for s in [-1.0f32, 1.0] {
-        c.painter.fill_circle(s * 3.6, sy, 1.8, dark);
-    }
-    // A big smile under the snout.
-    c.painter
-        .stroke_arc(0.0, 10.0, 8.0, PI * 0.2, PI * 0.8, 2.2, dark);
+    draw_t2(c, "wins", y2, FG, alpha * ramp(t, 0.6, 0.3));
 }
 
 // ---------- Hot Potato ----------
 
-/// A lit fuse: a glow that swells with `heat` (0–1) and flashes on each
-/// tick (`pulse`, 0–1), with a nudge underneath.
+/// A lit fuse: a glow (T1) that swells with `heat` (0–1) and flashes on
+/// each tick (`pulse`, 0–1), over `PASS` (T2).
 pub fn draw_fuse<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, heat: f32, pulse: f32) {
-    let core = 16.0 + 24.0 * heat;
+    let core = 20.0 + 14.0 * heat;
+    let (y1, y2) = table_layout(2.0 * 27.0);
     c.painter.fill_circle(
         0.0,
-        -6.0,
+        y1,
         core,
         Style::new(FG, 0.30 + 0.45 * heat, 10.0 + 14.0 * heat),
     );
     c.painter
-        .fill_circle(0.0, -6.0, core * 0.55, Style::new(FG, 0.55 + 0.45 * pulse, 12.0));
+        .fill_circle(0.0, y1, core * 0.55, Style::new(FG, 0.55 + 0.45 * pulse, 12.0));
     if pulse > 0.0 {
         c.painter.fill_circle(
             0.0,
-            -6.0,
-            core + 14.0 * (1.0 - pulse),
+            y1,
+            core + 10.0 * (1.0 - pulse),
             Style::new(FG, 0.35 * pulse, 0.0),
         );
     }
-    c.text("PASS IT", 0.0, 62.0, 14, Style::new(FG, 0.7, 0.0));
+    c.painter.note_icon(2.0 * core, 1.0);
+    draw_t2(c, "PASS", y2, FG, 1.0);
 }
 
-/// The fuse ran out: a shockwave, then BOOM, and a nudge to reset. `t` is
-/// seconds since it went off.
+/// The fuse ran out, `t` seconds ago: a shockwave, then a burst (T1) over
+/// `BOOM` (T2).
 pub fn draw_boom<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
+    use core::f32::consts::PI;
     let p = (t / 0.7).clamp(0.0, 1.0);
     let e = 1.0 - (1.0 - p) * (1.0 - p) * (1.0 - p);
     if p < 1.0 {
@@ -1114,17 +921,25 @@ pub fn draw_boom<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
     }
     let fade = (1.0 - (t - 4.6) / 1.0).clamp(0.0, 1.0);
     let a = (t / 0.12).min(1.0) * fade;
-    c.text(
-        "BOOM",
-        0.0,
-        -4.0,
-        fit_px("BOOM", 44, 150.0),
-        Style::new(FG, a, 16.0),
-    );
-    if t > 1.2 {
-        let a = ((t - 1.2) / 0.4).min(1.0) * fade;
-        c.text("Shake to go again", 0.0, 52.0, 13, Style::new(FG, 0.7 * a, 0.0));
+    let r = 28.0;
+    let (y1, y2) = table_layout(2.0 * r);
+    // An eight-pointed burst.
+    let style = Style::new(FG, a, 16.0);
+    for k in 0..8 {
+        let ang = k as f32 * PI / 4.0;
+        let (l, rr) = (ang - PI / 8.0, ang + PI / 8.0);
+        c.painter.fill_triangle(
+            [
+                (cosf(ang) * r, y1 + sinf(ang) * r),
+                (cosf(l) * r * 0.45, y1 + sinf(l) * r * 0.45),
+                (cosf(rr) * r * 0.45, y1 + sinf(rr) * r * 0.45),
+            ],
+            style,
+        );
     }
+    c.painter.fill_circle(0.0, y1, r * 0.5, style);
+    c.painter.note_icon(2.0 * r, a);
+    draw_t2(c, "BOOM", y2, FG, a);
 }
 
 // ---------- menu (C3, C4) ----------
@@ -1150,8 +965,8 @@ pub fn draw_menu<A: AssetStore, T: Target>(
     }
     let view = m.view((battery * 100.0 + 0.5) as u8);
     c.shifted(ox, oy, scale, |c| {
-        c.text(&view.status, 0.0, -66.0, 14, Style::new(FG, 0.6 * alpha, 0.0));
-        c.text(&view.title, 0.0, -44.0, 15, Style::new(FG, 0.8 * alpha, 0.0));
+        c.text(&view.status, 0.0, -66.0, H2_PX, Style::new(FG, 0.6 * alpha, 0.0));
+        c.text(&view.title, 0.0, -44.0, H2_PX, Style::new(FG, 0.8 * alpha, 0.0));
         let arrows = Style::new(FG, 0.55 * alpha, 0.0);
         let (w, h) = (4.5, 4.0);
         if view.arrows {
@@ -1165,7 +980,13 @@ pub fn draw_menu<A: AssetStore, T: Target>(
         let value_y = if view.caption.is_some() { 6.0 } else { 10.0 };
         match &view.value {
             Value::Text(t) => {
-                c.text(t, 0.0, value_y, fit_px(t, 52, 150.0), Style::new(FG, alpha, 14.0));
+                c.text(
+                    t,
+                    0.0,
+                    value_y,
+                    fit_px(t, 52, 150.0).max(H1_PX),
+                    Style::new(FG, alpha, 14.0),
+                );
             }
             Value::Token(t) => match (t.initial(), t.as_symbol()) {
                 (_, Some(symbol)) => draw_symbol(c, symbol, 0.0, value_y, 46.0, Style::new(FG, alpha, 14.0)),
@@ -1191,7 +1012,7 @@ pub fn draw_menu<A: AssetStore, T: Target>(
             }
             Value::Lines([a, b]) => {
                 c.text(a, 0.0, -2.0, 22, Style::new(FG, 0.8 * alpha, 0.0));
-                c.text(b, 0.0, 26.0, fit_px(b, 30, 150.0), Style::new(FG, alpha, 10.0));
+                c.text(b, 0.0, 26.0, 22, Style::new(FG, alpha, 10.0));
             }
         }
         if let Some(caption) = view.caption {
@@ -1301,8 +1122,11 @@ pub fn draw_success<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, label: &str, nu
         let _ = check.push((-4.0 + 20.0 * k, -30.0 - 22.0 * k));
     }
     c.painter.stroke_polyline(&check, 5.0, Style::new(FG, a, 8.0));
-    c.text(label, 0.0, 6.0, fit_px(label, 50, 150.0), Style::new(FG, a, 14.0));
-    c.text(nudge, 0.0, 48.0, 15, Style::new(FG, a * 0.75, 0.0));
+    // The setup as H1 if it fits a line at that size, else H2.
+    let px = fit_px(label, 50, 150.0);
+    let px = if px >= H1_PX { px } else { 24 };
+    c.text(label, 0.0, 6.0, px, Style::new(FG, a, 14.0));
+    c.text(nudge, 0.0, 48.0, H2_PX + 4, Style::new(FG, a * 0.75, 0.0));
 }
 
 /// The whole-face flash when a setup is saved.
@@ -1584,61 +1408,46 @@ fn draw_fault<A: AssetStore, T: Target>(c: &mut Ctx<A, T>) {
     );
 }
 
-/// The low-battery glyph: a small lightning bolt at the centre.
 /// What a hold will do, on the held face while the ring fills (brief 3,
-/// 2.2.1): the action in a word over what it comes to.
+/// 2.2.1): the action in a word (H2) over what it comes to (H1), or the
+/// word alone as H1.
 pub fn draw_hold_preview<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, word: &str, value: &str) {
     if value.is_empty() {
-        c.text(word, 0.0, 10.0, 40, Style::new(FG, 1.0, 8.0));
+        c.text(word, 0.0, 10.0, H1_PX + 4, Style::new(FG, 1.0, 8.0));
     } else {
         c.text(word, 0.0, -30.0, 22, Style::new(FG, 0.8, 0.0));
         c.text(value, 0.0, 16.0, 52, Style::new(FG, 1.0, 8.0));
     }
 }
 
-/// A tap's hint along the bottom of the face: `hold: bank`.
+/// A tap's hint along the bottom of the face, H2: `hold: bank`.
 pub fn draw_tap_hint<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, text: &str, alpha: f32) {
-    c.text(text, 0.0, 74.0, 14, Style::new(FG, alpha * 0.8, 0.0));
+    c.text(text, 0.0, 72.0, H2_PX, Style::new(FG, alpha * 0.8, 0.0));
 }
 
+/// The low-battery mark on the charging face: a lightning bolt as T1, `low`
+/// as T2.
 pub fn draw_bolt<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, alpha: f32) {
+    let h = 44.0;
+    let (y1, y2) = table_layout(h);
+    let s = h / 24.0;
     c.painter.stroke_polyline(
-        &[(4.0, -12.0), (-5.0, 1.0), (5.0, -1.0), (-4.0, 12.0)],
-        4.0,
+        &[
+            (4.0 * s, y1 - 12.0 * s),
+            (-5.0 * s, y1 + s),
+            (5.0 * s, y1 - s),
+            (-4.0 * s, y1 + 12.0 * s),
+        ],
+        4.0 * s * 0.8,
         Style::new(FG, alpha, 8.0),
     );
+    c.painter.note_icon(h, alpha);
+    draw_t2(c, "low", y2, FG, alpha);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn pot_results_say_what_to_do() {
-        // Raw d6 values: 1 ←, 2 P, 3 →, 4–6 •.
-        assert_eq!(pot_summary(&[1, 2, 5]).as_str(), "1 left · 1 pot");
-        assert_eq!(pot_summary(&[3, 3, 1]).as_str(), "1 left · 2 right");
-        assert_eq!(pot_summary(&[2]).as_str(), "1 pot");
-        assert_eq!(pot_summary(&[4, 6]).as_str(), "keep all");
-        assert_eq!(pot_summary(&[5]).as_str(), "keep");
-    }
-
-    #[test]
-    fn long_pot_results_wrap() {
-        let (top, bottom) = pot_summary_lines(&[1, 3, 2]);
-        assert_eq!(top.as_str(), "1 left · 1 right");
-        assert_eq!(bottom.as_deref(), Some("1 pot"));
-        let (top, bottom) = pot_summary_lines(&[1, 3]);
-        assert_eq!(top.as_str(), "1 left");
-        assert_eq!(bottom.as_deref(), Some("1 right"));
-        let (top, bottom) = pot_summary_lines(&[2, 5, 6]);
-        assert_eq!(top.as_str(), "1 pot");
-        assert!(bottom.is_none());
-        assert!(
-            fit_px("1 left · 1 right", 22, 150.0) >= 16,
-            "wrapped lines stay readable"
-        );
-    }
 
     #[test]
     fn setup_labels_match_the_mockup() {

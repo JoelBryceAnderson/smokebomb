@@ -260,11 +260,11 @@ The menu is the current game's pages with **Apps** one tip right of them, so the
 | Count | How many | 1–10 |
 | Die | Which die | d4, d6, d8, d10, d12, d20, d100 |
 | Pot | Bills | 1–3 (starts at 3) |
-| Fuse | Fuse | Short (10–20 s), Mid (20–40 s), Long (40–90 s) |
+| Fuse | Fuse | Fast (10–20 s), Mid (20–40 s), Slow (40–90 s) |
 | Players | Players | 2–6 |
 | Token | Player 1–6 | A–Z, then six symbols |
 | End game | End game | `End`, captioned `Clears all` |
-| Next game | Next game | `Again` (captioned `Rematch`) or `New` (`Players`) |
+| Next game | Next game | `Redo` (captioned `Rematch`) or `New` (`Players`) |
 | Battery | Battery | the charge, `78%`, to read |
 | Brightness | Brightness | 30%, 50%, 70%, 100% (starts at 70%) |
 | Haptics | Haptics | Off, On |
@@ -292,6 +292,34 @@ Shake the die to light the fuse, then pass it around. Whoever holds it when it g
 - **No menu mid-round.** A hold does nothing while the fuse is lit (and no hold ring shows). It opens the menu as usual once the die has gone off. Opening the menu, docking or changing mode resets the round.
 - **Shakes in the menu.** A shake or throw with the menu open closes it without saving and leaves the die idle; in a game that doesn't roll it doesn't start a round.
 - **Label.** The wake label and menu status read "Hot Potato" and "Potato". The success screen says "Shake to light" instead of "Ready to roll".
+
+**X4, Text tiers** (SMOKEBOMB_SIM_UPDATE_BRIEF_3, part 1; where the layouts in C2, C6 and X2 disagree, this wins)
+
+Cap height ≥ viewing distance ÷ 200. Table screens (read by the table) have T1, the answer, and at most one T2 word; held screens (menu, success, a hold's preview) have H1 values and H2 labels. Nothing smaller, no wrapped lines, no chrome or hints on table screens (a tap shows the hint, X3).
+
+| Tier | 64×64 (30 mm) | 96×96 (34 mm) | Holds |
+|---|---|---|---|
+| T1 | 30 px numerals; 21 px letters or glyphs (the floor) | 70 canvas px (28 px caps), 50 for 3 characters (20 px) | 1–3 characters, or one glyph |
+| T2 | 15 px | 35 canvas px (14 px) | one word, ≤5 characters |
+| H1 | 18 px | 42 canvas px (17 px) | a value that fits a line |
+| H2 | 7 px (the 5×7 `TEXT`) | 18 canvas px (7.3 px) | ≤10 characters |
+
+The 64×64 cuts are one-bit Space Grotesk 700, generated at the size whose H is exactly the tier's cap height, ascenders snapped to the cap line (`tier64.rs`, from `assets-build/src/tier_fonts.rs`); T1 numbers stay the hand-drawn numerals.
+
+| Table screen | T1 | T2 |
+|---|---|---|
+| Dice result | the total, white (gold for a max, red for a dud); `1k` for 1000 | `d20`, `3d6`, `10d%`, or `MAX` / `DUD` |
+| Dice label | the die's solid | the dice |
+| Pass the Pot result | the dice as glyphs (← → pot •) | `keep`, or `−2`: bills leaving the hand |
+| Pass the Pot bills | the count, mint | `bills` |
+| Hot Potato | the potato (lit: heating, a heat bar under it; spent: charred) | `ready`, `PASS`, `BOOM` |
+| Pig Toss label | whose go it is (their token, pink; gold once they've won) | `turn` / `wins` |
+| Pig Toss throw | `+15` (gold from 20); an oops `−20` or `0` in red; a smooch a red heart | what scored (`Strut`, `Twin`, `Nap`); `OOPS`; `−40` or `kiss` |
+| Pig Toss after the throw | the player's token | the turn so far, `+35` (or, after an oops or smooch, the next player's token over `turn`) |
+| Pig Toss lock-in | the points, then the new total counting up (mint) | a padlock snapping shut |
+| Low battery | the bolt | `low` |
+
+On the 64×64 panel a tap's hint sits along the top edge and the face's content moves down 4 px while it shows. `tests/text_sizes.rs` checks every screen in every game on both panels against this table (brief test 1): the painter notes every text drawn with its cap height and width.
 
 **X3, Holds and taps** (SMOKEBOMB_SIM_UPDATE_BRIEF_3, part 2)
 

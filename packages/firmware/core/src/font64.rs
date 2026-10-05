@@ -140,6 +140,11 @@ impl<const H: usize> BitFont<H> {
         style: Style,
     ) {
         let w = self.measure(text) as f32 * scale;
+        let shown = text
+            .chars()
+            .filter(|c| !c.is_whitespace() && self.find(*c).is_some())
+            .count();
+        p.note_text(self.cap as f32 * scale, w, shown, style.alpha);
         let mut pen = match align {
             Align::Left => x,
             Align::Center => x - libm::floorf(w / scale / 2.0) * scale,
@@ -371,6 +376,11 @@ pub struct Numerals<const H: usize> {
 impl<const H: usize> Numerals<H> {
     pub const HEIGHT: usize = H;
 
+    /// How tall the digits' ink is (their cap height).
+    pub fn digit_height(&self) -> usize {
+        self.digits[8].rows.iter().filter(|&&r| r != 0).count()
+    }
+
     pub fn digit(&self, ch: char) -> Option<&Glyph<H>> {
         ch.to_digit(10).map(|d| &self.digits[d as usize])
     }
@@ -386,6 +396,13 @@ impl<const H: usize> Numerals<H> {
 
     /// Draw the digits of `text` centred on `cx`, top at `y`.
     pub fn draw<T: Target>(&self, p: &mut Painter<T>, text: &str, cx: f32, y: f32, style: Style) {
+        let digits = text.chars().filter(|c| c.is_ascii_digit()).count();
+        p.note_text(
+            self.digit_height() as f32,
+            self.measure(text) as f32,
+            digits,
+            style.alpha,
+        );
         let mut pen = cx - (self.measure(text) / 2) as f32;
         p.begin();
         for g in text.chars().filter_map(|c| self.digit(c)) {

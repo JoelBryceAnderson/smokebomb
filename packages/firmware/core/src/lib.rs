@@ -38,7 +38,10 @@ pub mod screens64;
 pub mod smoke;
 pub mod sprites64;
 pub mod state;
+pub mod table;
 pub mod target;
+pub mod tier64;
+pub mod tiers;
 pub mod tips;
 pub mod ui;
 
@@ -174,6 +177,8 @@ where
     /// The screens are dark after sitting idle. The die still rolls if it is
     /// thrown: only the display sleeps (unlike Power off, which boots on wake).
     asleep: bool,
+    /// What each face drew last frame, for the text-size audit.
+    audit: [tiers::FaceAudit; smokebomb_hal::FACE_COUNT],
 }
 
 impl<P: Platform> Firmware<P>
@@ -252,6 +257,7 @@ where
             addr_of_mut!((*p).reduced_motion).write(false);
             addr_of_mut!((*p).last_activity).write(0);
             addr_of_mut!((*p).asleep).write(false);
+            addr_of_mut!((*p).audit).write(Default::default());
         }
         #[allow(unused_variables)]
         fn _fields<P: Platform>(f: Firmware<P>)
@@ -292,6 +298,7 @@ where
                 reduced_motion,
                 last_activity,
                 asleep,
+                audit,
             } = f;
         }
         // SAFETY: every field was written above.
@@ -1162,6 +1169,7 @@ where
             menu,
             apps,
             fx,
+            audit,
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
@@ -1186,6 +1194,7 @@ where
         for face in Face::ALL {
             let fb = &mut frames[face.index()];
             fb.clear();
+            audit[face.index()] = tiers::FaceAudit::default();
             if blackout {
                 continue;
             }
@@ -1198,6 +1207,22 @@ where
             // down (H2).
             let potato_face = potato_view.filter(|_| face != up.opposite());
             let previewing = preview.as_ref().filter(|(f, _)| *f == face && menu.is_none());
+            let down = face == up.opposite();
+            let screen = if previewing.is_some()
+                || matches!(content, FaceContent::Menu | FaceContent::Success { .. })
+            {
+                tiers::Screen::Held
+            } else if potato_face.is_some()
+                || (!down && (locked.is_some() || win_up))
+                || matches!(
+                    content,
+                    FaceContent::Result { .. } | FaceContent::Wake { .. } | FaceContent::LowBattery { .. }
+                )
+            {
+                tiers::Screen::Table
+            } else {
+                tiers::Screen::Other
+            };
             let content = if potato_face.is_some() || locked.is_some() || win_up || previewing.is_some() {
                 FaceContent::Blank
             } else {
@@ -1236,6 +1261,12 @@ where
                 }
             }
 
+            // A tap's hint on this face: its content moves down to clear it.
+            let hint = ui.hint_on(now, face).filter(|_| previewing.is_none());
+            let base = c.painter.xf;
+            if hint.is_some() {
+                c.painter.xf = base.offset(0.0, TargetOf::<P>::HINT_ROOM);
+            }
             match content {
                 FaceContent::Blank => {}
                 FaceContent::Boot { t, top } => TargetOf::<P>::draw_boot(&mut c, face.index(), top, t),
@@ -1255,7 +1286,7 @@ where
                     }
                 }
                 FaceContent::Success { t, setup } => {
-                    TargetOf::<P>::draw_success(&mut c, &setup.label(), setup.nudge(), t);
+                    TargetOf::<P>::draw_success(&mut c, &setup.short_label(), setup.nudge(), t);
                 }
                 FaceContent::Menu => {
                     if let Some(m) = menu {
@@ -1311,11 +1342,18 @@ where
                 Some(PotatoView::Boom(t)) => TargetOf::<P>::draw_boom(&mut c, t),
                 None => {}
             }
+            c.painter.xf = base;
             if let Some((_, p)) = previewing {
                 TargetOf::<P>::draw_hold_preview(&mut c, p.word, &p.value);
-            } else if let Some((text, alpha)) = ui.hint_on(now, face) {
+            } else if let Some((text, alpha)) = hint {
+                c.painter.mark_kind = gfx::MarkKind::Hint;
                 TargetOf::<P>::draw_tap_hint(&mut c, text, alpha);
+                c.painter.mark_kind = gfx::MarkKind::Text;
             }
+            audit[face.index()] = tiers::FaceAudit {
+                screen,
+                marks: core::mem::take(&mut c.painter.marks),
+            };
         }
 
         // Smoke over everything, wrapping round the edges (SIM_SPEC D1).
@@ -1356,6 +1394,12 @@ where
             self.sync.sent(i, region, &hashes[i], layout, now);
         }
         Ok(())
+    }
+
+    /// What each face drew last frame: its kind of screen and every text on
+    /// it, for the text-size audit (brief 3, test 1).
+    pub fn text_audit(&self) -> &[tiers::FaceAudit; smokebomb_hal::FACE_COUNT] {
+        &self.audit
     }
 
     /// Bytes sent to each panel so far by dirty-tile delivery (zero on a

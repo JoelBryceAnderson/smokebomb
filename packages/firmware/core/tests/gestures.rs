@@ -249,7 +249,7 @@ fn after_a_win_a_hold_offers_a_rematch() {
     run.wait(1.0);
     let draft = run.fw.menu_draft().expect("Next opened");
     assert_eq!(draft.page, Page::Next);
-    assert_eq!(draft.value().as_str(), "Again");
+    assert_eq!(draft.value().as_str(), "Redo");
     touch(&mut run, 0);
     run.wait(0.5);
     // A hold there starts the same table again from 0.

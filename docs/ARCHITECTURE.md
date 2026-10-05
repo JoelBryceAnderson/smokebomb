@@ -376,6 +376,19 @@ code.
 - **Text** (`font.rs`): glyphs are read from the pack and sampled bilinearly
   through the same transform. Layout follows canvas `fillText`: pair kerning,
   `textAlign: center` and `textBaseline: middle`.
+- **Text tiers** (`tiers.rs`, SIM_SPEC X4): every screen's text is one of
+  brief 3's tiers, T1/T2 on table screens and H1/H2 on held ones, at each
+  panel's cap heights. The 96×96 screens pick canvas sizes that land on
+  them; the 64×64 ones use one-bit cuts generated for each tier
+  (`tier64.rs`, from `assets-build/src/tier_fonts.rs`, kept in step by a
+  test) and the hand-drawn numerals. `table.rs` holds the short words both
+  panels say.
+- **Size audit.** The painter notes every text it draws (`gfx::Mark`: cap
+  height, width, length) and the firmware keeps each face's notes with its
+  kind of screen (`Firmware::text_audit`); `tests/text_sizes.rs` plays every
+  game on both panels and draws every menu page, and fails any text below
+  its tier, too long or too wide, or a table screen with more than one T1
+  and one T2.
 - **Glow** (canvas `shadowBlur`): each draw call rasterizes coverage into a
   scratch layer. With glow, the layer is blurred (three box passes ≈ a
   Gaussian, σ = blur ÷ 2) and composited underneath first.

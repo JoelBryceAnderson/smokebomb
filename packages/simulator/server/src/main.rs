@@ -1681,16 +1681,18 @@ mod tests {
         rig.run(1.0);
         rig.tap(Face::PosX);
         rig.run(0.5);
-        let bolt = ink(&rig, Face::NegY);
+        let (bolt, label) = (ink(&rig, Face::NegY), ink(&rig, Face::PosX));
+        let differs = |a: u32, b: u32| a.abs_diff(b) > b / 10;
         assert!(
-            bolt > 0 && bolt < ink(&rig, Face::PosX) / 2,
-            "a small glyph, not the label: {bolt}"
+            bolt > 0 && differs(bolt, label),
+            "the bolt, not the label: {bolt} vs {label}"
         );
         // At 50% every face shows the label.
         rig.sim.lock().set_battery(50);
         rig.tap(Face::PosX);
         rig.run(0.5);
-        assert!(ink(&rig, Face::NegY) > bolt * 2);
+        let (side, label) = (ink(&rig, Face::NegY), ink(&rig, Face::PosX));
+        assert!(!differs(side, label), "the label: {side} vs {label}");
     }
 
     #[test]

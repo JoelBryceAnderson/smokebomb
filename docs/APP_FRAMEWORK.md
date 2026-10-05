@@ -1,7 +1,7 @@
 # App framework (planned)
 
-Status: agreed with Joel, 5 Oct 2026. Steps 1 to 4 are built; the rest is
-the plan. It applies `SMOKEBOMB_SIM_UPDATE_BRIEF_3` (text sizes and
+Status: agreed with Joel, 5 Oct 2026. Steps 1 to 5 are built; the 1 m AR
+check is left. It applies `SMOKEBOMB_SIM_UPDATE_BRIEF_3` (text sizes and
 deliberate gestures).
 
 ## Why
@@ -111,8 +111,12 @@ die with only Dice.
    hold open the menu. Done.
 4. **Apps page and Settings app**, with short names (SIM_SPEC C3 lists
    them). One `PageView` per page feeds both panels. Done.
-5. Typed screens, bitmap tier fonts (7/15/18/21/30 px cap) and the size audit.
-6. Docs and the 1 m AR screenshots.
+5. **Text tiers** (SIM_SPEC X4): tier sizes per panel, generated 64×64
+   cuts at 15/18/21 px (7 px is the 5×7 font, 30 px the numerals), every
+   table and held screen redone to them, and the size audit
+   (`tests/text_sizes.rs`). Done; a designer's hand-hinting pass over
+   `tier64.rs` is still worth doing.
+6. The 1 m AR check (brief test 2): by hand, not done yet.
 
 ## Open risk
 

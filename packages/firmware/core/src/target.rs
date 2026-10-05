@@ -56,6 +56,10 @@ pub trait DisplayTarget: Target {
     /// Pack a framebuffer the way the panel takes it.
     fn pack(fb: &Framebuffer<Self>, out: &mut Self::Panel);
 
+    /// How far (canvas units) a face's content moves down while a tap's
+    /// hint shows on it, to clear the hint.
+    const HINT_ROOM: f32 = 0.0;
+
     /// The colour of each kind of particle. Grey panels draw them white
     /// (their sprites carry their own grey).
     fn smoke_tint(_kind: SpriteKind, _money: bool) -> Color {
@@ -229,6 +233,8 @@ impl DisplayTarget for Rgb64 {
     };
     type Tiles = [u32; 64];
     const NO_TILES: Self::Tiles = [0; 64];
+    // 4 px: the hint sits on the top edge, over T1.
+    const HINT_ROOM: f32 = 4.0 * 166.0 / 64.0;
 
     fn pack(fb: &Framebuffer<Self>, out: &mut Self::Panel) {
         fb.pack565(out);

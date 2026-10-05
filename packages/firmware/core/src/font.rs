@@ -279,6 +279,16 @@ impl Fonts {
             return;
         };
         let (glyphs, width) = Self::layout(assets, &f, text);
+        if weight == BOLD {
+            // Space Grotesk's capitals are 0.70 of the size (brief 3, 1.1).
+            let shown = text.chars().filter(|c| !c.is_whitespace()).count();
+            painter.note_text(
+                0.70 * canvas_px as f32,
+                width / K,
+                shown,
+                style.alpha * reveal.min(1.0),
+            );
+        }
         // Text space: panel px at the cut's own size, origin at the canvas
         // origin. Canvas units × K = text-space px.
         let start = x * K - if align == Align::Center { width / 2.0 } else { 0.0 };

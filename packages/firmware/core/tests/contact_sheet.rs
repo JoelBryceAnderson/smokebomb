@@ -326,10 +326,8 @@ fn rows() -> Vec<(&'static str, Option<Draw96>, Draw64)> {
         ),
         (
             "saved",
-            Some(Box::new(|c| {
-                screens::draw_success(c, "d20", "Ready to roll", 0.6)
-            })),
-            Box::new(|c| screens64::draw_success(c, "d20", "Ready to roll", 0.6)),
+            Some(Box::new(|c| screens::draw_success(c, "d20", "Ready", 0.6))),
+            Box::new(|c| screens64::draw_success(c, "d20", "Ready", 0.6)),
         ),
         (
             "text: 1d20 + 5 = 17",

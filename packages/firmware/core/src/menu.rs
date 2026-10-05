@@ -274,9 +274,9 @@ impl Fuse {
 
     pub const fn name(self) -> &'static str {
         match self {
-            Fuse::Short => "Short",
+            Fuse::Short => "Fast",
             Fuse::Medium => "Mid",
-            Fuse::Long => "Long",
+            Fuse::Long => "Slow",
         }
     }
 
@@ -318,12 +318,13 @@ impl Setup {
         }
     }
 
-    /// The line under the label on the success screen.
+    /// The line under the label on the success screen (an H2 line: ten
+    /// characters at most).
     pub const fn nudge(self) -> &'static str {
         match self {
-            Setup::Roll(..) => "Ready to roll",
-            Setup::HotPotato => "Shake to light",
-            Setup::Pigs(_) => "Shake to roll",
+            Setup::Roll(..) => "Ready",
+            Setup::HotPotato => "Shake it",
+            Setup::Pigs(_) => "Ready",
         }
     }
 
@@ -832,7 +833,7 @@ impl Draft {
             }
             Page::Next => {
                 caption = Some(if self.rematch { "Rematch" } else { "Players" });
-                text(if self.rematch { "Again" } else { "New" })
+                text(if self.rematch { "Redo" } else { "New" })
             }
             Page::Battery => {
                 arrows = false;
@@ -1109,7 +1110,7 @@ mod tests {
                         assert!(line.chars().count() <= 10, "{line:?} on {:?}", page.page);
                     }
                     match &view.value {
-                        Value::Text(t) => assert!(t.chars().count() <= 5, "{t:?} on {:?}", page.page),
+                        Value::Text(t) => assert!(t.chars().count() <= 4, "{t:?} on {:?}", page.page),
                         Value::Lines(lines) => {
                             for l in lines {
                                 assert!(l.chars().count() <= 10, "{l:?}");
@@ -1155,7 +1156,7 @@ mod tests {
         assert_eq!(fuse.page, Page::Fuse);
         assert_eq!(fuse.value().as_str(), "Mid");
         assert_eq!(fuse.tipped(TipDir::Up).fuse, Fuse::Long);
-        assert_eq!(fuse.tipped(TipDir::Down).value().as_str(), "Short");
+        assert_eq!(fuse.tipped(TipDir::Down).value().as_str(), "Fast");
         assert_eq!(fuse.tipped(TipDir::Left).page, Page::Apps);
     }
 
@@ -1418,7 +1419,7 @@ mod tests {
     fn after_a_win_a_hold_rematches_or_sets_up_players_again() {
         let d = Draft::alone(&pigs(3), Page::Next).with_session(true);
         assert_eq!(d.ring(), &[Page::Next]);
-        assert_eq!(d.value().as_str(), "Again");
+        assert_eq!(d.value().as_str(), "Redo");
         assert_eq!(d.view(0).caption, Some("Rematch"));
         assert_eq!(d.held(), Held::Save);
         assert!(d.restart());
