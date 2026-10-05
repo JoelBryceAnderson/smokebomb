@@ -1,4 +1,1 @@
 usd-core>=24.11
-# etch_lids.py
-numpy
-pillow

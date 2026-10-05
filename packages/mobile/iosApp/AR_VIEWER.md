@@ -36,7 +36,6 @@ It needs iOS 18 or later, and runs on iPhone and iPad.
 | `scripts/build_firmware.sh` | Builds `packages/firmware/ffi` for the SDK Xcode is building for |
 | `iosApp/Resources/Models/` | Bundled `.usdz` files (a folder reference; Git LFS) |
 | `iosAppTests/` | `ARViewerTests`: true-size check, explode, picking, labels, face-up |
-| `scripts/etch_lids.py` | Bakes the charging face's laser etching into the lids |
 | `scripts/convert_usdz.py` | Binary-root conversion and ARKit checks |
 | `scripts/make_contract_fixture.py` | Generates the per-part stand-in model |
 
@@ -48,18 +47,17 @@ with `UIKitViewController`. The tab only appears on platforms that supply an
 ## Converting models
 
 The hand-written models have a text (`.usda`) root layer, but ARKit expects a
-binary `.usdc` root. Etch the lids, then convert, once before bundling:
+binary `.usdc` root. Convert them once before bundling:
 
 ```sh
 cd packages/mobile/iosApp/scripts
-python3 -m pip install -r requirements.txt     # usd-core, numpy, pillow
-python3 etch_lids.py ~/Downloads/sugarcube_*.usdz --out /tmp/etched
-python3 convert_usdz.py /tmp/etched/*.usdz
+python3 -m pip install -r requirements.txt     # usd-core
+python3 convert_usdz.py ~/Downloads/sugarcube_*.usdz
 ```
 
-### Etching the lids
+### The lid's etching
 
-`etch_lids.py` bakes in the laser etching the desktop simulator draws on the
+Each die's export carries the laser etching the desktop simulator draws on the
 charging face (`drawEtching` in `packages/simulator/web-ui/src/shell.ts`):
 
 - the **Sugarcube** wordmark and *Designed in Williamsburg, BK · Shake well
@@ -69,31 +67,21 @@ charging face (`drawEtching` in `packages/simulator/web-ui/src/shell.ts`):
 
 The fonts are the firmware's (`packages/firmware/assets/fonts`).
 
-For each `Shell` mesh, the lid's flat faces round the window move into a mesh
-of their own, `Etching`, next to the shell. Its points and normals are the
-shell's own, so nothing moves and the true size is unchanged. It has UVs
-across the flat face and a copy of the shell's material with 2048 px textures
-(1024 in the line-up):
-
-- **Colour:** the shell's own, including a tinted titanium's texture.
-- **Roughness and metallic:** the shell's own.
-- **Normal:** the brushed grain, plus the marking's edges as a slight recess.
-- **Where it's marked:** 55 % toward the simulator's grey ink, roughness 0.7,
-  metallic 0.3, as the simulator's decal.
-- **Anything else the shell sets** carries over, so an x-ray's lid is as
-  see-through as its shell.
+The lid's flat faces round the window are a mesh of their own, `Etching`,
+next to the die's `Shell`, on the same points and normals. It has UVs across
+the flat face and a copy of the shell's material with the etching in its
+colour, roughness/metallic and normal textures. Where it's marked: 55 % toward
+the simulator's grey ink (`rgb(150,152,156)`), roughness 0.7 and metallic
+0.3, with the edges as a slight recess. Everything else is the shell's own
+look, including a tinted titanium's colour and an x-ray's opacity.
 
 | Die | Flat face | Window | Script lines |
 |---|---|---|---|
 | 30 mm | 25 mm | 17.5 mm | centred in the band |
 | 34 mm | 29 mm | 24 mm | the lowest tail 0.8 mm off the window |
-| 40 mm | 35 mm | 26 mm (measured from its model) | centred in the band |
+| 40 mm | 35 mm | 26 mm | centred in the band |
 
-The script checks that each lid measures as the table says and that the
-shell's UVs on it are a plain map of x and z. It skips any shell where they
-aren't, and says why. A file that's already etched, or has no die shell (the
-contract fixture), is copied unchanged. To change the wording or the layout,
-edit the constants at the top of the script and etch the exports again.
+The bin sits in the gap after "CE".
 
 For each file, the script does what `usdcat in.usdz -o tmp.usdc` and then
 `usdzip` would do:
@@ -128,9 +116,8 @@ many of its die shells have an `Etching`. It warns about any that don't.
 
 1. Export it real-size, with 1 unit = 1 m, Y up, the origin at the bottom
    centre and the lid face down. Name it `sugarcube_<something>.usdz`.
-2. Add its size to `EXPECTED_SIZE` in `scripts/convert_usdz.py`. If it's a
-   new die size, add its lid to `LAYOUTS` in `scripts/etch_lids.py`. Then run
-   both scripts as above; the converted file lands in `Resources/Models/`.
+2. Add its size to `EXPECTED_SIZE` in `scripts/convert_usdz.py`. Then run the
+   script: it puts the converted file in `Resources/Models/`.
 3. Add a `SugarcubeModel` to `ModelCatalog.all` with these fields:
    - id (the file name without `.usdz`), size, variant and kind
    - bounds in metres
@@ -174,7 +161,7 @@ Today's models group geometry by material. These names work today:
 
 Tapping any of these names it.
 
-`Etching` (from `etch_lids.py`) sits next to each `Shell`. It has no label,
+`Etching` (the lid's etching, above) sits next to each `Shell`. It has no label,
 so a tap on the lid still names the shell, and the screws flush with it still
 win their taps.
 
