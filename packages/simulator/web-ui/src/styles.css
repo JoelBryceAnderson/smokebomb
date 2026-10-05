@@ -308,3 +308,21 @@ code {
   color: var(--bg);
   border-color: var(--text);
 }
+
+.true-size {
+  margin-bottom: 8px;
+}
+
+.calibrate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* A bank card, upright, drawn at the calibrated scale. */
+.card-outline {
+  box-sizing: border-box;
+  border: 1px solid var(--text);
+  flex: none;
+}
