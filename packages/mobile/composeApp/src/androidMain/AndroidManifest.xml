@@ -17,6 +17,8 @@
     <!-- Cleartext for the desktop simulator link (ws:// on the local network). -->
     <application
         android:label="Sugarcube"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity

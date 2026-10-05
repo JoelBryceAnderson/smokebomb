@@ -51,6 +51,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(SUGARCUBE_BUNDLE_ID)"
+        # Assets.xcassets/AppIcon, drawn by packages/mobile/scripts/app_icon.cjs.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         FRAMEWORK_SEARCH_PATHS: "$(inherited) $(SRCROOT)/../composeApp/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"
