@@ -38,8 +38,9 @@ the picker.
 
 ## AR on or off
 
-The tab is labelled **Simulator**. A small **AR** pane on the left edge of
-the view switches where the die is. AR is **off** by default.
+The tab is labelled **Simulator**. An **AR** toggle switches where the die
+is: on iPhone it sits beside **X-ray** in the controls, on iPad in a small
+pane on the left edge of the view. AR is **off** by default.
 
 - **Off:** the die is on a virtual table in a dark studio, seen from a fixed
   camera close up (32° field of view, looking from the front right, as the
@@ -67,7 +68,7 @@ the view switches where the die is. AR is **off** by default.
   access is off, the tab offers **Use without AR**.
 
 Switching rebuilds the view, so the die is placed again and the firmware
-reboots. The choice is remembered. The pane is hidden on devices without AR.
+reboots. The choice is remembered. The toggle is hidden on devices without AR.
 The studio's framing is `studioFieldOfView` and `studioCameraDistance` in
 `DiePhysics.swift`; the studio itself is `buildStudio()` in
 `ARSceneController.swift`.

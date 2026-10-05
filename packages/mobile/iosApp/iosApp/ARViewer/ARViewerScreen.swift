@@ -72,7 +72,8 @@ struct ARViewerScreen: View {
                 .padding(.top, 8)
         }
         .overlay(alignment: .leading) {
-            if model.arSupported {
+            // On iPhone the AR toggle sits with X-ray in the controls.
+            if model.arSupported, widthClass == .regular {
                 ARPane(model: model)
                     .padding(.leading, 12)
             }
@@ -357,8 +358,9 @@ private struct ControlPad: View {
 
 // MARK: - AR pane
 
-/// A small pane on the left edge: AR on (the camera and your table) or off
-/// (the die locked in place on a virtual table).
+/// A small pane on the left edge, on iPad: AR on (the camera and your table)
+/// or off (the die locked in place on a virtual table). On iPhone it's a
+/// toggle beside X-ray instead.
 private struct ARPane: View {
     @Bindable var model: ARViewerModel
 
@@ -400,6 +402,14 @@ private struct ViewButtons: View {
             }
             .buttonStyle(.bordered)
             .tint(model.isXray ? .accentColor : .primary)
+        }
+        if model.arSupported {
+            Toggle(isOn: $model.augmented) {
+                Label("AR", systemImage: "arkit")
+            }
+            .toggleStyle(.button)
+            .buttonStyle(.bordered)
+            .tint(model.augmented ? .accentColor : .primary)
         }
         if model.canTakeLidOff {
             Button { model.toggleLid() } label: {
