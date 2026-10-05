@@ -3,13 +3,14 @@
 //
 // The icon is an old candy-coloured sugar box: a white panel with a yellow
 // sunburst, a pink border and a ribbon with "Sugarcube" in Pacifico (the face the die writes
-// its name in). On it stands the mascot, a rubber-hose sugar cube giving a
-// thumbs up.
+// its name in). Above it jumps the mascot, a rubber-hose sugar cube with a
+// fist in the air.
 //
 // The art is SVG, rendered by Chromium through Playwright:
 //   npm i -g playwright   (or use any install that `require` can find)
 //   node packages/mobile/scripts/app_icon.cjs
-// ICON_POSE=jump draws him mid-jump with a fist up instead.
+// He's drawn mid-jump with a fist up; ICON_POSE=stand draws the earlier
+// standing thumbs-up instead.
 
 const fs = require("fs");
 const path = require("path");
@@ -114,7 +115,7 @@ function glove() {
 const FACE_X = 490;
 
 // "stand" (thumbs up, on the ribbon) or "jump" (mid-air, fist up).
-let POSE = process.env.ICON_POSE || "stand";
+let POSE = process.env.ICON_POSE || "jump";
 
 function standLegs() {
   return `
@@ -164,7 +165,7 @@ function jumpArms() {
       </g>
       ${hipGlove(220, 580)}
       ${fist(836, 278, 14)}
-      <path d="M766,246 L744,232 M782,206 L768,186" stroke="${C.ink}" stroke-width="11" stroke-linecap="round" fill="none"/>`;
+      <path d="M764,250 L744,238 M790,214 L780,198" stroke="${C.ink}" stroke-width="11" stroke-linecap="round" fill="none"/>`;
 }
 
 function fist(x, y, tilt = 0) {
@@ -351,17 +352,19 @@ function defs() {
     </defs>`;
 }
 
-// The mascot's own drawing box (sparkles to thumb, top of thumb to shoes),
-// and where and how big it sits on the box art: the feet tuck behind the ribbon.
-const MASCOT = { cx: 549, cy: 494, at: [506, 404], scale: 1.08 };
-// Jumping, he's a little smaller and higher, so the raised fist clears the
-// border and there's air between his boots and the ribbon.
-const MASCOT_JUMP = { at: [500, 388], scale: 0.95 };
+// The cube's horizontal centre in mascot coordinates (its silhouette runs
+// from 330 to 718). He's centred on the cube, not on the whole drawing, so the
+// raised arm off to one side doesn't pull the cube off centre.
+const CUBE_X = 524;
+// The mascot's vertical centre in its own coordinates, and where (y) and how
+// big it sits on the box art. Standing, the boots rest on the ribbon; jumping,
+// he's smaller and higher, so the fist clears the border and there's air
+// between his boots and the ribbon.
+const MASCOT = { cy: 494, stand: { y: 404, scale: 1.08 }, jump: { y: 388, scale: 0.95 } };
 
 function placedMascot() {
-  const [x, y] = POSE === "jump" ? MASCOT_JUMP.at : MASCOT.at;
-  const k = POSE === "jump" ? MASCOT_JUMP.scale : MASCOT.scale;
-  return `<g transform="translate(${x - MASCOT.cx * k},${y - MASCOT.cy * k}) scale(${k})">${mascot()}</g>`;
+  const { y, scale: k } = MASCOT[POSE];
+  return `<g transform="translate(${512 - CUBE_X * k},${y - MASCOT.cy * k}) scale(${k})">${mascot()}</g>`;
 }
 
 // Android foreground fit, measured from the drawing (see fitAndroid): the
@@ -453,9 +456,11 @@ async function main() {
   await browser.close();
 }
 
-// Renders `variant` unscaled and measures its visible pixels: the centre of
-// their bounding box, and the farthest of them from it. Returns the transform
-// that puts that farthest pixel on the safe circle (33 of 108 dp from centre).
+// Renders `variant` unscaled and measures its visible pixels. The art is
+// already centred horizontally on the cube (placedMascot), so only the
+// vertical centre comes from their bounding box. Returns the transform that
+// keeps that centre and puts the farthest pixel from it on the safe circle
+// (33 of 108 dp from centre).
 async function fitAndroid(page, variant) {
   const n = 1024;
   await page.setViewportSize({ width: n, height: n });
@@ -482,7 +487,7 @@ async function fitAndroid(page, variant) {
         }
       }
     }
-    const [cx, cy] = [(x0 + x1 + 1) / 2, (y0 + y1 + 1) / 2];
+    const [cx, cy] = [n / 2, (y0 + y1 + 1) / 2];
     let r = 0;
     for (let i = 0; i < pts.length; i += 2) r = Math.max(r, Math.hypot(pts[i] + 0.5 - cx, pts[i + 1] + 0.5 - cy));
     return { cx, cy, r };
