@@ -229,6 +229,7 @@ The boot is interrupted by a throw or by opening the menu.
 **Entering**
 - **Press and hold** a screen, with the finger moving less than 8 px, for **0.8 s**.
 - **Hold ring:** appears after **0.22 s** and fills over the remaining 0.58 s.
+- **Deliberate holds only** (brief 3, 2.2): exactly one face touched, on a steady die. Touching two or more faces is a grip and never taps or holds; a die that moves under the finger cancels the touch. Either way the touch is ignored until every finger is off. Letting go after the ring appears and before 0.8 s cancels: nothing happens. A tap is a touch let go before the ring appears.
   - Shape: a rounded square inset **3 canvas** from the lit edge (square ±80 canvas, i.e. 1.7–94.3 px), corner radius **21 canvas (12.1 px)**, stroke **4 canvas (2.3 px)**.
   - It starts at **12 o'clock** and draws **clockwise**, as a dash of length progress × perimeter.
 - **On open:**

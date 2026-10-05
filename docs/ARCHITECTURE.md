@@ -132,8 +132,8 @@ animation rate; panels accept at most 100 Hz. Each tick:
 1. **Sample.** Read the IMU → `MotionDetector` → `Motion` event on change.
    Low-pass the gravity direction and update each face's text orientation
    (`orientation.rs`, SIM_SPEC B2). While the menu is open, feed the gyro
-   to the tip tracker (below). Poll touch (grip-rejected while moving) →
-   `Tap` / `LongPress`. Read the magnetometer when it is due and feed the dock
+   to the tip tracker (below). Poll touch through the gesture arbiter
+   (`gesture.rs`, below) → `Tap` / `LongPress`. Read the magnetometer when it is due and feed the dock
    state machine (`nest.rs`, SIM_SPEC C7a) with the PMIC's power flags. Drain BLE writes.
 2. **Decide.** Feed the events to the pure `StateMachine`, which returns
    `Command`s.
@@ -148,6 +148,28 @@ animation rate; panels accept at most 100 Hz. Each tick:
    (`Grey96`); the 30 mm proof of concept (`Rgb64`) draws RGB565 and sends
    only the tiles that changed, within its SPI budget (`panel.rs`;
    see [docs/30mm](30mm/README.md)).
+
+### Gestures
+
+`gesture.rs` turns the touch mask into deliberate gestures (SMOKEBOMB_SIM_UPDATE_BRIEF_3,
+part 2). It is pure: the firmware passes the mask, the time, whether the die
+is steady (at rest, or in the menu and not mid-tip) and how long it has
+rested.
+
+- **Grip.** Two or more faces touched at once never taps or holds; the touch
+  is dead until every finger is off.
+- **Steady.** A finger that lands on a moving die, or a die that moves under
+  the finger (a shake mid-hold), is dead until lifted. A shake mid-hold
+  therefore rolls and commits nothing.
+- **Tap.** Released before the hold ring appears (0.22 s). Deliberate if the
+  die had rested 400 ms when the finger landed.
+- **Hold.** Still on one face for 0.8 s. Let go between 0.22 s and 0.8 s and
+  the hold is cancelled: nothing happens.
+- **Released.** Letting go after a hold. Once the hold has closed the menu it
+  counts as a tap (G16); after the hold that opened it, it doesn't.
+
+`tests/gestures.rs` checks grip, cancel and shake-mid-hold on the whole
+firmware.
 
 ### State machine
 

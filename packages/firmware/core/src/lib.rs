@@ -17,6 +17,7 @@ pub mod display;
 pub mod effects;
 pub mod font;
 pub mod font64;
+pub mod gesture;
 pub mod gfx;
 pub mod icons;
 pub mod menu;
@@ -55,6 +56,7 @@ use smokebomb_shared::{DieKind, ModeId, ModeSet, SignedRoll};
 
 use display::Framebuffer;
 use font::Fonts;
+use gesture::{Gesture, Gestures};
 use gfx::{Layer, Painter, Transform};
 use menu::{Draft, Held, PlayMode, Settings};
 use motion::{Motion, MotionDetector};
@@ -89,16 +91,8 @@ const UP_FILTER: f32 = 0.25;
 /// doesn't lose rotation.
 const IMU_SAMPLE_S: f32 = 1.0 / TICK_HZ as f32;
 
-/// How long a screen must be held to open the menu (SIM_SPEC C3).
-pub const MENU_HOLD_MS: u64 = 800;
-/// A tap that banks in Pig Toss must be short, and land on a die that has
-/// been resting: picking the die up puts a finger on the top screen too.
-pub const TAP_MAX_MS: u64 = 500;
-pub const TAP_REST_MS: u64 = 400;
 /// How long the lock-in stays up before the screens go quiet.
 pub const LOCKED_MS: u64 = 12_000;
-/// The hold ring appears once a touch is clearly a hold, not a tap.
-pub const HOLD_RING_AFTER_MS: u64 = 220;
 /// The menu closes without saving after this long without a tip.
 pub const MENU_IDLE_MS: u64 = 25_000;
 
@@ -159,20 +153,16 @@ where
     up: Option<[f32; 3]>,
     orientation: TextOrientation,
     gravity: orientation::Gravity,
-    touch_since: Option<u64>,
-    /// The die moved while a finger was on it: a grab, not a tap.
-    touch_disturbed: bool,
-    /// How long the die had been resting when the touch began.
-    touch_rested_ms: u64,
+    /// Taps and holds from the touch mask.
+    gestures: Gestures,
     /// Since when the die has been resting, if it is.
     still_since: Option<u64>,
-    /// The last tap was short, on a resting die, and the die stayed put.
+    /// The last tap was on a die that had been resting.
     tap_deliberate: bool,
     /// A bank that just locked in, and when.
     locked: Option<(pigs::Locked, u64)>,
-    /// The face a touch started on (the lowest one, if several).
+    /// The face the last tap or hold was on.
     touch_face: Face,
-    menu_hold_fired: bool,
     menu: Option<MenuSession>,
     up_face: Face,
     /// The screens' orientation, frozen while a result is up.
@@ -255,14 +245,11 @@ where
             addr_of_mut!((*p).up).write(None);
             addr_of_mut!((*p).orientation).write(TextOrientation::new());
             addr_of_mut!((*p).gravity).write(orientation::Gravity::new());
-            addr_of_mut!((*p).touch_since).write(None);
-            addr_of_mut!((*p).touch_disturbed).write(false);
-            addr_of_mut!((*p).touch_rested_ms).write(0);
+            addr_of_mut!((*p).gestures).write(Gestures::new());
             addr_of_mut!((*p).still_since).write(None);
             addr_of_mut!((*p).tap_deliberate).write(false);
             addr_of_mut!((*p).locked).write(None);
             addr_of_mut!((*p).touch_face).write(Face::PosZ);
-            addr_of_mut!((*p).menu_hold_fired).write(false);
             addr_of_mut!((*p).menu).write(None);
             addr_of_mut!((*p).up_face).write(Face::PosY);
             addr_of_mut!((*p).frozen).write(None);
@@ -301,14 +288,11 @@ where
                 up,
                 orientation,
                 gravity,
-                touch_since,
-                touch_disturbed,
-                touch_rested_ms,
+                gestures,
                 still_since,
                 tap_deliberate,
                 locked,
                 touch_face,
-                menu_hold_fired,
                 menu,
                 up_face,
                 frozen,
@@ -751,7 +735,7 @@ where
     /// it is touched, picked up or thrown.
     fn update_sleep(&mut self, now: u64, input: bool, mode: &Mode) -> HalResult<()> {
         let busy = input
-            || self.touch_since.is_some()
+            || self.gestures.touching()
             || !matches!(mode, Mode::Idle)
             || !self.potato.is_idle()
             || self.ui.booting();
@@ -928,33 +912,28 @@ where
     /// Returns true when a touch starts.
     fn poll_touch(&mut self, now: u64, events: &mut Vec<Event, 8>) -> HalResult<bool> {
         let mask = self.hw.touch.read()?;
-        // Grip rejection: touches while the die is moving are ignored. In
-        // the menu the die is in the hand anyway; only a tip in progress
-        // blocks a hold.
-        let usable = mask != 0
-            && match &self.menu {
-                Some(m) => m.turning.is_none(),
-                None => self.motion.is_still(),
-            };
-        // A finger on a die that starts to move is a grab.
-        if mask != 0 && !self.motion.is_still() {
-            self.touch_disturbed = true;
-        }
-        let mut started = false;
-        match (usable, self.touch_since) {
-            (true, None) => {
-                self.touch_since = Some(now);
-                self.touch_disturbed = false;
-                self.touch_rested_ms = self.still_since.map_or(0, |s| now.saturating_sub(s));
+        // Touches while the die is moving don't count. In the menu the die
+        // is in the hand anyway; only a tip in progress blocks a hold.
+        let steady = match &self.menu {
+            Some(m) => m.turning.is_none(),
+            None => self.motion.is_still(),
+        };
+        let input = gesture::Input {
+            now,
+            mask,
+            steady,
+            rested_ms: self.still_since.map_or(0, |s| now.saturating_sub(s)),
+        };
+        let Some(gesture) = self.gestures.update(input) else {
+            return Ok(false);
+        };
+        match gesture {
+            Gesture::Touched => {
                 self.nest.touch(now);
-                self.touch_face = Face::ALL[mask.trailing_zeros() as usize % Face::ALL.len()];
-                self.menu_hold_fired = false;
-                started = true;
+                return Ok(true);
             }
-            // Held for more than 0.8 s: at 60 Hz that's 49 frames, as in the
-            // mockup, whose float clock never quite reaches 0.8 after 48.
-            (true, Some(since)) if !self.menu_hold_fired && now.saturating_sub(since) > MENU_HOLD_MS => {
-                self.menu_hold_fired = true;
+            Gesture::Hold { face } => {
+                self.touch_face = face;
                 // In the menu a hold saves, unless the draft has another
                 // step first.
                 let next = self
@@ -963,39 +942,37 @@ where
                     .is_some_and(|m| matches!(m.draft.held(), Held::Next(_)));
                 let _ = events.push(if next { Event::MenuNext } else { Event::LongPress });
             }
-            (false, Some(since)) => {
-                self.tap_deliberate = !self.touch_disturbed
-                    && now.saturating_sub(since) <= TAP_MAX_MS
-                    && self.touch_rested_ms >= TAP_REST_MS;
-                // Letting go after a hold that saved the menu shows the
-                // setup like a tap does (the mockup's pointer-up); letting go
-                // after the hold that opened it doesn't. A tap inside the
-                // menu changes the selected setting, or powers the die off.
-                if !self.menu_hold_fired || self.menu.is_none() {
-                    let off = self.menu.as_ref().is_some_and(|m| m.draft.power_off_selected());
-                    let _ = events.push(if off { Event::PowerOff } else { Event::Tap });
+            // Letting go after a hold that saved the menu shows the setup
+            // like a tap does (the mockup's pointer-up); letting go after the
+            // hold that opened it doesn't.
+            Gesture::Released { face } => {
+                if self.menu.is_none() {
+                    self.touch_face = face;
+                    self.tap_deliberate = false;
+                    let _ = events.push(Event::Tap);
                 }
-                self.touch_since = None;
             }
-            _ => {}
+            // A tap inside the menu changes the selected setting, or powers
+            // the die off.
+            Gesture::Tap { face, deliberate } => {
+                self.touch_face = face;
+                self.tap_deliberate = deliberate;
+                let off = self.menu.as_ref().is_some_and(|m| m.draft.power_off_selected());
+                let _ = events.push(if off { Event::PowerOff } else { Event::Tap });
+            }
         }
-        Ok(started)
+        Ok(false)
     }
 
-    /// How far the current touch is toward a hold (0–1), once the ring shows.
-    fn hold_progress(&self, now: u64) -> Option<f32> {
-        let since = self.touch_since?;
-        let held = now.saturating_sub(since);
-        let ring = !self.menu_hold_fired
-            && !self.potato.is_lit()
-            && held > HOLD_RING_AFTER_MS
+    /// The face being held toward a hold and how far it has got (0–1),
+    /// while the ring shows.
+    fn hold_progress(&self, now: u64) -> Option<(Face, f32)> {
+        let ring = !self.potato.is_lit()
             && matches!(
                 self.sm.mode(),
                 Mode::Idle | Mode::Reveal { .. } | Mode::Menu | Mode::Nest
             );
-        ring.then(|| {
-            ((held - HOLD_RING_AFTER_MS) as f32 / (MENU_HOLD_MS - HOLD_RING_AFTER_MS) as f32).min(1.0)
-        })
+        self.gestures.hold_progress(now).filter(|_| ring)
     }
 
     /// Carry out a command. `now` is the tick's time: the clock moves on
@@ -1234,7 +1211,7 @@ where
             .filter(|_| pigs_on && pig_scene.is_none() && matches!(mode, Mode::Idle | Mode::Reveal { .. }))
             .filter(|(_, at)| now.saturating_sub(*at) < LOCKED_MS)
             .map(|(l, at)| (l, now.saturating_sub(at) as f32 / 1000.0));
-        let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
+        let hold = self.hold_progress(now);
         let asleep = self.asleep;
         let nest_faces = self.nest_faces(now, &mode, battery);
         let Self {

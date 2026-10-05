@@ -54,7 +54,7 @@ pub enum Event {
     Motion(Motion),
     /// Short touch on any face (grip-rejected).
     Tap,
-    /// Touch held for [`crate::MENU_HOLD_MS`].
+    /// Touch held for [`crate::gesture::HOLD_MS`].
     LongPress,
     /// A tap in the menu while Power off is selected.
     PowerOff,
