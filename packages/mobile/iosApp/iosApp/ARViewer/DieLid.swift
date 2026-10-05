@@ -167,6 +167,7 @@ final class DieLid {
             restore()
             return nil
         }
+        addShanks()
         close(opacity: opacity)
     }
 
@@ -244,6 +245,30 @@ final class DieLid {
             screwSeats.append(seat)
             added.append(screw)
         }
+    }
+
+    /// The dice model only the screws' heads, flush in the lid; out of their
+    /// holes they need their shanks. M1.0 (0.5 mm radius), from under the
+    /// head to the insert, 4.5 mm down at 30 mm, as the x-ray has them, in
+    /// the head's own finish.
+    private func addShanks() {
+        let k = geometry.side / 0.030
+        let top: Float = 0.0003 * k, bottom: Float = 0.0045 * k
+        for screw in screws where screw.visualBounds(relativeTo: screw).max.y < 0.001 * k {
+            guard let material = Self.firstMaterial(screw) else { continue }
+            let shank = ModelEntity(mesh: .generateCylinder(height: bottom - top, radius: 0.0005 * k), materials: [material])
+            shank.name = "Shank"
+            shank.position = [0, (top + bottom) / 2, 0]
+            screw.addChild(shank)
+        }
+    }
+
+    private static func firstMaterial(_ entity: Entity) -> (any Material)? {
+        if let material = entity.components[ModelComponent.self]?.materials.first { return material }
+        for child in entity.children {
+            if let material = firstMaterial(child) { return material }
+        }
+        return nil
     }
 
     /// The corner a point is in: 0 (+x +z), 1 (+x −z), 2 (−x +z), 3 (−x −z).

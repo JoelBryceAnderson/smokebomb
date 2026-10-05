@@ -302,7 +302,7 @@ sorts each mesh by name (`DieLid.rule(for:)`):
 
 | Goes | Parts |
 |---|---|
-| On its own screw entity | `Screw_*`, `LidScrews` (its −Y pieces) and the slots in the heads (the middle of `ScrewSleevesAndSlots`); the sleeves round them stay in the lid |
+| On its own screw entity | `Screw_*`, `LidScrews` (its −Y pieces) and the slots in the heads (the middle of `ScrewSleevesAndSlots`); the sleeves round them stay in the lid. The dice model only the heads, so their screws get an M1.0 shank (4.5 mm at 30 mm, as the x-ray's) in the head's finish |
 | With the lid, whole | `Lid`, `Etching`, `Window_ny`, `Module_ny`, `Screen_ny`, `Board`; in the x-rays the board and what's on and under it (`Internal_board`, `_ic`, `_lra`, `_ind`), the contacts' leads and sleeves (`Internal_w_charge`, `_w_12v`, `_sleeve`) |
 | The lid takes its face's piece | `SapphireWindows`, `Internal_panel_glass`, `_encap`, `_chip`, `_fpc`: one mesh with a piece on every face; the triangles nearest −Y go, so the lid's screen takes its own module and ribbon and the other ribbons stay |
 | Stays in the cup | `Pillar_*` and every other `Internal_*`: the frame, the cell, the tungsten, the pillars and their inserts |
