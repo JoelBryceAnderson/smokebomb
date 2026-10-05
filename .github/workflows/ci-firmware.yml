@@ -42,12 +42,14 @@ jobs:
         run: cargo clippy -p smokebomb-firmware --features simulator -- -D warnings
       - name: Clippy (firmware, nRF54L15 board)
         run: cargo clippy -p smokebomb-firmware --no-default-features --features nrf54l15 --target thumbv8m.main-none-eabihf -- -D warnings
+      - name: Clippy (firmware, nRF54L15 board, 30 mm 64x64 RGB panels)
+        run: cargo clippy -p smokebomb-firmware --no-default-features --features target-30-rgb64 --target thumbv8m.main-none-eabihf -- -D warnings
       - name: Clippy (Zephyr static library, and its benchmark build)
         run: |
           cargo clippy -p smokebomb-zephyr --target thumbv8m.main-none-eabihf -- -D warnings
           cargo clippy -p smokebomb-zephyr --target thumbv8m.main-none-eabihf --features bench -- -D warnings
       - name: Test (includes the screen snapshots)
-        run: cargo test -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-assets-build
+        run: cargo test -p smokebomb-shared -p smokebomb-core -p smokebomb-hal -p smokebomb-hal-simulator -p smokebomb-hal-nrf54l15 -p smokebomb-assets-build
       - name: Upload snapshot differences
         if: failure()
         uses: actions/upload-artifact@v4
@@ -57,6 +59,8 @@ jobs:
           if-no-files-found: ignore
       - name: Build nRF54L15 image (no_std)
         run: cargo fw
+      - name: Build nRF54L15 image for the 30 mm die (no_std)
+        run: cargo fw30
       - name: Size report
         run: |
           ls -l target/thumbv8m.main-none-eabihf/firmware/*.rlib | tee -a "$GITHUB_STEP_SUMMARY"

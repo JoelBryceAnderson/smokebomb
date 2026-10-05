@@ -13,6 +13,9 @@ default = []
 simulator = ["dep:smokebomb-hal-simulator"]
 # Production board (no_std, Zephyr)
 nrf54l15 = ["dep:smokebomb-hal-nrf54l15"]
+# With nrf54l15: build for the 30 mm die's 64x64 RGB panels (TARGET_30_RGB64)
+# instead of the 34 mm die's 96x96 grey ones (TARGET_34_GREY96).
+target-30-rgb64 = ["nrf54l15", "smokebomb-hal-nrf54l15/target-30-rgb64"]
 
 [dependencies]
 smokebomb-core.workspace = true

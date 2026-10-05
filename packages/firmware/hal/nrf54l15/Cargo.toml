@@ -7,5 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# The 30 mm die: six SSD1357 64x64 RGB panels instead of SSD1317 96x96 grey.
+target-30-rgb64 = []
+
 [dependencies]
 smokebomb-hal.workspace = true

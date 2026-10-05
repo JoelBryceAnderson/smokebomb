@@ -23,6 +23,7 @@ pub mod motion;
 pub mod nest;
 pub mod orientation;
 pub mod pack;
+pub mod panel;
 pub mod pigfx;
 pub mod pigs;
 pub mod potato;
@@ -62,7 +63,7 @@ use screens::Ctx;
 use session::Sessions;
 use smoke::{Smoke, Special};
 use state::{Command, Event, Mode, StateMachine};
-use target::DisplayTarget;
+use target::{Delivery, DisplayTarget};
 use tips::{Frame, TipDir, TipTracker, TipUpdate};
 use ui::{FaceContent, Ui};
 
@@ -117,7 +118,10 @@ struct MenuSession {
     detent: i32,
 }
 
-pub struct Firmware<P: Platform> {
+pub struct Firmware<P: Platform>
+where
+    TargetOf<P>: DisplayTarget,
+{
     hw: Peripherals<P>,
     sm: StateMachine,
     motion: MotionDetector,
@@ -143,6 +147,8 @@ pub struct Firmware<P: Platform> {
     layer: Layer<TargetOf<P>>,
     /// A frame packed for the panel (4 bpp grey, or RGB565).
     panel: <TargetOf<P> as Target>::Panel,
+    /// What each panel was last sent, for targets that send dirty tiles.
+    sync: panel::PanelSync<<TargetOf<P> as DisplayTarget>::Tiles>,
     /// Filtered gravity-up direction in die coordinates (milli-g); `None`
     /// until the first IMU sample.
     up: Option<[f32; 3]>,
@@ -227,6 +233,7 @@ where
             addr_of_mut!((*p).frames).write_bytes(0, 1);
             addr_of_mut!((*p).layer).write_bytes(0, 1);
             addr_of_mut!((*p).panel).write_bytes(0, 1);
+            addr_of_mut!((*p).sync).write(panel::PanelSync::new(TargetOf::<P>::NO_TILES));
             addr_of_mut!((*p).hw).write(hw);
             addr_of_mut!((*p).sm).write(StateMachine::new());
             addr_of_mut!((*p).motion).write(MotionDetector::new());
@@ -262,7 +269,10 @@ where
             addr_of_mut!((*p).asleep).write(false);
         }
         #[allow(unused_variables)]
-        fn _fields<P: Platform>(f: Firmware<P>) {
+        fn _fields<P: Platform>(f: Firmware<P>)
+        where
+            TargetOf<P>: DisplayTarget,
+        {
             let Firmware {
                 hw,
                 sm,
@@ -282,6 +292,7 @@ where
                 frames,
                 layer,
                 panel,
+                sync,
                 up,
                 orientation,
                 gravity,
@@ -1382,11 +1393,46 @@ where
         if let Some(smoke) = self.fx.smoke_ref() {
             smoke.draw(&mut self.frames);
         }
-        for face in Face::ALL {
-            TargetOf::<P>::pack(&self.frames[face.index()], &mut self.panel);
-            self.hw.display.write_frame(face, &self.panel)?;
+        match TargetOf::<P>::DELIVERY {
+            Delivery::WholeFrames => {
+                for face in Face::ALL {
+                    TargetOf::<P>::pack(&self.frames[face.index()], &mut self.panel);
+                    self.hw.display.write_frame(face, &self.panel)?;
+                }
+            }
+            Delivery::Dirty {
+                bytes_per_tick,
+                face_down_ms,
+            } => self.deliver_dirty(now, up.opposite(), bytes_per_tick, face_down_ms)?,
         }
         self.hw.display.flush()
+    }
+
+    /// Send what changed, within the bus budget ([`panel`]).
+    fn deliver_dirty(&mut self, now: u64, down: Face, budget: usize, down_every_ms: u64) -> HalResult<()> {
+        let layout = TargetOf::<P>::LAYOUT;
+        let mut hashes = [TargetOf::<P>::NO_TILES; smokebomb_hal::FACE_COUNT];
+        for face in Face::ALL {
+            TargetOf::<P>::pack(&self.frames[face.index()], &mut self.panel);
+            panel::hash_tiles(self.panel.as_ref(), layout, hashes[face.index()].as_mut());
+        }
+        let plan = self.sync.plan(&hashes, layout, now, down, down_every_ms, budget);
+        for face in Face::ALL {
+            let (i, region) = (face.index(), plan[face.index()]);
+            if region.is_empty() {
+                continue;
+            }
+            TargetOf::<P>::pack(&self.frames[i], &mut self.panel);
+            self.hw.display.write_region(face, region, &self.panel)?;
+            self.sync.sent(i, region, &hashes[i], layout, now);
+        }
+        Ok(())
+    }
+
+    /// Bytes sent to each panel so far by dirty-tile delivery (zero on a
+    /// target that sends whole frames).
+    pub fn panel_bytes(&self) -> [u64; smokebomb_hal::FACE_COUNT] {
+        self.sync.bytes
     }
 }
 

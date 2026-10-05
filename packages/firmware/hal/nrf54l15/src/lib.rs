@@ -9,6 +9,7 @@
 //! | Peripheral       | Part         | Bus                  |
 //! |------------------|--------------|----------------------|
 //! | 6x OLED 96x96    | SSD1317      | SPIM (shared DC/CLK, 6 CS) |
+//! | or 6x RGB 64x64 (`target-30-rgb64`) | SSD1357 | SPIM ≤ 10 MHz, 6 CS ([`ssd1357`]) |
 //! | IMU              | LSM6DSx      | TWIM                 |
 //! | Magnetometer     | part TBD     | TWIM                 |
 //! | Touch            | nRF54 COMP / ext. cap controller | GPIO |
@@ -20,12 +21,32 @@
 
 #![no_std]
 
+pub mod ssd1357;
+
 use smokebomb_hal::*;
 
 pub struct Nrf54l15;
 
+/// The panels this image drives, chosen by the `target-30-rgb64` feature:
+/// the 34 mm die's SSD1317 96x96 grey (default) or the 30 mm die's SSD1357
+/// 64x64 RGB.
+#[cfg(not(feature = "target-30-rgb64"))]
+pub type Panels = Ssd1317Array;
+#[cfg(feature = "target-30-rgb64")]
+pub type Panels = ssd1357::Ssd1357Array;
+
+#[cfg(not(feature = "target-30-rgb64"))]
+fn panels() -> Panels {
+    Ssd1317Array
+}
+
+#[cfg(feature = "target-30-rgb64")]
+fn panels() -> Panels {
+    ssd1357::Ssd1357Array(ssd1357::Ssd1357::new(ssd1357::ZephyrPanels))
+}
+
 impl Platform for Nrf54l15 {
-    type Display = Ssd1317Array;
+    type Display = Panels;
     type Imu = Lsm6dsx;
     type Magnetometer = NestMag;
     type Touch = CapTouch;
@@ -43,7 +64,7 @@ impl Platform for Nrf54l15 {
 /// initialised its devices.
 pub fn peripherals() -> Peripherals<Nrf54l15> {
     Peripherals {
-        display: Ssd1317Array,
+        display: panels(),
         imu: Lsm6dsx,
         mag: NestMag,
         touch: CapTouch,
