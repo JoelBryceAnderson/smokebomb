@@ -3,7 +3,7 @@
 //! canvas units around the icon's centre; `r` is the icon's radius.
 
 use libm::{cosf, sinf};
-use smokebomb_hal::AssetStore;
+use smokebomb_hal::{AssetStore, Target};
 use smokebomb_shared::DieKind;
 
 use crate::display::FG;
@@ -28,7 +28,14 @@ fn ngon(n: usize, k: usize, scale: f32, turn: f32) -> P {
 }
 
 /// Draw the icon for `setup`, centred on `(cx, cy)`.
-pub fn draw_setup_icon<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, cx: f32, cy: f32, r: f32, alpha: f32) {
+pub fn draw_setup_icon<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    setup: Setup,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    alpha: f32,
+) {
     let style = Style::new(FG, alpha, GLOW);
     match setup {
         Setup::HotPotato => bomb(c, cx, cy, r, alpha),
@@ -42,15 +49,22 @@ pub fn draw_setup_icon<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, cx: f32, cy:
 
 /// A banknote on its own, as the setup icon draws it (Pass the Pot's bills
 /// in hand).
-pub fn draw_banknote<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, alpha: f32) {
+pub fn draw_banknote<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, cx: f32, cy: f32, r: f32, alpha: f32) {
     banknote(c, cx, cy, r, Style::new(FG, alpha, GLOW));
 }
 
-fn strokes<A: AssetStore>(c: &mut Ctx<A>, paths: &[&[P]], style: Style) {
+fn strokes<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, paths: &[&[P]], style: Style) {
     c.painter.stroke_paths(paths, LINE, style);
 }
 
-fn die_solid<A: AssetStore>(c: &mut Ctx<A>, die: DieKind, cx: f32, cy: f32, r: f32, style: Style) {
+fn die_solid<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    die: DieKind,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    style: Style,
+) {
     let m = |p: P| at(cx, cy, r, p);
     match die {
         DieKind::D4 => {
@@ -124,7 +138,7 @@ fn die_solid<A: AssetStore>(c: &mut Ctx<A>, die: DieKind, cx: f32, cy: f32, r: f
 
 /// The percentile die: a d10 with its facet lines faint and a percent sign
 /// on the front.
-fn percentile<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Style) {
+fn percentile<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, cx: f32, cy: f32, r: f32, style: Style) {
     let m = |p: P| at(cx, cy, r, p);
     let (t, rt, b, l) = (m((0.0, -1.0)), m((0.85, -0.12)), m((0.0, 1.0)), m((-0.85, -0.12)));
     let (p1, p2) = (m((-0.42, 0.34)), m((0.42, 0.34)));
@@ -143,7 +157,7 @@ fn percentile<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: St
 }
 
 /// The pentagonal trapezohedron of a d10, seen from the side.
-fn kite<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Style) {
+fn kite<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, cx: f32, cy: f32, r: f32, style: Style) {
     let m = |p: P| at(cx, cy, r, p);
     let (t, rt, b, l) = (m((0.0, -1.0)), m((0.85, -0.12)), m((0.0, 1.0)), m((-0.85, -0.12)));
     let (p1, p2) = (m((-0.42, 0.34)), m((0.42, 0.34)));
@@ -163,7 +177,7 @@ fn kite<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Style) {
 }
 
 /// A banknote: border, inner frame, and a seal with a dollar sign.
-fn banknote<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Style) {
+fn banknote<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, cx: f32, cy: f32, r: f32, style: Style) {
     let (w, h) = (r * 2.1, r * 1.15);
     c.painter
         .stroke_rect(cx - w / 2.0, cy - h / 2.0, w, h, LINE, style);
@@ -199,7 +213,7 @@ fn banknote<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, style: Styl
 }
 
 /// A round bomb with a cap, a curling fuse and a spark.
-fn bomb<A: AssetStore>(c: &mut Ctx<A>, cx: f32, cy: f32, r: f32, alpha: f32) {
+fn bomb<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, cx: f32, cy: f32, r: f32, alpha: f32) {
     let (bx, by, br) = (cx - r * 0.1, cy + r * 0.2, r * 0.72);
     c.painter
         .fill_circle(bx, by, br, Style::new(FG, alpha * 0.22, 0.0));

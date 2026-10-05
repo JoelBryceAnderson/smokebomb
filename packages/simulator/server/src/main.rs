@@ -786,9 +786,9 @@ mod tests {
         for dir in [TipDir::Left, TipDir::Up, TipDir::Right, TipDir::Down] {
             assert!(rig.world.tip(dir, DEFAULT_VIEWER_RIGHT));
             rig.run(0.5); // the turn is over; the tracker is still settling
-            let during = rig.sim.lock().faces;
+            let during = rig.sim.lock().faces.clone();
             rig.run(0.5);
-            let after = rig.sim.lock().faces;
+            let after = rig.sim.lock().faces.clone();
             assert!(during == after, "{dir:?}: screens changed when the tip settled");
         }
     }

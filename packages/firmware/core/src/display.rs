@@ -1,18 +1,21 @@
 //! Framebuffers and the panel output pipeline (SIM_SPEC B1).
 //!
-//! Content is drawn into an 8-bit grey buffer per face (0 = off, 255 = full),
-//! the same value range as the mockup's canvas. [`Framebuffer::quantize`] then
-//! reduces it to the SSD1317's 16 levels with the mockup's ordered dither and
-//! packs it at 4 bits per pixel for the panel. Six buffers are 54 KB, within
-//! the nRF54L15's 256 KB of RAM.
+//! Content is drawn into a framebuffer per face, in the target's pixel type
+//! ([`smokebomb_hal::Target`]): 8-bit grey on the 96×96 die (0 = off, 255 =
+//! full, the mockup's canvas range), RGB565 on the 64×64 one. Each target
+//! then packs it for its panel ([`crate::target::DisplayTarget::pack`]):
+//! [`Framebuffer::quantize`] reduces grey to the SSD1317's 16 levels with the
+//! mockup's ordered dither at 4 bits per pixel; RGB565 goes out two bytes a
+//! pixel, high byte first. Six grey buffers are 54 KB, six RGB565 ones 48 KB.
 //!
 //! Screens draw into these through [`crate::gfx`]; the built-in 3x5 digits
 //! below remain only for the placeholder menu and Nest screens.
 
-use smokebomb_hal::{FrameBytes, PANEL_HEIGHT, PANEL_WIDTH};
+use smokebomb_hal::{FrameBytes, Grey96, Pixel, Target, PANEL_HEIGHT, PANEL_WIDTH};
 
 use crate::orientation::Quarter;
 
+/// Pixels in a 96×96 face ([`Grey96`]).
 pub const PIXELS: usize = PANEL_WIDTH * PANEL_HEIGHT;
 
 /// Foreground white `#F4F5F7`; the quantiser uses the brightest channel.
@@ -20,39 +23,49 @@ pub const FG: u8 = 0xF7;
 /// Dud grey `#8A8C90`.
 pub const DUD: u8 = 0x90;
 
-#[derive(Clone, Copy)]
-pub struct Framebuffer {
-    buf: [u8; PIXELS],
+pub struct Framebuffer<T: Target = Grey96> {
+    buf: T::Pixels,
 }
 
-impl Default for Framebuffer {
+impl<T: Target> Clone for Framebuffer<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: Target> Copy for Framebuffer<T> {}
+
+impl<T: Target> Default for Framebuffer<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Framebuffer {
+impl<T: Target> Framebuffer<T> {
+    pub const WIDTH: usize = T::WIDTH;
+    pub const HEIGHT: usize = T::HEIGHT;
+
     pub const fn new() -> Self {
-        Self { buf: [0; PIXELS] }
+        Self { buf: T::BLANK_PIXELS }
     }
 
-    pub fn pixels(&self) -> &[u8; PIXELS] {
-        &self.buf
+    pub fn pixels(&self) -> &[T::Pixel] {
+        self.buf.as_ref()
     }
 
     pub fn clear(&mut self) {
-        self.buf.fill(0);
+        self.buf.as_mut().fill(T::Pixel::default());
+    }
+
+    pub fn pixel(&self, x: usize, y: usize) -> T::Pixel {
+        self.buf.as_ref()[y * T::WIDTH + x]
     }
 
     /// Set a pixel. Out-of-range coordinates are ignored.
-    pub fn set_pixel(&mut self, x: usize, y: usize, value: u8) {
-        if x < PANEL_WIDTH && y < PANEL_HEIGHT {
-            self.buf[y * PANEL_WIDTH + x] = value;
+    pub fn put(&mut self, x: usize, y: usize, p: T::Pixel) {
+        if x < T::WIDTH && y < T::HEIGHT {
+            self.buf.as_mut()[y * T::WIDTH + x] = p;
         }
-    }
-
-    pub fn pixel(&self, x: usize, y: usize) -> u8 {
-        self.buf[y * PANEL_WIDTH + x]
     }
 
     /// Dim every pixel to `factor` of its level (0–1): the Nest's dimmed
@@ -61,34 +74,47 @@ impl Framebuffer {
         if factor >= 1.0 {
             return;
         }
-        for p in self.buf.iter_mut() {
-            *p = (*p as f32 * factor + 0.5) as u8;
+        for p in self.buf.as_mut().iter_mut() {
+            p.scale(factor);
         }
     }
 
-    /// Additive blend (canvas "lighter"), saturating at 255.
+    /// Additive blend (canvas "lighter") of a grey level, saturating.
     pub fn add_pixel(&mut self, x: usize, y: usize, value: u8) {
-        if x < PANEL_WIDTH && y < PANEL_HEIGHT {
-            let p = &mut self.buf[y * PANEL_WIDTH + x];
-            *p = p.saturating_add(value);
+        self.add_color(x, y, smokebomb_hal::Color::grey(value));
+    }
+
+    /// Additive blend of a colour, saturating per channel.
+    pub fn add_color(&mut self, x: usize, y: usize, c: smokebomb_hal::Color) {
+        if x < T::WIDTH && y < T::HEIGHT {
+            self.buf.as_mut()[y * T::WIDTH + x].add(c);
         }
     }
 
-    /// Source-over blend of `value` at opacity `alpha` (0–1).
+    /// Source-over blend of grey `value` at opacity `alpha` (0–1).
     pub fn blend(&mut self, x: usize, y: usize, value: f32, alpha: f32) {
-        let p = &mut self.buf[y * PANEL_WIDTH + x];
-        let a = alpha.clamp(0.0, 1.0);
-        *p = (*p as f32 + (value - *p as f32) * a + 0.5) as u8;
+        self.blend_rgb(x, y, [value, value, value], alpha);
+    }
+
+    /// Source-over blend of a colour (0–255 a channel) at `alpha`.
+    #[inline]
+    pub fn blend_rgb(&mut self, x: usize, y: usize, c: [f32; 3], alpha: f32) {
+        self.buf.as_mut()[y * T::WIDTH + x].blend(c, alpha);
     }
 
     /// Fill a rectangle given in content coordinates, rotated by `rot` about
     /// the panel centre.
     pub fn fill_rect(&mut self, x: usize, y: usize, w: usize, h: usize, value: u8, rot: Quarter) {
+        let p = {
+            let mut p = T::Pixel::default();
+            p.blend([value as f32; 3], 1.0);
+            p
+        };
         for yy in y..y + h {
             for xx in x..x + w {
-                if xx < PANEL_WIDTH && yy < PANEL_HEIGHT {
-                    let (px, py) = rot.map(xx, yy);
-                    self.set_pixel(px, py, value);
+                if xx < T::WIDTH && yy < T::HEIGHT {
+                    let (px, py) = rot.map_in(xx, yy, T::WIDTH);
+                    self.put(px, py, p);
                 }
             }
         }
@@ -111,8 +137,8 @@ impl Framebuffer {
         let glyph_w = 3 * scale;
         let gap = scale;
         let total_w = len * glyph_w + (len - 1) * gap;
-        let x0 = PANEL_WIDTH.saturating_sub(total_w) / 2;
-        let y0 = PANEL_HEIGHT.saturating_sub(5 * scale) / 2;
+        let x0 = T::WIDTH.saturating_sub(total_w) / 2;
+        let y0 = T::HEIGHT.saturating_sub(5 * scale) / 2;
         for i in 0..len {
             let d = digits[len - 1 - i];
             let x = x0 + i * (glyph_w + gap);
@@ -124,6 +150,13 @@ impl Framebuffer {
                 }
             }
         }
+    }
+}
+
+impl Framebuffer<Grey96> {
+    /// Set a grey pixel. Out-of-range coordinates are ignored.
+    pub fn set_pixel(&mut self, x: usize, y: usize, value: u8) {
+        self.put(x, y, value);
     }
 
     /// Replace the contents with a packed 4bpp frame (level `l` → `l * 17`).
@@ -146,6 +179,27 @@ impl Framebuffer {
             } else {
                 *b = (*b & 0xf0) | level;
             }
+        }
+    }
+}
+
+impl Framebuffer<smokebomb_hal::Rgb64> {
+    /// Pack for the panel: two bytes a pixel, row-major, high byte first
+    /// (SSD1357 datasheet Rev 1.0, Table 6-7, 8-bit/serial 65k: the first
+    /// byte carries C4–C0 B5–B3, the second B2–B0 A4–A0. With colour C wired
+    /// to red and A to blue that is RGB565 high byte first; which sub-pixel
+    /// is red is set by the panel's wiring and the colour-swap remap bit,
+    /// still to confirm on the module).
+    pub fn pack565(&self, out: &mut [u8; 64 * 64 * 2]) {
+        for (p, o) in self.buf.iter().zip(out.chunks_exact_mut(2)) {
+            o.copy_from_slice(&p.to_be_bytes());
+        }
+    }
+
+    /// Replace the contents with a packed RGB565 frame.
+    pub fn load_packed565(&mut self, packed: &[u8; 64 * 64 * 2]) {
+        for (p, b) in self.buf.iter_mut().zip(packed.chunks_exact(2)) {
+            *p = smokebomb_hal::Rgb565::from_be_bytes([b[0], b[1]]);
         }
     }
 }
@@ -194,6 +248,7 @@ const DIGITS: [[u8; 5]; 10] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smokebomb_hal::{Color, Rgb565, Rgb64};
 
     /// The mockup's formula, evaluated the way the browser does it.
     fn reference_level(v: u8, x: usize, y: usize) -> u8 {
@@ -220,7 +275,7 @@ mod tests {
 
     #[test]
     fn quantize_packs_high_nibble_first() {
-        let mut fb = Framebuffer::new();
+        let mut fb = Framebuffer::<Grey96>::new();
         fb.set_pixel(0, 0, 255);
         let mut out = [0u8; smokebomb_hal::FRAME_BYTES];
         fb.quantize(&mut out);
@@ -232,15 +287,45 @@ mod tests {
     fn load_packed_round_trips_levels() {
         let mut packed = [0u8; smokebomb_hal::FRAME_BYTES];
         packed[0] = 0xA5;
-        let mut fb = Framebuffer::new();
+        let mut fb = Framebuffer::<Grey96>::new();
         fb.load_packed(&packed);
         assert_eq!((fb.pixel(0, 0), fb.pixel(1, 0)), (170, 85));
     }
 
     #[test]
     fn number_is_drawn() {
-        let mut fb = Framebuffer::new();
+        let mut fb = Framebuffer::<Grey96>::new();
         fb.draw_number(100, 6, FG, Quarter::R0);
         assert!(fb.pixels().iter().any(|&b| b != 0));
+        let mut fb = Framebuffer::<Rgb64>::new();
+        fb.draw_number(100, 4, FG, Quarter::R90);
+        assert!(fb.pixels().iter().any(|&b| b != Rgb565::BLACK));
+    }
+
+    #[test]
+    fn rgb565_frame_is_row_major_high_byte_first() {
+        let mut fb = Framebuffer::<Rgb64>::new();
+        fb.put(0, 0, Rgb565::from_rgb(255, 0, 0));
+        fb.put(1, 0, Rgb565::from_rgb(0, 0, 255));
+        fb.put(0, 1, Rgb565::from_rgb(0, 255, 0));
+        let mut out = [0u8; 8192];
+        fb.pack565(&mut out);
+        assert_eq!(&out[0..4], &[0xF8, 0x00, 0x00, 0x1F]);
+        assert_eq!(&out[128..130], &[0x07, 0xE0]);
+        let mut back = Framebuffer::<Rgb64>::new();
+        back.load_packed565(&out);
+        assert_eq!(back.pixels(), fb.pixels());
+    }
+
+    #[test]
+    fn colour_blends_and_adds_on_both_targets() {
+        let mut g = Framebuffer::<Grey96>::new();
+        g.blend_rgb(3, 3, Color::hex(0x8A8C90).to_f32(), 1.0);
+        assert_eq!(g.pixel(3, 3), DUD);
+        let mut c = Framebuffer::<Rgb64>::new();
+        c.blend_rgb(3, 3, Color::hex(0xF5C451).to_f32(), 1.0);
+        assert_eq!(c.pixel(3, 3), Rgb565::from_color(Color::hex(0xF5C451)));
+        c.add_color(3, 3, Color::WHITE);
+        assert_eq!(c.pixel(3, 3).color(), Color::WHITE);
     }
 }

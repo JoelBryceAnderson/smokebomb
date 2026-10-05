@@ -149,7 +149,7 @@ mod tests {
         let smoke_fx = Effects::init(&mut smoke_fx, &mut NoAssets, None, 1);
         let mut pigs_fx = MaybeUninit::uninit();
         let pigs_fx = Effects::init(&mut pigs_fx, &mut NoAssets, None, 1);
-        let mut frames = [Framebuffer::new(); 6];
+        let mut frames = [Framebuffer::<smokebomb_hal::Grey96>::new(); 6];
         let mut panel = [0u8; FRAME_BYTES];
         let mut b = Bench {
             frames: &mut frames,

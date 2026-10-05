@@ -11,16 +11,22 @@
 
 #![no_std]
 
+pub mod target;
+
 pub use smokebomb_shared::assets::{FRAME_BYTES, PANEL_HEIGHT, PANEL_WIDTH};
 pub use smokebomb_shared::types::{Face, FACE_COUNT};
+pub use target::{Color, Grey96, Pixel, Region, Rgb565, Rgb64, Target, TargetId};
 
 /// The face with the charging contacts (and the laser etching around its
 /// window): −Y in the die's own frame. The die charges in the Nest only
 /// with this face down, in any of its four rotations.
 pub const CHARGING_FACE: Face = Face::NegY;
 
-/// One packed 4bpp 96x96 panel frame.
+/// One packed 4bpp 96x96 panel frame ([`Grey96`]'s panel frame).
 pub type FrameBytes = [u8; FRAME_BYTES];
+
+/// The packed panel frame of a display's target.
+pub type PanelOf<D> = <<D as Display>::Target as Target>::Panel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HalError {
@@ -37,11 +43,22 @@ pub enum HalError {
 
 pub type HalResult<T> = Result<T, HalError>;
 
-/// Six SSD1317 96x96 OLED panels.
+/// Six panels, one per face, all of one [`Target`]: SSD1317 96x96 grey on
+/// the 34 mm die, SSD1357-class 64x64 RGB on the 30 mm one.
 pub trait Display {
+    /// The panel this display drives.
+    type Target: Target;
     /// Push a full frame to one face. Implementations may double-buffer and
     /// flip on [`Display::flush`].
-    fn write_frame(&mut self, face: Face, frame: &FrameBytes) -> HalResult<()>;
+    fn write_frame(&mut self, face: Face, frame: &PanelOf<Self>) -> HalResult<()>;
+    /// Push only `region` of `frame` (the whole packed frame is passed; the
+    /// driver sends the region's bytes). For panels with a column/row
+    /// address window this is what keeps the SPI bus inside its budget. The
+    /// default sends the whole frame.
+    fn write_region(&mut self, face: Face, region: Region, frame: &PanelOf<Self>) -> HalResult<()> {
+        let _ = region;
+        self.write_frame(face, frame)
+    }
     /// Latch all pending frames to the panels at once so faces change together.
     fn flush(&mut self) -> HalResult<()>;
     /// Panel contrast, 0-255.
@@ -223,6 +240,9 @@ pub trait Platform {
     type Nfc: Nfc;
     type Clock: Clock;
 }
+
+/// The display target of a platform.
+pub type TargetOf<P> = <<P as Platform>::Display as Display>::Target;
 
 /// Owned peripheral set handed to the firmware core at boot.
 pub struct Peripherals<P: Platform> {

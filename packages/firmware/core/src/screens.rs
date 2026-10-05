@@ -6,7 +6,7 @@ use core::fmt::Write as _;
 
 use heapless::{String, Vec};
 use libm::{cosf, fabsf, floorf, powf, roundf, sinf, sqrtf};
-use smokebomb_hal::AssetStore;
+use smokebomb_hal::{AssetStore, Grey96, Target};
 use smokebomb_shared::types::MAX_POT_DICE;
 use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
@@ -22,13 +22,13 @@ use crate::smoke::Special;
 pub const ACTIVE: f32 = 83.0;
 
 /// Everything a screen needs to draw one face.
-pub struct Ctx<'a, 'p, A: AssetStore> {
-    pub painter: &'a mut Painter<'p>,
+pub struct Ctx<'a, 'p, A: AssetStore, T: Target = Grey96> {
+    pub painter: &'a mut Painter<'p, T>,
     pub fonts: &'a mut Fonts,
     pub assets: &'a mut A,
 }
 
-impl<A: AssetStore> Ctx<'_, '_, A> {
+impl<A: AssetStore, T: Target> Ctx<'_, '_, A, T> {
     fn text(&mut self, text: &str, x: f32, y: f32, px: u16, style: Style) {
         self.fonts
             .draw(self.assets, self.painter, text, x, y, px, Align::Center, style);
@@ -103,7 +103,7 @@ const PIP_GRID: f32 = ACTIVE * 0.46;
 const PIP_RADIUS: f32 = ACTIVE * 0.15;
 const PIP_GLOW: f32 = 10.0;
 
-fn draw_pips<A: AssetStore>(c: &mut Ctx<A>, from: u8, to: u8, t: f32, alpha: f32, scale: f32) {
+fn draw_pips<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, from: u8, to: u8, t: f32, alpha: f32, scale: f32) {
     let (a, b) = (pips(from), pips(to));
     let e = smoothstep(t);
     for i in 0..a.len().max(b.len()) {
@@ -124,7 +124,7 @@ fn draw_pips<A: AssetStore>(c: &mut Ctx<A>, from: u8, to: u8, t: f32, alpha: f32
 
 /// One face of the boot animation. `t` is seconds since boot, `index` the
 /// face index, `top` whether this face was on top when boot started.
-pub fn draw_boot<A: AssetStore>(c: &mut Ctx<A>, index: usize, top: bool, t: f32) {
+pub fn draw_boot<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, index: usize, top: bool, t: f32) {
     // A slight stagger around the cube.
     let t = t - if top { 0.0 } else { index as f32 * 0.05 };
     if t < 0.0 {
@@ -159,7 +159,7 @@ pub fn draw_boot<A: AssetStore>(c: &mut Ctx<A>, index: usize, top: bool, t: f32)
 /// Top face after the loop: the corner pips shoot outward, the centre pip
 /// squares up into a sugar cube, wiggles and dissolves into glittering
 /// crystals, and the name writes itself on in script with a sparkle.
-fn draw_boot_finale<A: AssetStore>(c: &mut Ctx<A>, u: f32) {
+fn draw_boot_finale<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, u: f32) {
     if u < 0.35 {
         let e = powf(u / 0.35, 2.0);
         let d = PIP_GRID * (1.0 + 1.4 * e);
@@ -204,7 +204,7 @@ fn draw_boot_finale<A: AssetStore>(c: &mut Ctx<A>, u: f32) {
 
 /// The centre pip becomes a sugar cube: a circle whose corners square up
 /// with a little bounce, a wiggle, then it shrinks away as it dissolves.
-fn draw_sugar_cube<A: AssetStore>(c: &mut Ctx<A>, u: f32) {
+fn draw_sugar_cube<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, u: f32) {
     let square = smoothstep((u / 0.4).min(1.0));
     let bounce = 1.0 + 0.18 * sinf((u / 0.4).min(1.0) * core::f32::consts::PI);
     let dissolve = ((u - DISSOLVE_AT) / 0.2).clamp(0.0, 1.0);
@@ -238,7 +238,7 @@ fn rounded_box(x: f32, y: f32, half: f32, r: f32) -> f32 {
 /// Sugar crystals thrown out as the cube dissolves: little tumbling squares
 /// that drift outward, slow down, twinkle and fade. `v` is seconds since
 /// the dissolve.
-fn draw_crystals<A: AssetStore>(c: &mut Ctx<A>, v: f32) {
+fn draw_crystals<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, v: f32) {
     const N: usize = 14;
     const LIFE: f32 = 1.5;
     if v >= LIFE {
@@ -283,7 +283,7 @@ fn frac(x: f32) -> f32 {
 }
 
 /// A four-point sparkle of arm length `r` centred on `(x, y)`.
-fn draw_sparkle<A: AssetStore>(c: &mut Ctx<A>, x: f32, y: f32, r: f32, alpha: f32) {
+fn draw_sparkle<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, x: f32, y: f32, r: f32, alpha: f32) {
     if r <= 0.3 || alpha <= 0.0 {
         return;
     }
@@ -309,7 +309,7 @@ pub fn setup_label(die: DieKind, count: u8) -> String<24> {
 
 /// The wake/setup label: the setup's icon (a die's solid, a bomb, a banknote)
 /// above its name, at `alpha` (already including the 85%).
-pub fn draw_wake_label<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, label: &str, alpha: f32) {
+pub fn draw_wake_label<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, setup: Setup, label: &str, alpha: f32) {
     if let Setup::Roll(DieKind::PassThePot, n) = setup {
         draw_bills_in_hand(c, n, alpha);
         return;
@@ -326,7 +326,7 @@ pub fn draw_wake_label<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, label: &str,
 
 /// Pass the Pot between rolls: three bills with the ones you roll lit, how
 /// many that is, and that a tap changes it (C2).
-fn draw_bills_in_hand<A: AssetStore>(c: &mut Ctx<A>, n: u8, alpha: f32) {
+fn draw_bills_in_hand<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, n: u8, alpha: f32) {
     for i in 0..MAX_POT_DICE {
         let x = (i as f32 - (MAX_POT_DICE as f32 - 1.0) / 2.0) * 46.0;
         let a = if i < n as usize { alpha } else { alpha * 0.2 };
@@ -339,7 +339,13 @@ fn draw_bills_in_hand<A: AssetStore>(c: &mut Ctx<A>, n: u8, alpha: f32) {
 }
 
 /// Pig Toss between throws: the pig, and whose go it is (or who won).
-pub fn draw_pigs_label<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, token: Token, won: bool, alpha: f32) {
+pub fn draw_pigs_label<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    setup: Setup,
+    token: Token,
+    won: bool,
+    alpha: f32,
+) {
     crate::icons::draw_setup_icon(c, setup, 0.0, -21.0, 36.0, alpha);
     let after = if won { " wins!" } else { " to roll" };
     tagged(c, "", token, after, 44.0, 28, Style::new(FG, alpha, 8.0));
@@ -350,8 +356,8 @@ pub fn draw_pigs_label<A: AssetStore>(c: &mut Ctx<A>, setup: Setup, token: Token
 /// A line of text with a player's token in it, centred at `y`: `before`,
 /// the initial or symbol, then `after`, at up to `max_px`.
 #[allow(clippy::too_many_arguments)]
-fn tagged<A: AssetStore>(
-    c: &mut Ctx<A>,
+fn tagged<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
     before: &str,
     token: Token,
     after: &str,
@@ -382,17 +388,24 @@ fn tagged<A: AssetStore>(
 }
 
 /// A player's symbol, centred on `(cx, cy)`, `h` canvas units tall.
-pub fn draw_symbol<A: AssetStore>(c: &mut Ctx<A>, symbol: Symbol, cx: f32, cy: f32, h: f32, style: Style) {
+pub fn draw_symbol<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    symbol: Symbol,
+    cx: f32,
+    cy: f32,
+    h: f32,
+    style: Style,
+) {
     use core::f32::consts::PI;
     let u = h / 2.0;
     let p = |x: f32, y: f32| (cx + x * u, cy + y * u);
     let dark = Style::new(0, style.alpha, 0.0);
     let painter = &mut *c.painter;
-    let rect = |painter: &mut Painter, x: f32, y: f32, w: f32, hh: f32, st: Style| {
+    let rect = |painter: &mut Painter<T>, x: f32, y: f32, w: f32, hh: f32, st: Style| {
         painter.fill_rect(cx + x * u, cy + y * u, w * u, hh * u, st)
     };
     // A four-sided shape, as two triangles.
-    let quad = |painter: &mut Painter, q: [(f32, f32); 4], st: Style| {
+    let quad = |painter: &mut Painter<T>, q: [(f32, f32); 4], st: Style| {
         painter.fill_triangle([p(q[0].0, q[0].1), p(q[1].0, q[1].1), p(q[2].0, q[2].1)], st);
         painter.fill_triangle([p(q[0].0, q[0].1), p(q[2].0, q[2].1), p(q[3].0, q[3].1)], st);
     };
@@ -474,7 +487,12 @@ fn big_size(chars: usize) -> f32 {
 
 /// A roll's result: every face except the one facing down shows this.
 /// A max says so in its label; a dud greys out and says "dud" (C6).
-pub fn draw_result<A: AssetStore>(c: &mut Ctx<A>, record: &RollRecord, special: Option<Special>, alpha: f32) {
+pub fn draw_result<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    record: &RollRecord,
+    special: Option<Special>,
+    alpha: f32,
+) {
     let setup = setup_label(record.die, record.values.len() as u8);
     let mut label: String<32> = String::new();
     let _ = match special {
@@ -588,7 +606,7 @@ fn join(parts: &[String<12>]) -> String<32> {
 
 /// Pass the Pot glyphs in a row: arrows pass left or right, the pot glyph
 /// feeds the pot, a dot keeps.
-fn draw_pot_tokens<A: AssetStore>(c: &mut Ctx<A>, values: &[u8], value: u8, alpha: f32) {
+fn draw_pot_tokens<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, values: &[u8], value: u8, alpha: f32) {
     let n = values.len();
     let sz = match n {
         1 => 64.0,
@@ -613,7 +631,14 @@ fn draw_pot_tokens<A: AssetStore>(c: &mut Ctx<A>, values: &[u8], value: u8, alph
 
 /// A bold arrow for passing a bill: a round-capped shaft into a solid,
 /// slightly rounded head, drawn as one shape so it glows and fades as one.
-fn draw_pass_arrow<A: AssetStore>(c: &mut Ctx<A>, x: f32, y: f32, sz: f32, d: f32, style: Style) {
+fn draw_pass_arrow<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    x: f32,
+    y: f32,
+    sz: f32,
+    d: f32,
+    style: Style,
+) {
     let (l, hl, hw) = (sz * 0.44, sz * 0.36, sz * 0.27);
     let (shaft_w, round) = (sz * 0.13, sz * 0.035);
     let tip = x + d * (l - round);
@@ -630,7 +655,7 @@ fn draw_pass_arrow<A: AssetStore>(c: &mut Ctx<A>, x: f32, y: f32, sz: f32, d: f3
 
 /// The pot: a round-bellied cauldron with handles and feet, and a coin
 /// dropping in.
-fn draw_pot<A: AssetStore>(c: &mut Ctx<A>, x: f32, y: f32, sz: f32, style: Style) {
+fn draw_pot<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, x: f32, y: f32, sz: f32, style: Style) {
     const N: usize = 14;
     const EXP: f32 = 0.8;
     let (bw, bh) = (sz * 0.38, sz * 0.42);
@@ -646,7 +671,7 @@ fn draw_pot<A: AssetStore>(c: &mut Ctx<A>, x: f32, y: f32, sz: f32, style: Style
     }
     // Dim inside, like the bomb's.
     let n = 2.0 / EXP;
-    let inner = Style::new(style.value, style.alpha * 0.22, 0.0);
+    let inner = Style::color(style.color, style.alpha * 0.22, 0.0);
     c.painter.shape((x - bw, rim, x + bw, rim + bh), inner, |px, py| {
         let (u, v) = (fabsf(px - x) / bw, ((py - rim) / bh).max(0.0));
         let f = powf(powf(u, n) + powf(v, n), 1.0 / n) - 1.0;
@@ -710,8 +735,8 @@ fn ramp(t: f32, at: f32, over: f32) -> f32 {
 /// the player's total, and then the screen says what to do next. The pigs themselves are
 /// [`crate::pigfx`]. A bust dims to the dud colour and passes the die by
 /// itself, so it only asks for the next player to shake.
-pub fn draw_pig_score<A: AssetStore>(
-    c: &mut Ctx<A>,
+pub fn draw_pig_score<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
     throw: &Throw,
     t: f32,
     next_player: u8,
@@ -846,7 +871,7 @@ pub mod lock_in {
 /// a flash and a burst of sparks, the banked points turn into the player's
 /// new total and count up, then the screen says who has the die. `fade`
 /// (0–1) takes it away when it has been up a while.
-pub fn draw_locked<A: AssetStore>(c: &mut Ctx<A>, l: &Locked, next: Token, t: f32, fade: f32) {
+pub fn draw_locked<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, l: &Locked, next: Token, t: f32, fade: f32) {
     use core::f32::consts::PI;
     use lock_in::*;
     let alpha = ramp(t, 0.0, 0.15) * fade;
@@ -953,7 +978,13 @@ pub mod pig_win {
 /// The win screen, `t` seconds in: a happy pig face bounces in with a burst
 /// of sparks, then who won, their score, and how to start again. `fade`
 /// (0–1) takes it away when it has been up a while.
-pub fn draw_pig_win<A: AssetStore>(c: &mut Ctx<A>, winner: Token, total: u16, t: f32, fade: f32) {
+pub fn draw_pig_win<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    winner: Token,
+    total: u16,
+    t: f32,
+    fade: f32,
+) {
     use core::f32::consts::PI;
     let alpha = ramp(t, 0.0, 0.2) * fade;
     let style = |a: f32, glow: f32| Style::new(FG, alpha * a, glow);
@@ -997,7 +1028,7 @@ pub fn draw_pig_win<A: AssetStore>(c: &mut Ctx<A>, winner: Token, total: u16, t:
 
 /// A happy pig's face, centred on the origin, about 60 units across: round
 /// head and ears, smiling closed eyes, a snout, and rosy cheeks.
-fn draw_happy_pig<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
+fn draw_happy_pig<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, alpha: f32) {
     use core::f32::consts::PI;
     let face = Style::new(FG, alpha, 10.0);
     let dark = Style::new(0, alpha, 0.0);
@@ -1052,7 +1083,7 @@ fn draw_happy_pig<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
 
 /// A lit fuse: a glow that swells with `heat` (0–1) and flashes on each
 /// tick (`pulse`, 0–1), with a nudge underneath.
-pub fn draw_fuse<A: AssetStore>(c: &mut Ctx<A>, heat: f32, pulse: f32) {
+pub fn draw_fuse<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, heat: f32, pulse: f32) {
     let core = 16.0 + 24.0 * heat;
     c.painter.fill_circle(
         0.0,
@@ -1075,7 +1106,7 @@ pub fn draw_fuse<A: AssetStore>(c: &mut Ctx<A>, heat: f32, pulse: f32) {
 
 /// The fuse ran out: a shockwave, then BOOM, and a nudge to reset. `t` is
 /// seconds since it went off.
-pub fn draw_boom<A: AssetStore>(c: &mut Ctx<A>, t: f32) {
+pub fn draw_boom<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
     let p = (t / 0.7).clamp(0.0, 1.0);
     let e = 1.0 - (1.0 - p) * (1.0 - p) * (1.0 - p);
     if p < 1.0 {
@@ -1105,8 +1136,8 @@ pub const TIP_SLIDE: f32 = 120.0;
 /// One menu page: status bar (setup and battery), title, ▲/▼, the value,
 /// and page dots. `battery` is 0–1.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_menu<A: AssetStore>(
-    c: &mut Ctx<A>,
+pub fn draw_menu<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
     m: &Draft,
     battery: f32,
     ox: f32,
@@ -1191,7 +1222,7 @@ pub fn draw_menu<A: AssetStore>(
 }
 
 /// The End game page's body: what a hold does, and what it costs.
-fn draw_end_game<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
+fn draw_end_game<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, alpha: f32) {
     c.text("Hold to end", 0.0, 4.0, 24, Style::new(FG, alpha, 12.0));
     c.text(
         "Scores won't be kept",
@@ -1205,7 +1236,7 @@ fn draw_end_game<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
 /// The hold ring: a rounded square just inside the lit area that fills
 /// clockwise from 12 o'clock as a hold progresses (`p`, 0–1). `grow` pushes
 /// it outward as it flashes away.
-pub fn draw_hold_ring<A: AssetStore>(c: &mut Ctx<A>, p: f32, alpha: f32, grow: f32) {
+pub fn draw_hold_ring<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, p: f32, alpha: f32, grow: f32) {
     if alpha <= 0.0 || p <= 0.0 {
         return;
     }
@@ -1273,7 +1304,7 @@ impl Path {
 
 /// After a save: a check draws itself, then the setup and a nudge to play.
 /// `t` is seconds since the save.
-pub fn draw_success<A: AssetStore>(c: &mut Ctx<A>, label: &str, nudge: &str, t: f32) {
+pub fn draw_success<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, label: &str, nudge: &str, t: f32) {
     let a = (t / 0.15).min(1.0)
         * if t < 0.9 {
             1.0
@@ -1301,7 +1332,7 @@ pub fn draw_success<A: AssetStore>(c: &mut Ctx<A>, label: &str, nudge: &str, t: 
 }
 
 /// The whole-face flash when a setup is saved.
-pub fn draw_flash<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
+pub fn draw_flash<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, alpha: f32) {
     if alpha > 0.0 {
         // #e8ecf2 at 35%.
         c.painter
@@ -1315,7 +1346,7 @@ pub fn draw_flash<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
 const CLOCK_R: f32 = 71.0;
 
 /// One Nest face. Dimming is the caller's: it scales the finished frame.
-pub fn draw_nest<A: AssetStore>(c: &mut Ctx<A>, face: &NestFace) {
+pub fn draw_nest<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, face: &NestFace) {
     let base = c.painter.xf;
     c.painter.xf = base.offset(face.shift.0, face.shift.1);
     match face.screen {
@@ -1365,7 +1396,7 @@ pub fn draw_nest<A: AssetStore>(c: &mut Ctx<A>, face: &NestFace) {
 
 /// The battery: a liquid fill with a wavy top edge, the percentage, and a
 /// status word.
-fn draw_charge<A: AssetStore>(c: &mut Ctx<A>, v: &ChargeView) {
+fn draw_charge<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, v: &ChargeView) {
     if v.alpha <= 0.0 {
         return;
     }
@@ -1395,7 +1426,7 @@ fn draw_charge<A: AssetStore>(c: &mut Ctx<A>, v: &ChargeView) {
 }
 
 /// The analog clock (C7): ticks, then hour, minute and smooth second hands.
-fn draw_clock<A: AssetStore>(c: &mut Ctx<A>, v: &ClockView) {
+fn draw_clock<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, v: &ClockView) {
     if v.alpha <= 0.0 {
         return;
     }
@@ -1454,7 +1485,7 @@ fn draw_clock<A: AssetStore>(c: &mut Ctx<A>, v: &ClockView) {
 
 /// A wisp of smoke sinking toward the bottom edge as the die is seated:
 /// ten soft puffs from mid-height, fading as they fall.
-fn draw_wisp<A: AssetStore>(c: &mut Ctx<A>, t: f32) {
+fn draw_wisp<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
     for k in 0..10 {
         let seed = (k * 37 + 11) % 100;
         let x = (seed as f32 - 50.0) * 1.1;
@@ -1468,7 +1499,7 @@ fn draw_wisp<A: AssetStore>(c: &mut Ctx<A>, t: f32) {
 }
 
 /// The small puff the clock dissolves into as the die is lifted.
-fn draw_puff<A: AssetStore>(c: &mut Ctx<A>, p: f32) {
+fn draw_puff<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, p: f32) {
     for k in 0..7 {
         let a = core::f32::consts::TAU * k as f32 / 7.0 + 0.4;
         let d = 8.0 + 26.0 * p;
@@ -1479,7 +1510,7 @@ fn draw_puff<A: AssetStore>(c: &mut Ctx<A>, p: f32) {
 }
 
 /// A chevron pointing along `dir`, centred on `at`.
-fn draw_chevron<A: AssetStore>(c: &mut Ctx<A>, dir: (f32, f32), at: (f32, f32), alpha: f32) {
+fn draw_chevron<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, dir: (f32, f32), at: (f32, f32), alpha: f32) {
     let perp = (-dir.1, dir.0);
     let tip = (at.0 + dir.0 * 14.0, at.1 + dir.1 * 14.0);
     let arm = |s: f32| {
@@ -1493,7 +1524,7 @@ fn draw_chevron<A: AssetStore>(c: &mut Ctx<A>, dir: (f32, f32), at: (f32, f32), 
 }
 
 /// A large arrow along `dir`, centred on `at`.
-fn draw_arrow<A: AssetStore>(c: &mut Ctx<A>, dir: (f32, f32), at: (f32, f32), alpha: f32) {
+fn draw_arrow<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, dir: (f32, f32), at: (f32, f32), alpha: f32) {
     let perp = (-dir.1, dir.0);
     let at_pt = |along: f32, side: f32| {
         (
@@ -1508,7 +1539,7 @@ fn draw_arrow<A: AssetStore>(c: &mut Ctx<A>, dir: (f32, f32), at: (f32, f32), al
 }
 
 /// "Flip me over": a square turning over, under a curved arrow.
-fn draw_flip<A: AssetStore>(c: &mut Ctx<A>, t: f32) {
+fn draw_flip<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
     let u = (t / 1.2) % 1.0;
     let turn = ease_in_out(u) * core::f32::consts::PI;
     let h = (40.0 * cosf(turn)).abs().max(3.0);
@@ -1542,7 +1573,7 @@ fn ease_in_out(u: f32) -> f32 {
 }
 
 /// A plug, and "Check the Nest / cable or contacts".
-fn draw_no_power<A: AssetStore>(c: &mut Ctx<A>) {
+fn draw_no_power<A: AssetStore, T: Target>(c: &mut Ctx<A, T>) {
     let style = Style::new(FG, 1.0, 8.0);
     c.painter.stroke_rect(-16.0, -32.0, 32.0, 24.0, 5.0, style);
     c.painter.fill_rect(-10.0, -50.0, 5.0, 14.0, style);
@@ -1560,7 +1591,7 @@ fn draw_no_power<A: AssetStore>(c: &mut Ctx<A>) {
 }
 
 /// A warning triangle, and "Charging paused".
-fn draw_fault<A: AssetStore>(c: &mut Ctx<A>) {
+fn draw_fault<A: AssetStore, T: Target>(c: &mut Ctx<A, T>) {
     let style = Style::new(FG, 1.0, 8.0);
     c.painter.stroke_polyline(
         &[(0.0, -48.0), (32.0, 6.0), (-32.0, 6.0), (0.0, -48.0)],
@@ -1580,7 +1611,7 @@ fn draw_fault<A: AssetStore>(c: &mut Ctx<A>) {
 }
 
 /// The low-battery glyph: a small lightning bolt at the centre.
-pub fn draw_bolt<A: AssetStore>(c: &mut Ctx<A>, alpha: f32) {
+pub fn draw_bolt<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, alpha: f32) {
     c.painter.stroke_polyline(
         &[(4.0, -12.0), (-5.0, 1.0), (5.0, -1.0), (-4.0, 12.0)],
         4.0,

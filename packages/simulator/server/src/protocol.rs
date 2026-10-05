@@ -42,7 +42,7 @@ impl Outbound {
     }
 }
 
-pub fn encode_frames(faces: &[[u8; FRAME_BYTES]; 6]) -> std::sync::Arc<Vec<u8>> {
+pub fn encode_frames(faces: &[Vec<u8>; 6]) -> std::sync::Arc<Vec<u8>> {
     let mut buf = Vec::with_capacity(1 + FRAME_BYTES * 6);
     buf.push(FRAME_PACKET_TAG);
     for f in faces {

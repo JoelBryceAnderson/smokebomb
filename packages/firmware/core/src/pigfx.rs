@@ -23,6 +23,8 @@ use core::ptr::addr_of_mut;
 
 use libm::{acosf, cosf, fabsf, sinf, sqrtf};
 
+use smokebomb_hal::{Pixel, Target};
+
 use crate::display::{Framebuffer, PIXELS};
 
 use crate::gfx::{Painter, Transform};
@@ -501,18 +503,36 @@ impl Canvas {
     }
 
     /// Lay the pigs onto a face turned by `rot`, over whatever it shows,
-    /// dimmed by `alpha`.
-    pub fn lay_onto(&self, fb: &mut Framebuffer, rot: Quarter, alpha: f32) {
+    /// dimmed by `alpha`. The picture is cast at 96×96; a smaller panel
+    /// samples it nearest (a stopgap: Pig Toss has no 64×64 design yet).
+    pub fn lay_onto<T: Target>(&self, fb: &mut Framebuffer<T>, rot: Quarter, alpha: f32) {
+        let put = |fb: &mut Framebuffer<T>, x: usize, y: usize, shade: f32, a: f32| {
+            let under = fb.pixel(x, y).level() as f32;
+            let v = under * (1.0 - a) + shade * a * alpha;
+            fb.put(x, y, T::Pixel::grey((v + 0.5).clamp(0.0, 255.0) as u8));
+        };
         let b = self.bounds;
-        for sy in b.y0..b.y0 + b.h {
-            for sx in b.x0..b.x0 + b.w {
+        if T::WIDTH == 96 {
+            for sy in b.y0..b.y0 + b.h {
+                for sx in b.x0..b.x0 + b.w {
+                    let Some((shade, a)) = decode(self.picture[sy * 96 + sx]) else {
+                        continue;
+                    };
+                    let (x, y) = turned(rot, sx, sy);
+                    put(fb, x, y, shade, a);
+                }
+            }
+            return;
+        }
+        let n = T::WIDTH;
+        for ty in 0..n {
+            for tx in 0..n {
+                let (sx, sy) = ((tx * 96 + 48) / n, (ty * 96 + 48) / n);
                 let Some((shade, a)) = decode(self.picture[sy * 96 + sx]) else {
                     continue;
                 };
-                let (x, y) = turned(rot, sx, sy);
-                let under = fb.pixel(x, y) as f32;
-                let v = under * (1.0 - a) + shade * a * alpha;
-                fb.set_pixel(x, y, (v + 0.5).clamp(0.0, 255.0) as u8);
+                let (x, y) = rot.map_in(tx, ty, n);
+                put(fb, x, y, shade, a);
             }
         }
     }
@@ -883,11 +903,11 @@ fn cast_block(
 /// viewer, centred on `(cx, cy)` and about `r` canvas units across each way.
 /// Cast a strip at a time with its own small buffers, so it can go on any
 /// screen without much stack.
-pub fn draw_icon(p: &mut Painter, cx: f32, cy: f32, r: f32, alpha: f32) -> Stats {
+pub fn draw_icon<T: Target>(p: &mut Painter<T>, cx: f32, cy: f32, r: f32, alpha: f32) -> Stats {
     const SIDE: usize = 48;
     let (px, py) = p.xf.forward(cx, cy);
-    let x0 = (libm::floorf(px) as i32 - SIDE as i32 / 2).clamp(0, 96 - SIDE as i32) as usize;
-    let top = (libm::floorf(py) as i32 - SIDE as i32 / 2).clamp(0, 96 - SIDE as i32) as usize;
+    let x0 = (libm::floorf(px) as i32 - SIDE as i32 / 2).clamp(0, (T::WIDTH - SIDE) as i32) as usize;
+    let top = (libm::floorf(py) as i32 - SIDE as i32 / 2).clamp(0, (T::HEIGHT - SIDE) as i32) as usize;
     let pig = PigState {
         q: Quat::axis_angle([0.0, 1.0, 0.0], -0.95),
         pos: [0.0, 0.0, 0.0],
@@ -911,11 +931,11 @@ pub fn draw_icon(p: &mut Painter, cx: f32, cy: f32, r: f32, alpha: f32) -> Stats
             h: STRIP,
         };
         let s = cast_block(xf, &casts[..n], &mut zbuf, region, view, |x, y, lit, cover| {
-            let under = fb.pixel(x, y) as f32;
-            fb.set_pixel(
+            let under = fb.pixel(x, y).level() as f32;
+            fb.put(
                 x,
                 y,
-                (under + (lit * alpha - under) * cover).clamp(0.0, 255.0) as u8,
+                T::Pixel::grey((under + (lit * alpha - under) * cover).clamp(0.0, 255.0) as u8),
             );
         });
         stats.ray_tests += s.ray_tests;
@@ -1004,7 +1024,7 @@ mod tests {
 
     #[test]
     fn drawing_puts_pigs_on_the_face_and_leaves_the_rest_alone() {
-        let mut fb = Framebuffer::new();
+        let mut fb = Framebuffer::<smokebomb_hal::Grey96>::new();
         let mut canvas = Canvas::new();
         canvas.draw(Scene::Tumbling(0.7));
         canvas.lay_onto(&mut fb, Quarter::R0, 1.0);
@@ -1022,7 +1042,7 @@ mod tests {
     #[test]
     fn the_icon_is_a_pig_inside_its_box() {
         use crate::gfx::Layer;
-        let mut fb = Framebuffer::new();
+        let mut fb = Framebuffer::<smokebomb_hal::Grey96>::new();
         let mut layer = Layer::new();
         let mut p = Painter::new(&mut fb, &mut layer, Transform::default());
         draw_icon(&mut p, 0.0, -21.0, 36.0, 0.85);
@@ -1062,7 +1082,7 @@ mod tests {
     /// pair (small and large) and the icon.
     fn worst_case_work() -> (Stats, Stats) {
         use crate::gfx::Layer;
-        let mut fb = Framebuffer::new();
+        let mut fb = Framebuffer::<smokebomb_hal::Grey96>::new();
         let mut layer = Layer::new();
         let mut canvas = Canvas::new();
         let mut face = Stats::default();
@@ -1135,7 +1155,7 @@ mod tests {
     #[test]
     #[ignore]
     fn time_a_frame() {
-        let mut faces = [Framebuffer::new(); 6];
+        let mut faces = [Framebuffer::<smokebomb_hal::Grey96>::new(); 6];
         let mut canvas = Canvas::new();
         let n = 2000;
         let start = std::time::Instant::now();
@@ -1157,11 +1177,11 @@ mod tests {
         let mut canvas = Canvas::new();
         canvas.draw(scene);
         for rot in [Quarter::R0, Quarter::R90, Quarter::R180, Quarter::R270] {
-            let mut shared = Framebuffer::new();
+            let mut shared = Framebuffer::<smokebomb_hal::Grey96>::new();
             canvas.lay_onto(&mut shared, rot, 1.0);
             // Cast straight onto a face turned by `rot`, a whole face at
             // once, at full precision.
-            let mut own = Framebuffer::new();
+            let mut own = Framebuffer::<smokebomb_hal::Grey96>::new();
             let mut layer = Layer::new();
             let mut p = Painter::new(&mut own, &mut layer, Transform::quarter(rot));
             let xf = p.xf;
