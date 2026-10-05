@@ -71,6 +71,8 @@ final class DieRigTests: XCTestCase {
         let (rig, pivot) = try await loadFixture()
         let root = rig.root
         let lidPrim = try XCTUnwrap(root.findEntity(named: "Lid"))
+        // The loaded tree has the default prim's entity between the root and the parts.
+        let lidParent = try XCTUnwrap(lidPrim.parent)
         let screen = try XCTUnwrap(root.findEntity(named: "Screen_ny"))
         let before = screen.position(relativeTo: pivot)
 
@@ -91,7 +93,7 @@ final class DieRigTests: XCTestCase {
 
         lid.restore()
         XCTAssertNil(lid.root.parent)
-        XCTAssertTrue(lidPrim.parent === root)
+        XCTAssertTrue(lidPrim.parent === lidParent, "back where it was")
         XCTAssertLessThan(simd_distance(screen.position(relativeTo: pivot), before), 1e-6)
         XCTAssertEqual(rig.measuredSize().x, 0.030, accuracy: 0.0001)
     }
