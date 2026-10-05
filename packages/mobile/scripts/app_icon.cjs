@@ -64,30 +64,38 @@ function frame() {
     <rect x="76" y="76" width="872" height="872" rx="168" fill="none" stroke="${C.navy}" stroke-width="6"/>`;
 }
 
-// Where the thumbs-up glove's cuff opens, in mascot coordinates: the arm ends here.
-const GLOVE = { x: 822, y: 336, tilt: -12 };
-const CUFF = [
-  GLOVE.x - 100 * Math.sin((GLOVE.tilt * Math.PI) / 180),
-  GLOVE.y + 100 * Math.cos((GLOVE.tilt * Math.PI) / 180),
-];
+// The thumbs-up glove: where it sits in mascot coordinates, its tilt and
+// scale, and where its cuff opens (the arm ends there).
+const GLOVE = { x: 826, y: 344, tilt: -8, scale: 0.8 };
+const CUFF = (() => {
+  const [lx, ly] = [-12, 122].map((v) => v * GLOVE.scale);
+  const t = (GLOVE.tilt * Math.PI) / 180;
+  return [GLOVE.x + lx * Math.cos(t) - ly * Math.sin(t), GLOVE.y + lx * Math.sin(t) + ly * Math.cos(t)];
+})();
 
 function glove() {
-  // A puffy cartoon glove giving a thumbs up: one soft outline for the fist
-  // and the bent thumb, knuckle bumps down the curled fingers, a flared cuff
-  // with a rolled edge, and a few "ta-da" ticks off the thumb.
-  const { x, y, tilt } = GLOVE;
-  const fist = `M-46,-10
-    C-62,-48 -54,-98 -30,-112 C-12,-122 6,-110 2,-90 C-2,-70 -10,-52 -2,-38
-    C14,-48 36,-46 46,-30 C64,-26 66,-4 50,0 C68,4 68,26 50,28
-    C66,34 62,54 40,56 C18,64 -30,62 -44,48 C-62,34 -62,6 -46,-10 Z`;
+  // A cartoon glove giving a thumbs up, seen from the front: one outline runs
+  // up the back of the hand into the thumb, over its tip, then down the four
+  // curled fingers (a bump each, smaller toward the little finger) and round
+  // the heel of the palm. Creases run in from between the fingers.
+  const { x, y, tilt, scale } = GLOVE;
+  const hand = `M-12,-140
+    C8,-140 18,-126 16,-108 C14,-92 8,-78 10,-62
+    C30,-70 58,-66 66,-46 C74,-30 66,-16 56,-14
+    C72,-10 76,10 62,18 C74,26 74,46 58,52
+    C66,62 60,78 44,80 C20,88 -24,86 -44,72
+    C-64,56 -66,20 -56,-8 C-50,-30 -44,-50 -42,-80
+    C-40,-104 -38,-138 -12,-140 Z`;
+  const creases = `M56,-14 C40,-14 24,-18 12,-24 M62,18 C44,20 28,16 14,12
+    M58,52 C44,54 30,50 20,46 M10,-62 C4,-50 -6,-44 -18,-44`;
+  const cuff = "M-48,64 C-58,84 -64,100 -66,112 C-30,128 22,126 44,108 C38,96 30,84 26,76 Z";
   return `
-    <g transform="translate(${x},${y}) rotate(${tilt})" stroke="${C.ink}" stroke-width="12" stroke-linejoin="round" stroke-linecap="round">
-      <path class="solid-w" d="M-36,52 C-46,70 -54,84 -52,94 C-20,108 30,108 54,94 C54,84 46,68 40,52 Z" fill="${C.sugarTop}"/>
-      <path d="M-48,82 C-16,94 26,94 50,82" fill="none" stroke-width="8"/>
-      <path class="solid-w" d="${fist}" fill="${C.sugarTop}"/>
-      <path d="M50,0 C40,4 30,2 20,-4 M50,28 C40,32 30,30 20,24 M-2,-38 C-14,-30 -26,-28 -36,-32" fill="none" stroke-width="8"/>
-      <path d="M-24,40 C-10,46 6,46 18,40" fill="none" stroke-width="6"/>
-      <path d="M-58,-100 L-78,-108 M-46,-132 L-58,-148 M14,-118 L30,-130" fill="none" stroke-width="9"/>
+    <g transform="translate(${x},${y}) rotate(${tilt}) scale(${scale})" stroke="${C.ink}" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
+      <path class="solid-w" d="${cuff}" fill="${C.sugarTop}"/>
+      <path d="M-62,100 C-28,114 18,112 40,96" fill="none" stroke-width="9"/>
+      <path class="solid-w" d="${hand}" fill="${C.sugarTop}"/>
+      <path d="${creases}" fill="none" stroke-width="9"/>
+      <path d="M-54,-136 L-76,-146 M30,-128 L52,-138" fill="none" stroke-width="11"/>
     </g>`;
 }
 
@@ -192,35 +200,50 @@ function mascot() {
     </g>`;
 }
 
-// The ribbon: an arched band from x0 to x1 whose middle rises by `lift`,
-// `h` deep, with notched tails tucked behind each end.
-const RIBBON = { x0: 158, x1: 866, y: 850, lift: 92, h: 172 };
+// The ribbon: a band bent along a circular arc, so it keeps its depth all the
+// way to the ends where the lettering tilts. The arc's chord runs from x0 to
+// x1 at height y (the band's centre line) and rises by `lift` in the middle;
+// the band is `h` deep, with notched tails behind each end.
+const RIBBON = { x0: 176, x1: 848, y: 850, lift: 70, h: 184 };
+// Pacifico's ink for "Sugarcube", in em: the b's ascender to the g's descender.
+const WORD_INK = { top: 0.94, bottom: -0.455 };
+// The lettering fills this share of the band's depth.
+const WORD_FILL = 0.74;
 
 function banner() {
   const { x0, x1, y, lift, h } = RIBBON;
-  const mid = (x0 + x1) / 2;
-  // A quadratic's peak is half its control point's height, so the control
-  // point sits at 2 * lift.
-  const arc = (dy) => `${x0},${y + dy} Q${mid},${y + dy - 2 * lift} ${x1},${y + dy}`;
-  const top = -h / 2;
-  const bot = h / 2;
-  const tail = (sx) => {
-    // Mirror about the centre for the right tail.
-    const X = (v) => (sx > 0 ? v : 2 * mid - v);
-    return `
-      <path class="solid" d="M${X(x0 + 40)},${y + top + 40} L${X(x0 - 64)},${y + top + 52} L${X(x0 - 28)},${y + 24}
-        L${X(x0 - 60)},${y + bot + 8} L${X(x0 + 46)},${y + bot + 14} Z" fill="${C.redDark}"/>
-      <path class="solid" d="M${X(x0)},${y + bot} L${X(x0 + 46)},${y + bot + 14} L${X(x0 + 40)},${y + bot - 14} Z" fill="${C.navy}"/>`;
+  const half = (x1 - x0) / 2;
+  const R = (half * half + lift * lift) / (2 * lift);
+  const [cx, cy] = [(x0 + x1) / 2, y - lift + R];
+  const theta = Math.asin(half / R);
+  const deg = (theta * 180) / Math.PI;
+  const at = (r, a) => [cx + r * Math.sin(a), cy - r * Math.cos(a)];
+  const arc = (r, from, to) => {
+    const [a, b] = [at(r, from), at(r, to)];
+    const sweep = to > from ? 1 : 0;
+    return `${a[0].toFixed(1)},${a[1].toFixed(1)} A${r.toFixed(1)},${r.toFixed(1)} 0 0 ${sweep} ${b[0].toFixed(1)},${b[1].toFixed(1)}`;
   };
+  const [ro, ri] = [R + h / 2, R - h / 2];
+  const band = `M${arc(ro, -theta, theta)} L${arc(ri, theta, -theta)} Z`;
+  // A tail drawn for the left end with the band running along +x and ending
+  // at x = 0, then turned to the band's slope there; mirrored for the right.
+  const v = h / 2;
+  const tailShape = `
+    <path class="solid" d="M34,${-v + 40} L-78,${-v + 40} L-46,4 L-78,${v + 6} L34,${v + 14} Z" fill="${C.redDark}"/>
+    <path class="solid" d="M0,${v} L34,${v + 14} L34,${v - 6} Z" fill="${C.navy}"/>`;
+  const [lx, ly] = at(R, -theta);
+  const fontSize = (WORD_FILL * h) / (WORD_INK.top - WORD_INK.bottom);
+  // Shift the baseline down so the ink is centred on the band's centre line.
+  const dy = ((WORD_INK.top + WORD_INK.bottom) / 2) * fontSize;
   return `
-    <defs><path id="ribbon-line" d="M${arc(0)}"/></defs>
+    <defs><path id="ribbon-line" d="M${arc(R, -theta, theta)}"/></defs>
     <g class="banner" stroke="${C.navy}" stroke-width="10" stroke-linejoin="round">
-      ${tail(1)}
-      ${tail(-1)}
-      <path class="solid" d="M${arc(top)} L${x1},${y + bot} Q${mid},${y + bot - 2 * lift} ${x0},${y + bot} Z" fill="${C.red}"/>
-      <path d="M${arc(top + 14)} M${arc(bot - 14)}" fill="none" stroke="${C.paper}" stroke-width="4" opacity="0.7"/>
+      <g transform="translate(${lx},${ly}) rotate(${-deg})">${tailShape}</g>
+      <g transform="translate(${2 * cx - lx},${ly}) rotate(${deg}) scale(-1,1)">${tailShape}</g>
+      <path class="solid" d="${band}" fill="${C.red}"/>
+      <path d="M${arc(ro - 16, -theta, theta)} M${arc(ri + 16, -theta, theta)}" fill="none" stroke="${C.paper}" stroke-width="4" opacity="0.7"/>
     </g>
-    <text class="word" font-family="Pacifico" font-size="108" dy="22" text-anchor="middle"
+    <text class="word" font-family="Pacifico" font-size="${fontSize.toFixed(1)}" dy="${dy.toFixed(1)}" text-anchor="middle"
       fill="${C.paper}" stroke="${C.navy}" stroke-width="7" paint-order="stroke">
       <textPath href="#ribbon-line" startOffset="50%">Sugarcube</textPath>
     </text>`;
@@ -244,7 +267,7 @@ function defs() {
 
 // The mascot's own drawing box (sparkles to thumb, top of thumb to shoes),
 // and where and how big it sits on the box art: the feet tuck behind the ribbon.
-const MASCOT = { cx: 549, cy: 494, at: [506, 424], scale: 1.1 };
+const MASCOT = { cx: 549, cy: 494, at: [506, 404], scale: 1.08 };
 
 function placedMascot() {
   const [x, y] = MASCOT.at;
