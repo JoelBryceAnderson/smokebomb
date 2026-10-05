@@ -16,7 +16,7 @@ use core::fmt::Write as _;
 use heapless::{String, Vec};
 use libm::{floorf, roundf, sinf};
 use smokebomb_hal::{AssetStore, Color, Target};
-use smokebomb_shared::{DieKind, RollRecord};
+use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
 use crate::font64::{draw_centered, draw_glyph, Align, BitFont, Glyph, NUM_L, NUM_M, NUM_S, TAG, TEXT};
 use crate::gfx::{Painter, Style};
@@ -216,8 +216,8 @@ pub fn parts_line(values: &[u8]) -> Option<(String<48>, bool)> {
 
 /// A roll's result. One or two digits fill most of the face; the setup
 /// sits under it in grey. A max turns the number gold with a gold `MAX`
-/// tag; a fumble (every die a 1) turns it red with `DUD`. Pass the Pot keeps
-/// the 96×96 layout for now.
+/// tag; a fumble (every die a 1) turns it red with `DUD`. Pass the Pot shows
+/// its dice as sprites ([`draw_pot_result`]).
 pub fn draw_result<A: AssetStore, T: Target>(
     c: &mut Ctx<A, T>,
     record: &RollRecord,
@@ -225,7 +225,7 @@ pub fn draw_result<A: AssetStore, T: Target>(
     alpha: f32,
 ) {
     if !record.die.is_numeric() {
-        screens::draw_result(c, record, special, alpha);
+        draw_pot_result(c, record, special == Some(Special::Dud), alpha);
         return;
     }
     let mut total: String<8> = String::new();
@@ -286,7 +286,8 @@ pub fn face_number(face: usize) -> u8 {
 }
 
 /// The die at rest: its solid in violet, the setup under it, and which face
-/// this is in a small tag. Games keep the 96×96 label for now.
+/// this is in a small tag. Pass the Pot shows the bills in hand, and Hot
+/// Potato its potato; Pig Toss has its own label ([`draw_pigs_label`]).
 pub fn draw_idle<A: AssetStore, T: Target>(
     c: &mut Ctx<A, T>,
     setup: Setup,
@@ -296,6 +297,14 @@ pub fn draw_idle<A: AssetStore, T: Target>(
 ) {
     let die = match setup {
         Setup::Roll(die, _) if die.is_numeric() => die,
+        Setup::Roll(DieKind::PassThePot, n) => {
+            draw_bills(c, n, alpha);
+            return;
+        }
+        Setup::HotPotato => {
+            draw_potato_label(c, alpha);
+            return;
+        }
         _ => {
             screens::draw_wake_label(c, setup, label, alpha);
             return;
@@ -1168,6 +1177,507 @@ pub fn draw_pig_win<A: AssetStore, T: Target>(
                 Align::Left,
                 style(pal::WHITE, alpha * prompt),
             );
+        }
+    });
+}
+
+// ---------- Hot Potato ----------
+//
+// An arcade game on a 64×64 screen: the potato is a character. Lit, it
+// goes from calm to worried to panicking as the ticks speed up (their pace,
+// not the time left: nobody can count it down). It reddens, shakes harder,
+// sweats and steams, its fuse fizzing, over a flashing drop-shadowed
+// "PASS IT!" and an eight-block heat bar. When it goes off: a white flash,
+// an 8-bit fireball, chunks flying, and the potato left charred with X
+// eyes under a bouncing BOOM.
+
+/// `a` to `b` by `t` (0–1).
+fn mix(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t + 0.5) as u8;
+    Color::rgb(m(a.r, b.r), m(a.g, b.g), m(a.b, b.b))
+}
+
+/// The fractional part of `x`.
+fn frac(x: f32) -> f32 {
+    x - floorf(x)
+}
+
+/// A potato's look: its skin colour and face.
+struct Spud {
+    skin: Color,
+    face: &'static Glyph<13>,
+}
+
+/// The potato at 2×, its top left at `(x, y)`, with its fuse; the fuse's
+/// tip fizzes if `lit` (`t` drives the flicker).
+fn draw_potato<T: Target>(p: &mut Painter<T>, x: f32, y: f32, spud: &Spud, lit: Option<f32>, alpha: f32) {
+    // The fuse: a short curl up and to the right of the top.
+    let (fx, fy) = (x + spr::POTATO_FUSE.0 * 2.0, y + spr::POTATO_FUSE.1 * 2.0);
+    let fuse = style(if lit.is_some() { pal::EMBER } else { pal::DIM }, alpha);
+    for (dx, dy) in [(0.0, -2.0), (2.0, -4.0), (2.0, -6.0), (4.0, -8.0)] {
+        p.fill_rect(fx + dx, fy + dy, 2.0, 2.0, fuse);
+    }
+    let dark = mix(pal::POTATO_DARK, spud.skin, 0.25);
+    draw_glyph(p, &spr::POTATO_SKIN, x, y, 2.0, style(spud.skin, alpha));
+    draw_glyph(p, &spr::POTATO_SPOTS, x, y, 2.0, style(dark, alpha));
+    draw_glyph(p, spud.face, x, y, 2.0, style(pal::POTATO_DARK, alpha));
+    if let Some(t) = lit {
+        // The spark flickers between its two shapes and jumps about a
+        // pixel, every frame or two.
+        let k = floorf(t * 24.0) as i32;
+        let g = if k & 1 == 0 {
+            &spr::SPARK_X
+        } else {
+            &spr::SPARK_PLUS
+        };
+        let (jx, jy) = [(0.0, 0.0), (1.0, -1.0), (0.0, -1.0), (1.0, 0.0)][(k & 3) as usize];
+        let c = if k % 3 == 0 { pal::WHITE } else { pal::GOLD };
+        draw_centered(p, g, fx + 5.0 + jx, fy - 10.0 + jy, 1.0, style(c, alpha));
+    }
+}
+
+/// A short line of arcade text: a one-pixel shadow down and right, then
+/// the text.
+fn draw_arcade<T: Target>(
+    p: &mut Painter<T>,
+    text: &str,
+    y: f32,
+    scale: f32,
+    colour: Color,
+    shadow: Color,
+    alpha: f32,
+) {
+    TEXT.draw(
+        p,
+        text,
+        scale,
+        y + scale,
+        scale,
+        Align::Center,
+        style(shadow, alpha),
+    );
+    TEXT.draw(p, text, 0.0, y, scale, Align::Center, style(colour, alpha));
+}
+
+/// An icon then a word, centred, top at `y`.
+fn draw_hint<T: Target, const H: usize>(p: &mut Painter<T>, icon: &Glyph<H>, word: &str, y: f32, alpha: f32) {
+    let w = icon.width as usize + 2 + TEXT.measure(word);
+    let x = -floorf(w as f32 / 2.0);
+    draw_glyph(p, icon, x, y + 1.0, 1.0, style(pal::DIM, alpha));
+    TEXT.draw(
+        p,
+        word,
+        x + (icon.width + 2) as f32,
+        y,
+        1.0,
+        Align::Left,
+        style(pal::WHITE, alpha),
+    );
+}
+
+/// Hot Potato at rest: a calm potato with its fuse out, its name, and that
+/// a shake lights it.
+pub fn draw_potato_label<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, alpha: f32) {
+    in_pixels(c, |p| {
+        let calm = Spud {
+            skin: pal::POTATO,
+            face: &spr::FACE_CALM,
+        };
+        draw_potato(p, -16.0, -21.0, &calm, None, alpha);
+        draw_arcade(p, "Hot Potato", 9.0, 1.0, pal::WHITE, pal::POTATO_DARK, alpha);
+        draw_hint(p, &spr::SHAKE, "light", 20.0, alpha);
+    });
+}
+
+/// A lit fuse, `t` seconds on the die's clock: the potato heating with
+/// `heat` (0–1), flaring on each tick (`pulse`, 0–1).
+pub fn draw_fuse<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, heat: f32, pulse: f32, t: f32) {
+    in_pixels(c, |p| {
+        let face = if heat < 0.35 {
+            &spr::FACE_CALM
+        } else if heat < 0.7 {
+            &spr::FACE_WORRIED
+        } else {
+            &spr::FACE_PANIC
+        };
+        let hot = mix(pal::POTATO, pal::RED, heat * 0.7);
+        let spud = Spud {
+            skin: mix(hot, pal::WHITE, 0.4 * pulse),
+            face,
+        };
+        // It shakes harder the hotter it gets, in whole pixels.
+        let amp = if heat < 0.35 {
+            0.0
+        } else if heat < 0.7 {
+            1.0
+        } else {
+            2.0
+        };
+        let (dx, dy) = (
+            roundf(sinf(t * 47.0) * amp),
+            roundf(sinf(t * 31.0 + 1.0) * amp * 0.5),
+        );
+        let (x, y) = (-16.0 + dx, -19.0 + dy);
+        // Steam rising off it once it's warm.
+        if heat > 0.3 {
+            for k in 0..3 {
+                let u = frac(t * 0.9 + k as f32 / 3.0);
+                let sx = roundf(-9.0 + 9.0 * k as f32 + sinf(u * 7.0 + k as f32) * 2.0);
+                let sy = roundf(-20.0 - 9.0 * u);
+                let a = (1.0 - u) * ((heat - 0.3) / 0.3).min(1.0) * 0.8;
+                p.fill_rect(sx, sy, 2.0, 2.0, style(pal::DIM, a));
+            }
+        }
+        draw_potato(p, x, y, &spud, Some(t), 1.0);
+        // Sweat flying off its sides: more, and faster, the worse it gets.
+        if heat > 0.35 {
+            let n = if heat < 0.7 { 2 } else { 4 };
+            let rate = if heat < 0.7 { 1.2 } else { 2.0 };
+            for k in 0..n {
+                let side = if k % 2 == 0 { -1.0 } else { 1.0 };
+                let u = frac(t * rate + k as f32 * 0.37);
+                let sx = roundf(side * (15.0 + 8.0 * u)) - 1.0;
+                let sy = roundf(-14.0 + 4.0 * (k / 2) as f32 - 4.0 * u + 14.0 * u * u);
+                draw_glyph(p, &spr::SWEAT, sx, sy, 1.0, style(pal::SWEAT, 1.0 - u));
+            }
+        }
+        // PASS IT! flashes white and gold, faster as it heats.
+        let flash = frac(t * (1.5 + 3.5 * heat)) < 0.5;
+        let colour = if flash { pal::WHITE } else { pal::GOLD };
+        draw_arcade(p, "PASS IT!", 10.0, 1.0, colour, pal::RED, 1.0);
+        // The heat bar: eight blocks, mint to gold to red; the newest one
+        // flashes on each tick.
+        let lit = libm::ceilf(heat * 8.0) as usize;
+        for i in 0..8 {
+            let bx = -23.0 + i as f32 * 6.0;
+            let on = i < lit;
+            let base = match i {
+                0..=2 => pal::MINT,
+                3..=5 => pal::GOLD,
+                _ => pal::RED,
+            };
+            let colour = if !on {
+                pal::FAINT
+            } else if i + 1 == lit {
+                mix(base, pal::WHITE, pulse)
+            } else {
+                base
+            };
+            p.fill_rect(bx, 22.0, 5.0, 3.0, style(colour, 1.0));
+        }
+    });
+}
+
+/// The fuse ran out, `t` seconds ago: a white flash, an 8-bit fireball and
+/// flying chunks, then the potato charred under a bouncing BOOM, and a tap
+/// to reset. Fades as the 96×96 one.
+pub fn draw_boom<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
+    let fade = (1.0 - (t - 4.6) / 1.0).clamp(0.0, 1.0);
+    in_pixels(c, |p| {
+        if t < 0.1 {
+            p.fill_rect(-32.0, -32.0, 64.0, 64.0, style(pal::WHITE, 1.0 - t / 0.1));
+        }
+        // The fireball: 2×2 blocks out to a ragged edge that grows, then
+        // burns out from the middle. White at the heart, red at the rim.
+        if t < 0.7 {
+            let u = t / 0.7;
+            let grow = 1.0 - (u * 2.0).min(1.0);
+            let r = 26.0 * (1.0 - grow * grow);
+            let hole = r * ((u - 0.3) / 0.7).max(0.0) * 1.1;
+            let mut y = -26.0;
+            while y < 26.0 {
+                let mut x = -26.0;
+                while x < 26.0 {
+                    let (cx, cy) = (x + 1.0, y + 1.0);
+                    let d = libm::sqrtf(cx * cx + cy * cy);
+                    // A fixed ragged edge from the block's position.
+                    let h = frac(sinf(x * 12.9898 + y * 78.233) * 43758.547);
+                    let edge = r * (0.8 + 0.25 * h);
+                    if d < edge && d >= hole {
+                        let k = d / edge.max(1.0) + 0.6 * u;
+                        let colour = if k < 0.35 {
+                            pal::WHITE
+                        } else if k < 0.6 {
+                            pal::GOLD
+                        } else if k < 0.85 {
+                            pal::EMBER
+                        } else {
+                            pal::RED
+                        };
+                        p.fill_rect(x, y, 2.0, 2.0, style(colour, 1.0));
+                    }
+                    x += 2.0;
+                }
+                y += 2.0;
+            }
+        }
+        // Chunks of potato fly out and fall. Like the smoke, they run on
+        // past the glass's corners.
+        if t < 1.3 {
+            for k in 0..12 {
+                let a = k as f32 * core::f32::consts::TAU / 12.0 + 0.3;
+                let v = 34.0 + 10.0 * (k % 3) as f32;
+                let x = roundf(libm::cosf(a) * v * t);
+                let y = roundf(libm::sinf(a) * v * t + 40.0 * t * t);
+                let size = if t < 0.5 { 3.0 } else { 2.0 };
+                let colour = if k % 2 == 0 { pal::POTATO } else { pal::EMBER };
+                p.fill_rect(
+                    x - 1.0,
+                    y - 1.0,
+                    size,
+                    size,
+                    style(colour, fade * (1.0 - t / 1.3)),
+                );
+            }
+        }
+        // What's left: a charred potato, smoking.
+        let left = ((t - 0.45) / 0.3).clamp(0.0, 1.0) * fade;
+        if left > 0.0 {
+            let burnt = Spud {
+                skin: pal::CHAR,
+                face: &spr::FACE_BURNT,
+            };
+            draw_potato(p, -16.0, -24.0, &burnt, None, left);
+            for k in 0..3 {
+                let u = frac(t * 0.6 + k as f32 / 3.0);
+                let sx = roundf(-6.0 + 6.0 * k as f32 + sinf(u * 6.0 + k as f32) * 2.0);
+                let sy = roundf(-26.0 - 8.0 * u);
+                p.fill_rect(sx, sy, 2.0, 2.0, style(pal::DIM, left * (1.0 - u) * 0.7));
+            }
+        }
+        // BOOM drops in from the top and bounces to rest.
+        if t > 0.2 {
+            let u = ((t - 0.2) / 0.5).min(1.0);
+            let bounce = if u < 0.6 {
+                let k = u / 0.6;
+                -40.0 * (1.0 - k * k)
+            } else {
+                let k = (u - 0.6) / 0.4;
+                -6.0 * sinf(k * core::f32::consts::PI)
+            };
+            draw_arcade(p, "BOOM", roundf(6.0 + bounce), 2.0, pal::RED, pal::GOLD, fade);
+        }
+        if t > 1.2 {
+            let a = ((t - 1.2) / 0.4).min(1.0) * fade;
+            draw_hint(p, &spr::TAP, "reset", 23.0, a);
+        }
+    });
+}
+
+// ---------- Pass the Pot ----------
+//
+// The bills in hand are banknotes in mint (money you hold), the ones you
+// don't roll faint, with the count beside the word and a tap hint. A
+// result shows each die as a sprite: arrows pass a bill left or right
+// (white), the pot takes one (gold, like the coins), a dot keeps it
+// (mint). Under them, one short line per kind in the same colour, so no
+// line runs off the face however the dice fall.
+
+/// Pass the Pot between rolls: three bills with the ones you roll lit, how
+/// many that is, and that a tap changes it.
+pub fn draw_bills<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, n: u8, alpha: f32) {
+    in_pixels(c, |p| {
+        let max = smokebomb_shared::types::MAX_POT_DICE;
+        let (w, gap) = (spr::BILL.width as f32, 3.0);
+        let x0 = -floorf((max as f32 * w + (max as f32 - 1.0) * gap) / 2.0);
+        for i in 0..max {
+            let colour = if i < n as usize { pal::MINT } else { pal::FAINT };
+            draw_glyph(
+                p,
+                &spr::BILL,
+                x0 + i as f32 * (w + gap),
+                -27.0,
+                1.0,
+                style(colour, alpha),
+            );
+        }
+        // "3 bills": the count in the result numerals, the word beside it on
+        // their baseline.
+        let mut digits: String<2> = String::new();
+        let _ = write!(digits, "{n}");
+        let word = if n == 1 { "bill" } else { "bills" };
+        let wd = NUM_M.measure(&digits);
+        let total = wd + 3 + TEXT.measure(word);
+        let x = -floorf(total as f32 / 2.0);
+        NUM_M.draw(
+            p,
+            &digits,
+            x + floorf(wd as f32 / 2.0),
+            -14.0,
+            style(pal::WHITE, alpha),
+        );
+        TEXT.draw(
+            p,
+            word,
+            x + (wd + 3) as f32,
+            9.0,
+            1.0,
+            Align::Left,
+            style(pal::WHITE, alpha),
+        );
+        let w = spr::TAP.width as usize + 2 + TEXT.measure("change");
+        let x = -floorf(w as f32 / 2.0);
+        draw_glyph(p, &spr::TAP, x, 21.0, 1.0, style(pal::DIM, alpha));
+        TEXT.draw(
+            p,
+            "change",
+            x + (spr::TAP.width + 2) as f32,
+            21.0,
+            1.0,
+            Align::Left,
+            style(pal::WHITE, alpha),
+        );
+    });
+}
+
+/// What a Pass the Pot die says, and its colour.
+fn pot_face(v: u8) -> (PotFace, Color) {
+    let f = PotFace::from_raw(v);
+    let colour = match f {
+        PotFace::Left | PotFace::Right => pal::WHITE,
+        PotFace::Pot => pal::GOLD,
+        PotFace::Keep => pal::MINT,
+    };
+    (f, colour)
+}
+
+/// A Pass the Pot die's sprite, 13 wide at scale 1, centred on `(cx, cy)`.
+fn draw_pot_face<T: Target>(
+    p: &mut Painter<T>,
+    v: u8,
+    cx: f32,
+    cy: f32,
+    scale: f32,
+    colour: Color,
+    alpha: f32,
+) {
+    match PotFace::from_raw(v) {
+        PotFace::Left => draw_centered(p, &spr::PASS_LEFT, cx, cy, scale, style(colour, alpha)),
+        PotFace::Right => draw_centered(p, &spr::PASS_RIGHT, cx, cy, scale, style(colour, alpha)),
+        PotFace::Pot => {
+            draw_centered(p, &spr::POT_INSIDE, cx, cy, scale, style(colour, alpha * 0.3));
+            draw_centered(p, &spr::POT_RIM, cx, cy, scale, style(colour, alpha));
+        }
+        PotFace::Keep => draw_centered(p, &spr::KEEP, cx, cy, scale, style(colour, alpha)),
+    }
+}
+
+/// The lines under a Pass the Pot result: one per kind that came up, in
+/// its colour ("2 left", "1 pot"), or "keep" / "keep all".
+pub fn pot_lines(values: &[u8]) -> Vec<(String<12>, Color), 3> {
+    let mut counts = [0u8; 3];
+    for &v in values {
+        match PotFace::from_raw(v) {
+            PotFace::Left => counts[0] += 1,
+            PotFace::Right => counts[1] += 1,
+            PotFace::Pot => counts[2] += 1,
+            PotFace::Keep => {}
+        }
+    }
+    let mut lines = Vec::new();
+    for (n, (word, colour)) in
+        counts
+            .iter()
+            .zip([("left", pal::WHITE), ("right", pal::WHITE), ("pot", pal::GOLD)])
+    {
+        if *n > 0 {
+            let mut s = String::new();
+            let _ = write!(s, "{n} {word}");
+            let _ = lines.push((s, colour));
+        }
+    }
+    if lines.is_empty() {
+        let mut s = String::new();
+        let _ = s.push_str(if values.len() > 1 { "keep all" } else { "keep" });
+        let _ = lines.push((s, pal::MINT));
+    }
+    lines
+}
+
+/// A Pass the Pot result: the dice as sprites (bigger the fewer there
+/// are), and under them what to do, a line per kind. A dud greys it all.
+fn draw_pot_result<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, record: &RollRecord, dud: bool, alpha: f32) {
+    let values = record.values.as_slice();
+    let n = values.len().max(1);
+    let scale = match n {
+        1 => 3.0,
+        2 => 2.0,
+        _ => 1.0,
+    };
+    let lines = pot_lines(values);
+    let glyph_h = 9.0 * scale;
+    let block = glyph_h + 6.0 + lines.len() as f32 * LINE_PITCH - 2.0;
+    let top = -floorf(block / 2.0) - 2.0;
+    in_pixels(c, |p| {
+        let pitch = 13.0 * scale + 6.0;
+        let cy = top + floorf(glyph_h / 2.0);
+        for (i, &v) in values.iter().enumerate() {
+            let x = roundf((i as f32 - (n as f32 - 1.0) / 2.0) * pitch);
+            let colour = if dud { pal::DIM } else { pot_face(v).1 };
+            draw_pot_face(p, v, x, cy, scale, colour, alpha);
+        }
+        let mut y = top + glyph_h + 6.0;
+        for (line, colour) in &lines {
+            let colour = if dud { pal::DIM } else { *colour };
+            TEXT.draw(p, line, 0.0, y, 1.0, Align::Center, style(colour, alpha));
+            y += LINE_PITCH;
+        }
+    });
+}
+
+// ---------- the hold ring ----------
+
+/// The hold ring: a rounded square two pixels wide, set in from the panel's
+/// edge and round its corners with the glass's own radius, so it sits
+/// evenly inside the lit area. It fills clockwise from 12 o'clock as a hold
+/// progresses (`p`, 0–1), in whole pixels: a 96×96 ring's anti-aliased
+/// line goes soft at this size. `grow` (canvas units) pushes it outward as
+/// it flashes away.
+pub fn draw_hold_ring<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, p: f32, alpha: f32, grow: f32) {
+    if alpha <= 0.0 || p <= 0.0 {
+        return;
+    }
+    let grow = grow * crate::gfx::k_of::<T>();
+    let half = T::WIDTH as f32 / 2.0;
+    // The centreline, from the middle; its corners' radius.
+    let h = half - 2.0 + grow;
+    let r = (T::MASK_RADIUS_PX - 2.0 + grow).max(2.0);
+    let a = h - r;
+    let quarter = core::f32::consts::FRAC_PI_2 * r;
+    let total = 8.0 * a + 4.0 * quarter;
+    let lit = p.min(1.0) * total;
+    in_pixels(c, |pt| {
+        let st = style(pal::WHITE, alpha);
+        let n = T::WIDTH as i32;
+        for j in 0..n {
+            for i in 0..n {
+                // This pixel's centre.
+                let (x, y) = (i as f32 - half + 0.5, j as f32 - half + 0.5);
+                let (qx, qy) = (x.clamp(-a, a), y.clamp(-a, a));
+                let (dx, dy) = (x - qx, y - qy);
+                let d = libm::sqrtf(dx * dx + dy * dy) - r;
+                if !(-1.0..1.0).contains(&d) {
+                    continue;
+                }
+                let th = libm::atan2f(dy, dx);
+                use core::f32::consts::PI;
+                // How far round the centreline, clockwise from 12 o'clock.
+                let s = match (x > a, x < -a, y > a, y < -a) {
+                    (true, _, _, true) => a + r * (th + PI / 2.0),
+                    (true, _, true, _) => 3.0 * a + quarter + r * th,
+                    (_, true, true, _) => 5.0 * a + 2.0 * quarter + r * (th - PI / 2.0),
+                    (_, true, _, true) => 7.0 * a + 3.0 * quarter + r * (th + PI),
+                    (true, _, _, _) => a + quarter + (y + a),
+                    (_, _, true, _) => 3.0 * a + 2.0 * quarter + (a - x),
+                    (_, true, _, _) => 5.0 * a + 3.0 * quarter + (a - y),
+                    _ if x >= 0.0 => x,
+                    _ => total + x,
+                };
+                if s <= lit {
+                    pt.fill_rect(x - 0.5, y - 0.5, 1.0, 1.0, st);
+                }
+            }
         }
     });
 }

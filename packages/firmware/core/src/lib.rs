@@ -1178,7 +1178,11 @@ where
         } else if let Some(t) = self.potato.boomed_for(now) {
             Some(PotatoView::Boom(t as f32 / 1000.0))
         } else if self.potato.is_lit() {
-            Some(PotatoView::Fuse(self.potato.heat(now), self.potato.pulse(now)))
+            Some(PotatoView::Fuse(
+                self.potato.heat(now),
+                self.potato.pulse(now),
+                (now % 1_000_000) as f32 / 1000.0,
+            ))
         } else {
             None
         };
@@ -1307,12 +1311,12 @@ where
                     1.0 - u,
                     1.0 + 0.12 * u,
                 );
-                screens::draw_hold_ring(&mut c, 1.0, 1.0 - u, u * 3.0);
+                TargetOf::<P>::draw_hold_ring(&mut c, 1.0, 1.0 - u, u * 3.0);
             }
             if menu.is_none() {
                 if let Some((f, p)) = hold {
                     if f == face {
-                        screens::draw_hold_ring(&mut c, p, 1.0, 0.0);
+                        TargetOf::<P>::draw_hold_ring(&mut c, p, 1.0, 0.0);
                     }
                 }
             }
@@ -1388,8 +1392,8 @@ where
                 }
             }
             match potato_face {
-                Some(PotatoView::Fuse(heat, pulse)) => screens::draw_fuse(&mut c, heat, pulse),
-                Some(PotatoView::Boom(t)) => screens::draw_boom(&mut c, t),
+                Some(PotatoView::Fuse(heat, pulse, t)) => TargetOf::<P>::draw_fuse(&mut c, heat, pulse, t),
+                Some(PotatoView::Boom(t)) => TargetOf::<P>::draw_boom(&mut c, t),
                 None => {}
             }
         }
@@ -1449,8 +1453,9 @@ const SMOLDER_MAX: f32 = 0.3;
 /// What a round of Hot Potato shows on the faces.
 #[derive(Clone, Copy)]
 enum PotatoView {
-    /// Heat and pulse, both 0–1.
-    Fuse(f32, f32),
+    /// Heat and pulse, both 0–1, and the clock in seconds (wrapping every
+    /// ~17 minutes, so it stays precise as an f32), for animation.
+    Fuse(f32, f32, f32),
     /// Seconds since it went off.
     Boom(f32),
 }
@@ -1498,10 +1503,10 @@ fn draw_menu_face<A: smokebomb_hal::AssetStore, T: DisplayTarget>(
     }
     {
         let intro = ui.menu_intro(now);
-        screens::draw_hold_ring(c, 1.0, intro.ring_alpha, intro.ring_grow);
+        T::draw_hold_ring(c, 1.0, intro.ring_alpha, intro.ring_grow);
         T::draw_menu(c, &m.draft, battery, 0.0, 0.0, intro.alpha, intro.scale);
         if let Some(p) = hold {
-            screens::draw_hold_ring(c, p, 1.0, 0.0);
+            T::draw_hold_ring(c, p, 1.0, 0.0);
         }
     }
 }

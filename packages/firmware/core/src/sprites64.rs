@@ -330,6 +330,95 @@ pub static SHAKE: Glyph<5> = glyph(' ', "....##### .#..#...# ....#.#.# ##..#...#
 /// Tap, 7×7.
 pub static TAP: Glyph<7> = glyph(' ', "..###.. .#...#. #..#..# #.###.# #..#..# .#...#. ..###..");
 
+/// The hot potato, 16×13: `#` skin, `s` its spots.
+const POTATO: &str = "
+....########....
+..############..
+.###s##########.
+################
+################
+################
+##########s#####
+################
+################
+.###s##########.
+.##############.
+..############..
+....########....
+";
+pub static POTATO_SKIN: Glyph<13> = layer(' ', POTATO, b'#');
+pub static POTATO_SPOTS: Glyph<13> = layer(' ', POTATO, b's');
+/// Where the fuse leaves the potato, pixels from its top left.
+pub const POTATO_FUSE: (f32, f32) = (9.0, 0.0);
+
+/// The potato's face as the fuse heats, drawn over the skin (same 16×13
+/// frame): calm, worried, panicking, and burnt out.
+pub static FACE_CALM: Glyph<13> = glyph(
+    ' ',
+    "................ ................ ................ ................ \
+     .....#....#..... .....#....#..... ................ ......#..#...... \
+     .......##.......",
+);
+pub static FACE_WORRIED: Glyph<13> = glyph(
+    ' ',
+    "................ ................ ................ ....##....##.... \
+     .....#....#..... .....#....#..... ................ ................ \
+     ......####......",
+);
+pub static FACE_PANIC: Glyph<13> = glyph(
+    ' ',
+    "................ ................ ...##......##... ................ \
+     ....##....##.... ....##....##.... ................ .......##....... \
+     ......#..#...... ......#..#...... .......##.......",
+);
+pub static FACE_BURNT: Glyph<13> = glyph(
+    ' ',
+    "................ ................ ................ ....#.#..#.#.... \
+     .....#....#..... ....#.#..#.#.... ................ ................ \
+     ......####......",
+);
+
+/// A drop of sweat, 3×4.
+pub static SWEAT: Glyph<4> = glyph(' ', ".#. .#. ### .#.");
+
+/// A spark, 5×5, in two shapes to flicker between.
+pub static SPARK_X: Glyph<5> = glyph(' ', "#...# .#.#. ..#.. .#.#. #...#");
+pub static SPARK_PLUS: Glyph<5> = glyph(' ', "..#.. ..#.. ##.## ..#.. ..#..");
+
+/// A banknote, 17×9: a border, a dot in each corner and the middle's oval.
+pub static BILL: Glyph<9> = glyph(
+    ' ',
+    "################# #...............# #.#....###....#.# #.....#...#.....# \
+     #.....#.#.#.....# #.....#...#.....# #.#....###....#.# #...............# \
+     #################",
+);
+
+/// Pass the Pot's faces, 13 wide: pass a bill left or right, feed the pot
+/// (`#` the cauldron, `o` its inside), or keep it.
+pub static PASS_RIGHT: Glyph<9> = glyph(
+    ' ',
+    ".......#..... .......##.... .......###... ############. ############# \
+     ############. .......###... .......##.... .......#.....",
+);
+pub static PASS_LEFT: Glyph<9> = glyph(
+    ' ',
+    ".....#....... ....##....... ...###....... .############ ############# \
+     .############ ...###....... ....##....... .....#.......",
+);
+const POT: &str = "
+#############
+.#ooooooooo#.
+##ooooooooo##
+##ooooooooo##
+.#ooooooooo#.
+..#ooooooo#..
+...#######...
+..##.....##..
+";
+pub static POT_RIM: Glyph<8> = layer(' ', POT, b'#');
+pub static POT_INSIDE: Glyph<8> = layer(' ', POT, b'o');
+pub static KEEP: Glyph<5> = glyph(' ', ".###. ##### ##### ##### .###.");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +452,21 @@ mod tests {
             assert!(symmetric(g));
         }
         assert!(symmetric(&HEART) && symmetric(&TAP) && symmetric(&SHACKLE) && symmetric(&LOCK_BODY));
+        assert!(symmetric(&BILL) && symmetric(&POT_RIM) && symmetric(&POT_INSIDE) && symmetric(&KEEP));
+        assert!(symmetric(&SPARK_X) && symmetric(&SPARK_PLUS) && symmetric(&SWEAT));
+        for face in [&FACE_CALM, &FACE_WORRIED, &FACE_PANIC, &FACE_BURNT] {
+            assert!(symmetric(face));
+            // The face sits on the skin.
+            for y in 0..13 {
+                assert_eq!(face.rows[y] & !POTATO_SKIN.rows[y] & !POTATO_SPOTS.rows[y], 0);
+            }
+        }
+        // The arrows mirror each other.
+        for y in 0..9 {
+            let w = PASS_LEFT.width as u32;
+            let l = PASS_LEFT.rows[y] >> (32 - w);
+            assert_eq!(l.reverse_bits() >> (32 - w), PASS_RIGHT.rows[y] >> (32 - w));
+        }
         for y in 0..16 {
             assert_eq!(PIG_FACE.rows[y] & (PIG_SNOUT.rows[y] | PIG_DARK.rows[y]), 0);
         }
