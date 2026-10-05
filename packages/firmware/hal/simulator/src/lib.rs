@@ -609,5 +609,7 @@ mod tests {
         assert_eq!(&s.faces[Face::PosX.index()][0..2], &[0xF8, 0x00]);
         // The top face is upright: as sent.
         assert_eq!(Rgb64::MOUNT[Face::PosY.index()], Mount::Upright);
+        // The lid's ribbon points to −X, against its drawing axes' x.
+        assert_eq!(Rgb64::MOUNT[Face::NegY.index()], Mount::UpsideDown);
     }
 }

@@ -5,15 +5,17 @@ Until 4 Oct the 30 mm die's six display modules were pinwheeled: each
 screen's ribbon left a different way round the cube. Now (sugarcube-
 assembly.html, `FACES`) the four side screens' ribbons point down, toward
 the lid; the top screen's points to +X, down the harness channel; the lid
-screen's to -Z. The firmware turns each picture to suit (`Rgb64::MOUNT`).
+screen's to -X, opposite the top's (balance, its fold clears the locating
+pin at -Z, its connector on the board's -X side). The firmware turns each
+picture to suit (`Rgb64::MOUNT`).
 
 The exported x-rays still have the pinwheel. This script fixes them in place
-of a re-export:
+of a re-export (run it on the pinwheel exports, not on its own output):
 
 1. Each face's module (the triangles of `Internal_panel_glass`, `_encap`,
    `_chip` and `_fpc` nearest that face) turns about the face's axis, from
-   its old ribbon direction to its new one: +X a half turn, +Y, +Z and -Z a
-   quarter turn; -X and the lid's were already right. Points and normals
+   its old ribbon direction to its new one: +X a half turn, +Y, +Z, -Z and
+   the lid's a quarter turn; -X was already right. Points and normals
    turn; nothing else changes.
 2. The screen harness (`Internal_w_spi_a`, `_b`, `_c`) is rebuilt: from each
    cup screen's ribbon end in to the wall, round a ring just above the board
@@ -50,11 +52,12 @@ TURNS = {
     "py": ((0, 1, 0), 90),   # +Z -> +X
     "pz": ((0, 0, 1), -90),  # +X -> -Y
     "nz": ((0, 0, 1), 90),   # -X -> -Y
+    "ny": ((0, 1, 0), 90),   # -Z -> -X
 }
 # The new ribbon directions, for finding each ribbon's end.
 RIBBON = {
     "px": (0, -1, 0), "nx": (0, -1, 0), "pz": (0, -1, 0), "nz": (0, -1, 0),
-    "py": (1, 0, 0), "ny": (0, 0, -1),
+    "py": (1, 0, 0), "ny": (-1, 0, 0),
 }
 NORMAL = {
     "px": (1, 0, 0), "nx": (-1, 0, 0), "py": (0, 1, 0),

@@ -321,17 +321,20 @@ impl Target for Rgb64 {
     /// texels, ≈1.80 mm, ≈10.7 panel px. The window's own radius is 1.84 mm.
     const MASK_RADIUS_PX: f32 = 10.7;
     /// No pinwheel (4 Oct): the four side screens' ribbons point down,
-    /// toward the lid; the top screen's points to +X, down the harness
-    /// channel; the lid screen's to −Z (sugarcube-assembly.html, `FACES`).
-    /// Against the faces' drawing axes that leaves the top panel upright and
-    /// the other five turned a quarter clockwise.
+    /// toward the lid; the top screen's points to +X, folding straight into
+    /// the harness channel; the lid screen's to −X, opposite it. Each panel
+    /// sits ~1.8 mm off centre toward its ribbon, so top and lid cancel (as
+    /// the four sides do), the lid's fold clears its locating pin at −Z, and
+    /// its connector goes on the board's −X side, away from the +X hub.
+    /// Against the faces' drawing axes that leaves the top panel upright,
+    /// the lid's upside down and the four sides turned a quarter clockwise.
     const MOUNT: [Mount; crate::FACE_COUNT] = [
-        Mount::Clockwise, // +X: ribbon to −Y
-        Mount::Clockwise, // −X: ribbon to −Y
-        Mount::Upright,   // +Y: ribbon to +X
-        Mount::Clockwise, // −Y: ribbon to −Z
-        Mount::Clockwise, // +Z: ribbon to −Y
-        Mount::Clockwise, // −Z: ribbon to −Y
+        Mount::Clockwise,  // +X: ribbon to −Y
+        Mount::Clockwise,  // −X: ribbon to −Y
+        Mount::Upright,    // +Y: ribbon to +X
+        Mount::UpsideDown, // −Y: ribbon to −X
+        Mount::Clockwise,  // +Z: ribbon to −Y
+        Mount::Clockwise,  // −Z: ribbon to −Y
     ];
 
     type Pixel = Rgb565;

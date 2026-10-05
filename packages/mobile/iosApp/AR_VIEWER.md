@@ -172,9 +172,12 @@ many of its die shells have an `Etching`. It warns about any that don't.
 
 Since 4 Oct the 30 mm die's screens aren't pinwheeled
 (`sugarcube-assembly.html`, `FACES`): the four side screens' ribbons point
-down, toward the lid; the top screen's points to +X, down the harness
-channel; the lid screen's to −Z. The firmware turns each panel's picture to
-suit (`Rgb64::MOUNT` in `packages/firmware/hal/src/target.rs`), so what the
+down, toward the lid; the top screen's points to +X, folding straight into
+the harness channel; the lid screen's to −X, opposite it. Each panel sits
+about 1.8 mm off centre toward its ribbon, so the top and lid cancel as the
+four sides do; −X also keeps the lid's ribbon fold clear of its locating pin
+at −Z, and its connector away from the hub at +X. The firmware turns each
+panel's picture to suit (`Rgb64::MOUNT` in `packages/firmware/hal/src/target.rs`), so what the
 glass shows is unchanged.
 
 `scripts/unpinwheel_30.py` brought the 30 mm x-rays (assembled and exploded)
@@ -186,8 +189,9 @@ connector on the +X side. A fresh export from the model generator replaces
 both.
 
 ```sh
-python3 unpinwheel_30.py ../iosApp/Resources/Models/sugarcube_30_xray.usdz \
-    ../iosApp/Resources/Models/sugarcube_30_xray_exploded.usdz --out /tmp/unpinwheeled
+# On the pinwheel exports (the bundled ones are already done):
+python3 unpinwheel_30.py pinwheel/sugarcube_30_xray.usdz \
+    pinwheel/sugarcube_30_xray_exploded.usdz --out /tmp/unpinwheeled
 python3 convert_usdz.py --check-only /tmp/unpinwheeled/*.usdz
 ```
 
