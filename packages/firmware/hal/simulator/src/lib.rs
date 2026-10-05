@@ -156,6 +156,18 @@ impl SimState {
         self.local_base_s = (seconds as i64 - up).rem_euclid(86_400) as u32;
     }
 
+    /// Forget the panels' contents and target, as when the simulator swaps
+    /// in a die with other panels: the next frames start them afresh.
+    pub fn reset_panels(&mut self) {
+        self.target = None;
+        for f in self.faces.iter_mut().chain(self.pending.iter_mut()) {
+            f.clear();
+        }
+        self.panel_bytes = [0; FACE_COUNT];
+        self.panel_writes = [0; FACE_COUNT];
+        self.frame_seq += 1;
+    }
+
     /// Set the battery level (the browser's slider).
     pub fn set_battery(&mut self, percent: u8) {
         self.battery_percent = percent.min(100);

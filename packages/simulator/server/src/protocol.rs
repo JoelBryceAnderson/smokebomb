@@ -1,17 +1,21 @@
 //! Simulator <-> browser wire format. Mirrored in `web-ui/src/protocol.ts`.
 
 use serde::{Deserialize, Serialize};
-use smokebomb_hal::FRAME_BYTES;
+use smokebomb_hal::TargetId;
 use smokebomb_shared::SignedRoll;
 
 /// Bumped whenever a message changes shape. The browser compares it with its
 /// own copy (`web-ui/src/protocol.ts`) and shows a banner when they differ,
 /// which usually means the web UI build is out of date.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
-/// First byte of a binary frame packet; followed by six 4bpp panel frames in
-/// `Face` order.
+/// First byte of a binary frame packet. Then a header, the panel format
+/// (1: 4 bpp grey, two pixels a byte, high nibble first; 2: RGB565, two
+/// bytes a pixel, high byte first), its width and its height, one byte
+/// each; then the six frames in `Face` order.
 pub const FRAME_PACKET_TAG: u8 = 0x01;
+/// Bytes before the first frame.
+pub const FRAME_HEADER_LEN: usize = 4;
 /// First byte of a binary pose packet; followed by seven little-endian f32:
 /// rotation x, y, z, w (die body → world), then position x, y, z in scene
 /// units.
@@ -42,9 +46,13 @@ impl Outbound {
     }
 }
 
-pub fn encode_frames(faces: &[Vec<u8>; 6]) -> std::sync::Arc<Vec<u8>> {
-    let mut buf = Vec::with_capacity(1 + FRAME_BYTES * 6);
-    buf.push(FRAME_PACKET_TAG);
+pub fn encode_frames(target: TargetId, faces: &[Vec<u8>; 6]) -> std::sync::Arc<Vec<u8>> {
+    let side = match target {
+        TargetId::Grey96 => 96,
+        TargetId::Rgb64 => 64,
+    };
+    let mut buf = Vec::with_capacity(FRAME_HEADER_LEN + faces.iter().map(Vec::len).sum::<usize>());
+    buf.extend_from_slice(&[FRAME_PACKET_TAG, target as u8, side, side]);
     for f in faces {
         buf.extend_from_slice(f);
     }
@@ -58,6 +66,12 @@ pub enum Event {
     Hello {
         protocol: u32,
         mode: String,
+        /// The die being simulated: 34 (96×96 grey) or 30 (64×64 colour) mm.
+        die: u8,
+    },
+    /// The simulator swapped in the other die (and rebooted its firmware).
+    Die {
+        die: u8,
     },
     Mode {
         mode: String,
@@ -194,6 +208,11 @@ pub enum Inbound {
     ReducedMotion {
         on: bool,
     },
+    /// Simulate the other die: 34 (96×96 grey) or 30 (64×64 colour) mm. The
+    /// firmware reboots built for its panels.
+    SetDie {
+        die: u8,
+    },
 }
 
 #[derive(Debug, Deserialize, Clone, Copy)]
@@ -229,5 +248,30 @@ impl From<TipDirection> for crate::world::TipDir {
             TipDirection::Left => Self::Left,
             TipDirection::Right => Self::Right,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_packets_say_their_panels() {
+        let grey: [Vec<u8>; 6] = core::array::from_fn(|_| vec![0x5A; 96 * 96 / 2]);
+        let p = encode_frames(TargetId::Grey96, &grey);
+        assert_eq!(&p[..FRAME_HEADER_LEN], &[FRAME_PACKET_TAG, 1, 96, 96]);
+        assert_eq!(p.len(), FRAME_HEADER_LEN + 6 * 4608);
+        let rgb: [Vec<u8>; 6] = core::array::from_fn(|i| vec![i as u8; 64 * 64 * 2]);
+        let p = encode_frames(TargetId::Rgb64, &rgb);
+        assert_eq!(&p[..FRAME_HEADER_LEN], &[FRAME_PACKET_TAG, 2, 64, 64]);
+        assert_eq!(p.len(), FRAME_HEADER_LEN + 6 * 8192);
+        // Faces in order.
+        assert_eq!(p[FRAME_HEADER_LEN + 5 * 8192], 5);
+    }
+
+    #[test]
+    fn set_die_parses() {
+        let m: Inbound = serde_json::from_str(r#"{"type":"set_die","die":30}"#).unwrap();
+        assert!(matches!(m, Inbound::SetDie { die: 30 }));
     }
 }

@@ -1,10 +1,9 @@
 // Charging contacts and the charging-face etching (design brief §1 and §2).
 import * as THREE from "three";
+import { DieGeometry, MM } from "./geometry";
 
-const MM = 1 / 13.25; // scene units per mm
-
-/** Contact centre from the face centre, in mm, on both axes. 13.2 keeps them clear of the panel's ledge glass; do not move inward. */
-const CONTACT_AT = 13.2 * MM;
+// 34 mm die: contact centres 13.2 mm from the face centre on both axes,
+// which keeps them clear of the panel's ledge glass (do not move inward).
 const HEX_R = 0.81 * MM; // 1.4 mm across flats
 const HEX_GAP = 0.15 * MM;
 
@@ -25,9 +24,16 @@ export function addContacts(
   die: THREE.Group,
   face: FaceDef,
   half: number,
+  g: DieGeometry,
   darkMaterial: THREE.Material,
   contactMaterial: THREE.Material,
+  anisotropy: number,
 ) {
+  if (g.screws.kind === "slotted") {
+    addSlottedScrews(die, face, half, g.screws, contactMaterial, anisotropy);
+    return;
+  }
+  const CONTACT_AT = g.screws.atMm * MM;
   const ringGeo = new THREE.RingGeometry(HEX_R, HEX_R + HEX_GAP, 6, 1);
   const headGeo = new THREE.CircleGeometry(HEX_R, 6);
   const slotGeo = new THREE.PlaneGeometry(1.3 * MM, 0.2 * MM);
@@ -55,6 +61,64 @@ export function addContacts(
     g.translateY(sy * CONTACT_AT);
     die.add(g);
   }
+}
+
+/**
+ * The 30 mm die's lid screws, which are also its charging contacts: plain
+ * round single-slot heads (a catalogue M1.0 watch screw, 1.6 mm across) in a
+ * round counterbore whose dark ring is the insulating sleeve, with a 0.25 mm
+ * slot. Not clocked: each screw stops where its torque left it, so the slots
+ * point every which way (the mockup's angles). Head, slot and ring are one
+ * mipmapped texture so the fine slot filters cleanly when the die is small.
+ */
+function addSlottedScrews(
+  die: THREE.Group,
+  face: FaceDef,
+  half: number,
+  s: { atMm: number; headMm: number; ringMm: number; slotMm: number; slotAngles: number[] },
+  material: THREE.MeshStandardMaterial | THREE.Material,
+  anisotropy: number,
+) {
+  const N = 256;
+  const c = document.createElement("canvas");
+  c.width = c.height = N;
+  const x = c.getContext("2d")!;
+  const px = N / 2 / s.ringMm; // canvas px per mm
+  x.fillStyle = "#121214";
+  x.fillRect(0, 0, N, N); // the sleeve ring
+  x.fillStyle = "#ffffff";
+  x.beginPath();
+  x.arc(N / 2, N / 2, (s.headMm / 2) * px, 0, Math.PI * 2);
+  x.fill();
+  x.fillStyle = "#121214";
+  x.fillRect(N / 2 - (s.headMm / 2) * px, N / 2 - (s.slotMm / 2) * px, s.headMm * px, s.slotMm * px);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = anisotropy;
+  // The head takes the contact finish; the texture darkens the ring and slot.
+  const mat = (material as THREE.MeshStandardMaterial).clone();
+  mat.map = tex;
+  mat.polygonOffset = true;
+  mat.polygonOffsetFactor = -2;
+  mat.polygonOffsetUnits = -2;
+  const geo = new THREE.CircleGeometry(s.ringMm * MM, 64);
+  const corners = [
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
+  ];
+  corners.forEach(([sx, sy], i) => {
+    const head = new THREE.Mesh(geo, mat);
+    head.rotation.z = s.slotAngles[i % s.slotAngles.length];
+    const grp = new THREE.Group();
+    grp.add(head);
+    grp.rotation.set(...face.rot);
+    grp.position.set(...face.n).multiplyScalar(half + 0.0009);
+    grp.translateX(sx * s.atMm * MM);
+    grp.translateY(sy * s.atMm * MM);
+    die.add(grp);
+  });
 }
 
 /**
@@ -94,22 +158,22 @@ const ETCH_TEXT = {
   left: "REGULATORY INFO IN SETTINGS",
 };
 
-/** Half-size of the glass window the border surrounds (24 mm square). */
-const WINDOW_HALF_MM = 12;
 /** Script sizes, and the script ink's clearance from the window. */
 const WORDMARK_MM = 0.95;
 const TAGLINE_MM = 0.7;
 const SCRIPT_CLEAR_MM = 0.8;
 
-function drawEtching(c: HTMLCanvasElement, serial: string) {
+function drawEtching(c: HTMLCanvasElement, serial: string, g: DieGeometry) {
   const C = c.width;
-  const PXMM = C / 29;
+  // The canvas covers the flat face: 29 mm on the 34 mm die, 25 on the 30.
+  const PXMM = C / g.etch.flatMm;
+  const WINDOW_HALF_MM = g.etch.windowHalfMm;
   const x = c.getContext("2d")!;
   x.clearRect(0, 0, C, C);
   x.fillStyle = x.strokeStyle = "rgb(150,152,156)";
   x.textAlign = "center";
   x.textBaseline = "middle";
-  const band = C / 2 - 13.25 * PXMM; // centre line of the 2.5 mm border
+  const band = C / 2 - g.etch.bandMm * PXMM; // centre line of the border
   const font = (mm: number) => `600 ${mm * PXMM}px "Space Grotesk", Arial, sans-serif`;
   const side = (rot: number, text: string, mm: number) => {
     x.save();
@@ -127,7 +191,12 @@ function drawEtching(c: HTMLCanvasElement, serial: string) {
     x.rotate(rot);
     x.font = `400 ${mm * PXMM}px "Pacifico", cursive`;
     const ink = x.measureText(text);
-    x.fillText(text, 0, -(WINDOW_HALF_MM + SCRIPT_CLEAR_MM) * PXMM - ink.actualBoundingBoxDescent);
+    // 34 mm: hug the window, the lowest tail SCRIPT_CLEAR_MM off it. 30 mm:
+    // the border is wide, so centre the ink in it.
+    const y = g.etch.centreScripts
+      ? -(C / 2 - band) + (ink.actualBoundingBoxAscent - ink.actualBoundingBoxDescent) / 2
+      : -(WINDOW_HALF_MM + SCRIPT_CLEAR_MM) * PXMM - ink.actualBoundingBoxDescent;
+    x.fillText(text, 0, y);
     x.restore();
   };
   scriptSide(0, ETCH_TEXT.top, WORDMARK_MM);
@@ -155,17 +224,18 @@ function drawEtching(c: HTMLCanvasElement, serial: string) {
 
 /**
  * Tone-on-tone laser marking as a transparent decal (55 % grey) over the
- * charging face's border. The 1024 px texture covers the 29 mm flat face.
+ * charging face's border. The 1024 px texture covers the flat face (29 mm on
+ * the 34 mm die, 25 mm on the 30 mm one).
  * Call `update(serial)` to redraw it, e.g. once the font loads.
  */
-export function makeEtching(half: number, anisotropy: number, faces: FaceDef[]) {
+export function makeEtching(half: number, g: DieGeometry, anisotropy: number, faces: FaceDef[]) {
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = 1024;
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = anisotropy;
   const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(29 * MM, 29 * MM),
+    new THREE.PlaneGeometry(g.etch.flatMm * MM, g.etch.flatMm * MM),
     new THREE.MeshStandardMaterial({
       map: texture,
       transparent: true,
@@ -183,7 +253,7 @@ export function makeEtching(half: number, anisotropy: number, faces: FaceDef[]) 
     mesh,
     update(serial: string) {
       last = serial;
-      drawEtching(canvas, serial);
+      drawEtching(canvas, serial, g);
       texture.needsUpdate = true;
     },
     redraw() {

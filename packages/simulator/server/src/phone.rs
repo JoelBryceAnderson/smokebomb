@@ -18,10 +18,11 @@ use std::sync::Arc;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
-use smokebomb_firmware::board;
 use smokebomb_firmware::smokebomb_core::menu::PlayMode;
+use smokebomb_firmware::smokebomb_core::target::DisplayTarget;
+use smokebomb_firmware::smokebomb_core::Firmware;
 use smokebomb_hal::SecureElement;
-use smokebomb_hal_simulator::SimSecureElement;
+use smokebomb_hal_simulator::{SimPlatform, SimSecureElement};
 use smokebomb_shared::protocol::{DieToPhone, PhoneToDie};
 use smokebomb_shared::types::MAX_POT_DICE;
 use smokebomb_shared::{DieKind, LicensedItem, SignedRoll};
@@ -109,7 +110,12 @@ pub fn send(state: &AppState, msg: &DieToPhone) {
 }
 
 /// Act on one request, as the die would on a BLE write.
-pub fn handle(fw: &mut board::Firmware, history: &RollLog, state: &AppState, req: PhoneRequest) {
+pub fn handle<T: DisplayTarget>(
+    fw: &mut Firmware<SimPlatform<T>>,
+    history: &RollLog,
+    state: &AppState,
+    req: PhoneRequest,
+) {
     let msg = match req {
         PhoneRequest::Connected => {
             send(state, &hello(state));
@@ -180,6 +186,8 @@ mod tests {
     use smokebomb_shared::{ModeId, ModeSet};
     use tokio::sync::{broadcast, mpsc};
 
+    use smokebomb_firmware::board;
+
     use super::*;
     use crate::protocol::StatusSnapshot;
 
@@ -201,6 +209,7 @@ mod tests {
             phone_in,
             phone_out,
             phones: Arc::default(),
+            die: Arc::new(tokio::sync::watch::channel(34).0),
         };
         (fw, state, rx)
     }
