@@ -4,7 +4,7 @@ The **Simulator** tab, iOS only (it began as the AR tab). You place a
 Sugarcube at true size, on your real table through the camera or on a
 virtual one (see [AR on or off](#ar-on-or-off)), then you can:
 
-- switch between the models
+- choose the die's size and colour (it starts on the 30 mm Rainbow)
 - turn and move the die, and scale it if you unlock true size
 - look inside with x-ray and explode it
 - tap a part to see its name
@@ -17,6 +17,23 @@ It needs iOS 18 or later, and runs on iPhone and iPad.
 - **iPad:** the controls sit in a side panel next to the camera view. The panel
   includes a control pad: drag on it to turn the die, flick it to throw the
   die, while you watch the table.
+
+## Choosing a die
+
+The controls pick a die by **size** (30, 34, 40 mm) and then **colour**, the
+variants of that size (30 mm: Rainbow, Colour; 34 mm: 16-grey, 1-bit). The
+viewer starts on the 30 mm Rainbow (`ModelCatalog.defaultID`).
+
+- Changing size keeps the colour when the new size has it, otherwise takes
+  that size's first colour.
+- The **X-ray** toggle switches between the die and its x-ray. X-ray stays on
+  while you change size or colour, and switching it off returns to the die you
+  chose. Dice of one size share an x-ray.
+- The 30 mm x-ray also offers the pre-exploded file.
+
+Only dice are offered (and, in debug builds, the per-part test model as a
+30 mm colour). The line-up stays in the catalog and its tests, but isn't in
+the picker.
 
 ## AR on or off
 
@@ -166,6 +183,8 @@ many of its die shells have an `Etching`. It warns about any that don't.
 
 `Models` is a folder reference, so you don't need to run `xcodegen generate`
 just to add a file. The picker lists only models that are actually bundled.
+A die's `size` puts it under that size and its `variant` is its colour; dice
+of a size are offered in catalog order.
 
 The converted models are in Git LFS (`.gitattributes`), so install it once
 (`brew install git-lfs && git lfs install`) before you clone or pull. Without
