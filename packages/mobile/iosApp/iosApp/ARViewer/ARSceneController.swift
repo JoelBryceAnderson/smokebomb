@@ -245,7 +245,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private func install(_ entity: Entity, as next: SugarcubeModel) {
         if model.isRolling { reset() }
         // With the lid off, the new model's lid comes off too, where the old one lay.
-        let lidAt = lidSteps.isEmpty ? lid.map(lidPose) : nil
+        let lidAt = lidSteps.isEmpty ? lid.map { lidPose($0) } : nil
         closeLidNow()
         rig?.root.removeFromParent()
         pivot.addChild(entity)
