@@ -15,7 +15,7 @@ pub mod target;
 
 pub use smokebomb_shared::assets::{FRAME_BYTES, PANEL_HEIGHT, PANEL_WIDTH};
 pub use smokebomb_shared::types::{Face, FACE_COUNT};
-pub use target::{Color, Grey96, Pixel, Region, Rgb565, Rgb64, Target, TargetId};
+pub use target::{Color, Grey96, Mount, Pixel, Region, Rgb565, Rgb64, Target, TargetId};
 
 /// The face with the charging contacts (and the laser etching around its
 /// window): −Y in the die's own frame. The die charges in the Nest only

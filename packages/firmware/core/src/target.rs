@@ -13,7 +13,7 @@
 //! of the size, in white. That is a stopgap, not a design; see the README's
 //! 30 mm section.
 
-use smokebomb_hal::{AssetStore, Color, Grey96, Rgb64, Target};
+use smokebomb_hal::{AssetStore, Color, Grey96, Mount, Rgb64, Target};
 use smokebomb_shared::assets::SpriteKind;
 use smokebomb_shared::RollRecord;
 
@@ -53,8 +53,9 @@ pub trait DisplayTarget: Target {
     type Tiles: Copy + AsRef<[u32]> + AsMut<[u32]> + 'static;
     const NO_TILES: Self::Tiles;
 
-    /// Pack a framebuffer the way the panel takes it.
-    fn pack(fb: &Framebuffer<Self>, out: &mut Self::Panel);
+    /// Pack a framebuffer the way the panel takes it, turned for how the
+    /// face's panel is mounted (`Target::MOUNT`).
+    fn pack(fb: &Framebuffer<Self>, mount: Mount, out: &mut Self::Panel);
 
     /// The colour of each kind of particle. Grey panels draw them white
     /// (their sprites carry their own grey).
@@ -190,8 +191,8 @@ impl DisplayTarget for Grey96 {
     type Tiles = [u32; 0];
     const NO_TILES: Self::Tiles = [];
 
-    fn pack(fb: &Framebuffer<Self>, out: &mut Self::Panel) {
-        fb.quantize(out);
+    fn pack(fb: &Framebuffer<Self>, mount: Mount, out: &mut Self::Panel) {
+        fb.quantize_mounted(mount, out);
     }
 }
 
@@ -222,8 +223,8 @@ impl DisplayTarget for Rgb64 {
     type Tiles = [u32; 64];
     const NO_TILES: Self::Tiles = [0; 64];
 
-    fn pack(fb: &Framebuffer<Self>, out: &mut Self::Panel) {
-        fb.pack565(out);
+    fn pack(fb: &Framebuffer<Self>, mount: Mount, out: &mut Self::Panel) {
+        fb.pack565_mounted(mount, out);
     }
 
     fn smoke_tint(kind: SpriteKind, money: bool) -> Color {
