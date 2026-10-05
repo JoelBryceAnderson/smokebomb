@@ -13,7 +13,7 @@ use smokebomb_shared::{DieKind, PotFace, RollRecord};
 use crate::display::{DUD, FG};
 use crate::font::{fit_px, Align, Fonts, SCRIPT};
 use crate::gfx::{segment_distance, triangle_distance, Painter, Style};
-use crate::menu::{Draft, Page, Setup};
+use crate::menu::{AppIcon, Draft, PlayMode, Setup, Value};
 use crate::nest::{ChargeView, ClockView, Label, NestFace, Screen};
 use crate::pigs::{throw_label, Locked, Outcome, Symbol, Throw, Token};
 use crate::smoke::Special;
@@ -1132,8 +1132,9 @@ pub fn draw_boom<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
 /// How far menu content slides during a tip, canvas units.
 pub const TIP_SLIDE: f32 = 120.0;
 
-/// One menu page: status bar (setup and battery), title, ▲/▼, the value,
-/// and page dots. `battery` is 0–1.
+/// One menu page (a held screen, brief 3, 1.3): the setup and the title at
+/// the top, the value between ▲ and ▼ (or a caption under it), and the page
+/// dots. Battery has a page of its own in Settings.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_menu<A: AssetStore, T: Target>(
     c: &mut Ctx<A, T>,
@@ -1147,89 +1148,63 @@ pub fn draw_menu<A: AssetStore, T: Target>(
     if alpha <= 0.0 {
         return;
     }
+    let view = m.view((battery * 100.0 + 0.5) as u8);
     c.shifted(ox, oy, scale, |c| {
-        let status = Style::new(FG, 0.85 * alpha, 0.0);
-        c.text_left(&m.setup().short_label(), -66.0, -66.0, 14, status);
-        c.painter.stroke_rect(44.0, -71.0, 20.0, 10.0, 1.5, status);
-        c.painter.fill_rect(64.0, -68.0, 2.0, 4.0, status);
-        c.painter
-            .fill_rect(46.0, -69.0, 16.0 * battery.clamp(0.0, 1.0), 6.0, status);
-
-        c.text(m.page.title(), 0.0, -40.0, 15, Style::new(FG, 0.75 * alpha, 0.0));
-        // End game has nothing to scroll.
-        if m.page != Page::EndGame {
-            let arrows = Style::new(FG, 0.55 * alpha, 0.0);
-            let (w, h) = (4.5, 4.0);
+        c.text(&view.status, 0.0, -66.0, 14, Style::new(FG, 0.6 * alpha, 0.0));
+        c.text(&view.title, 0.0, -44.0, 15, Style::new(FG, 0.8 * alpha, 0.0));
+        let arrows = Style::new(FG, 0.55 * alpha, 0.0);
+        let (w, h) = (4.5, 4.0);
+        if view.arrows {
             c.painter
-                .fill_triangle([(0.0, -22.0 - h), (w, -22.0 + h), (-w, -22.0 + h)], arrows);
-            c.painter
-                .fill_triangle([(-w, 46.0 - h), (w, 46.0 - h), (0.0, 46.0 + h)], arrows);
-        }
-
-        if m.page == Page::EndGame {
-            draw_end_game(c, alpha);
-        } else if m.page == Page::Settings {
-            let name = m.setting().0;
-            let value = m.setting_value();
-            c.text(
-                name,
-                0.0,
-                2.0,
-                fit_px(name, 26, 150.0),
-                Style::new(FG, alpha, 10.0),
-            );
-            c.text(
-                &value,
-                0.0,
-                27.0,
-                fit_px(&value, 18, 150.0),
-                Style::new(FG, 0.72 * alpha, 0.0),
-            );
-            if let Some(detail) = m.setting_detail() {
-                c.text(
-                    detail,
-                    0.0,
-                    46.0,
-                    fit_px(detail, 18, 150.0),
-                    Style::new(FG, 0.72 * alpha, 0.0),
-                );
+                .fill_triangle([(0.0, -26.0 - h), (w, -26.0 + h), (-w, -26.0 + h)], arrows);
+            if view.caption.is_none() {
+                c.painter
+                    .fill_triangle([(-w, 46.0 - h), (w, 46.0 - h), (0.0, 46.0 + h)], arrows);
             }
-        } else if let Some(symbol) = match m.page {
-            Page::Token(i) => m.tokens[i as usize].as_symbol(),
-            _ => None,
-        } {
-            draw_symbol(c, symbol, 0.0, 10.0, 46.0, Style::new(FG, alpha, 14.0));
-        } else {
-            let value = m.value();
-            c.text(
-                &value,
-                0.0,
-                12.0,
-                fit_px(&value, 52, 150.0),
-                Style::new(FG, alpha, 14.0),
-            );
+        }
+        let value_y = if view.caption.is_some() { 6.0 } else { 10.0 };
+        match &view.value {
+            Value::Text(t) => {
+                c.text(t, 0.0, value_y, fit_px(t, 52, 150.0), Style::new(FG, alpha, 14.0));
+            }
+            Value::Token(t) => match (t.initial(), t.as_symbol()) {
+                (_, Some(symbol)) => draw_symbol(c, symbol, 0.0, value_y, 46.0, Style::new(FG, alpha, 14.0)),
+                (Some(ch), _) => {
+                    let mut s: String<4> = String::new();
+                    let _ = s.push(ch);
+                    c.text(&s, 0.0, value_y, 52, Style::new(FG, alpha, 14.0));
+                }
+                _ => {}
+            },
+            Value::App(icon) => {
+                let setup = match icon {
+                    AppIcon::Game(PlayMode::Dice) => Some(Setup::Roll(m.die, 1)),
+                    AppIcon::Game(PlayMode::PassThePot) => Some(Setup::Roll(DieKind::PassThePot, 1)),
+                    AppIcon::Game(PlayMode::HotPotato) => Some(Setup::HotPotato),
+                    AppIcon::Game(PlayMode::PigToss) => Some(Setup::Pigs(2)),
+                    AppIcon::Settings => None,
+                };
+                match setup {
+                    Some(setup) => crate::icons::draw_setup_icon(c, setup, 0.0, 0.0, 30.0, alpha),
+                    None => crate::icons::draw_gear(c, 0.0, 0.0, 30.0, alpha),
+                }
+            }
+            Value::Lines([a, b]) => {
+                c.text(a, 0.0, -2.0, 22, Style::new(FG, 0.8 * alpha, 0.0));
+                c.text(b, 0.0, 26.0, fit_px(b, 30, 150.0), Style::new(FG, alpha, 10.0));
+            }
+        }
+        if let Some(caption) = view.caption {
+            c.text(caption, 0.0, 46.0, 20, Style::new(FG, 0.8 * alpha, 0.0));
         }
 
-        let n = m.ring().len();
-        for i in 0..n {
-            let x = (i as f32 - (n as f32 - 1.0) / 2.0) * 14.0;
-            let a = if i == m.page_index() { 1.0 } else { 0.35 };
+        for i in 0..view.dots {
+            let x = (i as f32 - (view.dots as f32 - 1.0) / 2.0) * 14.0;
+            let a = if i == view.dot { 1.0 } else { 0.35 };
             c.painter
                 .fill_circle(x, 66.0, 3.5, Style::new(FG, a * alpha, 0.0));
         }
     });
-}
-
-/// The End game page's body: what a hold does, and what it costs.
-fn draw_end_game<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, alpha: f32) {
-    c.text("Hold to end", 0.0, 4.0, 24, Style::new(FG, alpha, 12.0));
-    c.text(
-        "Scores won't be kept",
-        0.0,
-        32.0,
-        13,
-        Style::new(FG, 0.7 * alpha, 0.0),
-    );
 }
 
 /// The hold ring: a rounded square just inside the lit area that fills

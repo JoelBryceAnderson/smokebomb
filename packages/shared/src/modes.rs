@@ -1,7 +1,7 @@
 //! Game modes as the store, the phone and the die name them.
 //!
 //! Every mode's code ships in the firmware; a die plays the ones it holds a
-//! license for, and the owner picks which of those the on-die Mode page
+//! license for, and the owner picks which of those the on-die Apps page
 //! offers (see docs/STORE.md). Dice is always licensed and always on.
 
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ pub enum ModeId {
 }
 
 impl ModeId {
-    /// Every mode, in wire order (also the Mode page's order).
+    /// Every mode, in wire order (also the Apps page's order).
     pub const ALL: [ModeId; 4] = [
         ModeId::Dice,
         ModeId::PassThePot,
@@ -62,7 +62,7 @@ pub struct ModeSet(pub u16);
 
 impl ModeSet {
     pub const EMPTY: ModeSet = ModeSet(0);
-    /// Dice alone: the plain dice menu, with no Mode page.
+    /// Dice alone: Apps holds Dice and Settings.
     pub const DICE: ModeSet = ModeSet(ModeId::Dice.bit());
     /// Every mode this build knows.
     pub const ALL: ModeSet = ModeSet((1 << ModeId::ALL.len()) - 1);

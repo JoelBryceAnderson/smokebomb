@@ -20,7 +20,7 @@ use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
 use crate::font64::{draw_centered, draw_glyph, Align, BitFont, Glyph, NUM_L, NUM_M, NUM_S, TAG, TEXT};
 use crate::gfx::{Painter, Style};
-use crate::menu::{Draft, Page, Setup};
+use crate::menu::{AppIcon, Draft, Page, PlayMode, Setup, Value};
 use crate::nest::{ChargeView, Label, NestFace, Screen};
 use crate::palette64 as pal;
 use crate::pigs::{throw_label, Locked, Outcome, Symbol, Throw, Token};
@@ -421,8 +421,9 @@ fn draw_boot_finale<T: Target>(p: &mut Painter<T>, u: f32) {
 
 // ---------- menu (C3): the die picker and the other pages ----------
 
-/// One menu page: status bar (setup and battery), title, ▲, the value, ▼
-/// and page dots. On the Which die page the value is the die.
+/// One menu page (a held screen, brief 3, 1.3): the setup and the title in
+/// H2 at the top, the value in H1 between ▲ and ▼ (or a caption under it),
+/// and the page dots. Battery has a page of its own in Settings.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_menu<A: AssetStore, T: Target>(
     c: &mut Ctx<A, T>,
@@ -436,194 +437,101 @@ pub fn draw_menu<A: AssetStore, T: Target>(
     if alpha <= 0.0 {
         return;
     }
+    let view = m.view((battery * 100.0 + 0.5) as u8);
     let base = c.painter.xf;
     c.painter.xf = base.offset(ox, oy).scaled(scale).in_pixels();
     let p = &mut *c.painter;
 
-    // Status bar.
-    let short = m.setup().short_label();
-    TAG.draw(p, &short, -22.0, -28.0, 1.0, Align::Left, style(pal::DIM, alpha));
-    draw_glyph(p, &spr::BATTERY, 11.0, -28.0, 1.0, style(pal::DIM, alpha));
-    let level = battery.clamp(0.0, 1.0);
-    let fill = if level <= 0.15 { pal::RED } else { pal::MINT };
-    if level > 0.0 {
-        p.fill_rect(13.0, -26.0, roundf(5.0 * level).max(1.0), 1.0, style(fill, alpha));
-    }
-
-    let mut title: String<12> = String::new();
-    let _ = title.push_str(page_title(m.page));
-    if let Page::Token(i) = m.page {
-        title.clear();
-        let _ = write!(title, "Player {}", i + 1);
-    }
-    TEXT.draw(p, &title, 0.0, -20.0, 1.0, Align::Center, style(pal::DIM, alpha));
-    // A Settings value that takes more than a line uses ▼'s room.
-    let setting = (m.page == Page::Settings).then(|| SettingRows::new(m));
-    if m.page != Page::EndGame {
-        draw_centered(p, &spr::UP, 0.0, -9.0, 1.0, style(pal::VIOLET, alpha));
-        if setting.as_ref().is_none_or(|s| s.compact()) {
-            draw_centered(p, &spr::DOWN, 0.0, 17.0, 1.0, style(pal::VIOLET, alpha));
+    TEXT.draw(
+        p,
+        &view.status,
+        0.0,
+        -31.0,
+        1.0,
+        Align::Center,
+        style(pal::FAINT, alpha),
+    );
+    TEXT.draw(
+        p,
+        &view.title,
+        0.0,
+        -22.0,
+        1.0,
+        Align::Center,
+        style(pal::DIM, alpha),
+    );
+    if view.arrows {
+        draw_centered(p, &spr::UP, 0.0, -11.0, 1.0, style(pal::VIOLET, alpha));
+        if view.caption.is_none() {
+            draw_centered(p, &spr::DOWN, 0.0, 16.0, 1.0, style(pal::VIOLET, alpha));
         }
     }
-
-    match m.page {
-        Page::EndGame => {
-            // "Scores won't be kept" needs three lines here and would run
-            // into the page dots; this says the same in two.
-            draw_lines(p, "Hold to end", 0.0, -7.0, pal::WHITE, alpha);
-            draw_lines(p, "Scores are lost", 0.0, 4.0, pal::DIM, alpha);
-        }
-        Page::Settings => {
-            if let Some(rows) = &setting {
-                rows.draw(p, alpha);
-            }
-        }
-        Page::Token(i) => {
-            // A player's initial or symbol, big and pink.
-            draw_token(
-                p,
-                m.tokens[i as usize],
-                0.0,
-                -4.0,
-                2.0,
-                pal::PINK,
-                alpha,
-                Align::Center,
-            );
-        }
-        _ => {
-            let value = m.value();
+    // The value's box: H1 from y -6 to 11, or with a caption, from -7.
+    let top = if view.caption.is_some() { -7.0 } else { -6.0 };
+    match &view.value {
+        Value::Text(t) => {
             let colour = if m.page == Page::Die {
                 pal::VIOLET
             } else {
                 pal::WHITE
             };
-            if TEXT.measure(&value) * 2 <= LINE_MAX {
-                TEXT.draw(p, &value, 0.0, -3.0, 2.0, Align::Center, style(colour, alpha));
-            } else {
-                let mut lines: Vec<&str, 2> = Vec::new();
-                wrap(&TEXT, &value, LINE_MAX, &mut lines);
-                let y0 = if lines.len() > 1 { -5.0 } else { 0.0 };
-                for (i, l) in lines.iter().enumerate() {
-                    TEXT.draw(
-                        p,
-                        l,
-                        0.0,
-                        y0 + i as f32 * LINE_PITCH,
-                        1.0,
-                        Align::Center,
-                        style(colour, alpha),
-                    );
-                }
-            }
+            draw_value(p, t, top, style(colour, alpha));
+        }
+        Value::Token(t) => draw_token(p, *t, 0.0, top + 1.0, 2.0, pal::PINK, alpha, Align::Center),
+        Value::App(icon) => draw_app_icon(p, *icon, m.die, top + 6.0, alpha),
+        Value::Lines([a, b]) => {
+            TEXT.draw(p, a, 0.0, -6.0, 1.0, Align::Center, style(pal::DIM, alpha));
+            TEXT.draw(p, b, 0.0, 3.0, 1.0, Align::Center, style(pal::WHITE, alpha));
         }
     }
+    if let Some(caption) = view.caption {
+        TEXT.draw(p, caption, 0.0, 13.0, 1.0, Align::Center, style(pal::DIM, alpha));
+    }
 
-    // Page dots.
-    let n = m.ring().len();
-    for i in 0..n {
-        let x = (i as f32 - (n as f32 - 1.0) / 2.0) * 5.0;
-        let x = floorf(x);
-        let on = i == m.page_index();
+    // Page dots, 3 px so they read as dots.
+    for i in 0..view.dots {
+        let x = floorf((i as f32 - (view.dots as f32 - 1.0) / 2.0) * 6.0) - 1.0;
+        let on = i == view.dot;
         p.fill_rect(
             x,
             24.0,
-            2.0,
-            2.0,
+            3.0,
+            3.0,
             style(if on { pal::WHITE } else { pal::FAINT }, alpha),
         );
     }
     c.painter.xf = base;
 }
 
-/// A Settings item laid out: its name, its value in 5×7 (wrapped to two
-/// lines at most) and any detail in 3×5 tags.
-pub struct SettingRows {
-    pub name: &'static str,
-    value: String<24>,
-    detail: Option<&'static str>,
+/// A held page's value, centred with its top at `y`.
+fn draw_value<T: Target>(p: &mut Painter<T>, text: &str, y: f32, s: Style) {
+    TEXT.draw(p, text, 0.0, y + 2.0, 2.0, Align::Center, s);
 }
 
-impl SettingRows {
-    pub fn new(m: &Draft) -> Self {
-        // The one name too long for a 64×64 line.
-        let name = match m.setting().0 {
-            "Sleep after" => "Sleep",
-            n => n,
-        };
-        Self {
-            name,
-            value: m.setting_value(),
-            detail: m.setting_detail(),
+/// An app's picture on the Apps page, centred on `cy`: the die in use, a
+/// bill, the potato, the pig, or a gear.
+fn draw_app_icon<T: Target>(p: &mut Painter<T>, icon: AppIcon, die: DieKind, cy: f32, alpha: f32) {
+    match icon {
+        AppIcon::Game(PlayMode::Dice) => {
+            draw_centered(p, die_icon(die), 0.0, cy, 1.0, style(pal::VIOLET, alpha))
         }
-    }
-
-    /// One line of value and no detail: ▼ keeps its place.
-    pub fn compact(&self) -> bool {
-        self.detail.is_none() && TEXT.measure(&self.value) <= LINE_MAX
-    }
-
-    /// Each row's text, top, and whether it's a 3×5 tag. `None` if it
-    /// doesn't fit the page.
-    pub fn rows(&self) -> Option<Vec<(&str, f32, bool), 6>> {
-        let mut out = Vec::new();
-        let name_y = if self.compact() { -5.0 } else { -7.0 };
-        out.push((self.name, name_y, false)).ok()?;
-        let mut values: Vec<&str, 2> = Vec::new();
-        if !wrap(&TEXT, &self.value, LINE_MAX, &mut values) {
-            return None;
+        AppIcon::Game(PlayMode::PassThePot) => {
+            draw_centered(p, &spr::BILL, 0.0, cy, 2.0, style(pal::MINT, alpha))
         }
-        let mut y = name_y + LINE_PITCH;
-        for v in values {
-            out.push((v, y, false)).ok()?;
-            y += LINE_PITCH;
+        AppIcon::Game(PlayMode::HotPotato) => {
+            let x = -floorf(spr::POTATO_SKIN.width as f32 / 2.0);
+            draw_glyph(p, &spr::POTATO_SKIN, x, cy - 6.0, 1.0, style(pal::POTATO, alpha));
+            draw_glyph(
+                p,
+                &spr::POTATO_SPOTS,
+                x,
+                cy - 6.0,
+                1.0,
+                style(pal::POTATO_DARK, alpha),
+            );
         }
-        if let Some(d) = self.detail {
-            let mut tags: Vec<&str, 2> = Vec::new();
-            if !wrap(&TAG, d, LINE_MAX, &mut tags) {
-                return None;
-            }
-            for t in tags {
-                out.push((t, y, true)).ok()?;
-                y += 6.0;
-            }
-        }
-        Some(out)
-    }
-
-    /// Where the last row ends: the page dots start at 24.
-    pub fn bottom(&self) -> Option<f32> {
-        let rows = self.rows()?;
-        rows.last().map(|&(_, y, tag)| y + if tag { 5.0 } else { 7.0 })
-    }
-
-    fn draw<T: Target>(&self, p: &mut Painter<T>, alpha: f32) {
-        for (i, (text, y, tag)) in self.rows().unwrap_or_default().into_iter().enumerate() {
-            let colour = if i == 0 { pal::WHITE } else { pal::DIM };
-            let font_style = style(colour, alpha);
-            if tag {
-                TAG.draw(p, text, 0.0, y, 1.0, Align::Center, font_style);
-            } else {
-                TEXT.draw(p, text, 0.0, y, 1.0, Align::Center, font_style);
-            }
-        }
-    }
-}
-
-/// Menu titles that fit a 64×64 line (the 96×96 die's "How many dice" and
-/// "Bills in hand" don't).
-pub fn page_title(page: Page) -> &'static str {
-    match page {
-        Page::Mode => "Mode",
-        Page::Count => "How many",
-        Page::Die => "Which die",
-        Page::Pot => "Bills",
-        Page::Fuse => "Fuse",
-        Page::Players => "Players",
-        Page::Token(_) => "Player",
-        Page::EndGame => "End game",
-        Page::Next => "Next",
-        Page::Settings => "Settings",
+        AppIcon::Game(PlayMode::PigToss) => draw_pig_face(p, -9.0, cy - 8.0, 1.0, alpha),
+        AppIcon::Settings => draw_centered(p, &spr::GEAR, 0.0, cy, 1.0, style(pal::WHITE, alpha)),
     }
 }
 
@@ -1700,41 +1608,50 @@ mod tests {
         assert!(lines.iter().all(|l| TEXT.measure(l) <= LINE_MAX));
     }
 
-    #[test]
-    fn every_setting_fits_its_page() {
-        use crate::menu::{Settings, SETTINGS};
-        let mut d = Draft::new(&Settings::default());
-        d.page = Page::Settings;
-        for (i, item) in SETTINGS.iter().enumerate() {
-            d.setting = i as u8;
-            for k in 0..item.options.len() {
-                d.choices[i] = k as u8;
-                let rows = SettingRows::new(&d);
-                assert!(TEXT.measure(rows.name) <= LINE_MAX, "{}", rows.name);
-                let bottom = rows
-                    .bottom()
-                    .unwrap_or_else(|| panic!("{} doesn't fit", rows.name));
-                // The page dots start at 24: keep a dark row above them.
-                assert!(bottom <= 22.0, "{}: ends at {bottom}", rows.name);
+    /// Every menu page, every value: a few drafts' rings, tipped through.
+    fn every_page() -> std::vec::Vec<Draft> {
+        use crate::menu::{Held, PlayMode, Settings};
+        let mut drafts = std::vec::Vec::new();
+        for play in PlayMode::ALL {
+            drafts.push(Draft::new(&Settings {
+                play,
+                players: 6,
+                ..Settings::default()
+            }));
+        }
+        let apps = Draft::new(&Settings::default()).tipped(crate::tips::TipDir::Right);
+        if let Held::Next(settings) = apps.tipped(crate::tips::TipDir::Down).held() {
+            drafts.push(settings);
+        }
+        drafts.push(Draft::alone(&Settings::default(), Page::Next));
+        let mut out = std::vec::Vec::new();
+        for d in drafts {
+            for i in 0..d.ring().len() as i32 {
+                for v in 0..10 {
+                    out.push(
+                        d.stepped(crate::tips::TipDir::Left, i)
+                            .stepped(crate::tips::TipDir::Up, v),
+                    );
+                }
             }
         }
+        out
     }
 
     #[test]
-    fn every_menu_value_fits() {
-        use crate::menu::{PlayMode, Settings};
-        let mut d = Draft::new(&Settings::default());
-        for play in PlayMode::ALL {
-            d.page = Page::Mode;
-            d.play = play;
-            let v = d.value();
-            let mut lines: Vec<&str, 2> = Vec::new();
-            assert!(wrap(&TEXT, &v, LINE_MAX, &mut lines), "{v}");
-        }
-        for die in DieKind::NUMERIC {
-            d.page = Page::Die;
-            d.die = die;
-            assert!(TEXT.measure(&d.value()) * 2 <= LINE_MAX, "{die:?} at 2×");
+    fn every_menu_page_fits() {
+        for d in every_page() {
+            let view = d.view(100);
+            for line in [
+                view.status.as_str(),
+                view.title.as_str(),
+                view.caption.unwrap_or(""),
+            ] {
+                assert!(TEXT.measure(line) <= LINE_MAX, "{line:?} on {:?}", d.page);
+            }
+            if let crate::menu::Value::Text(t) = &view.value {
+                assert!(TEXT.measure(t) * 2 <= LINE_MAX, "{t:?} on {:?}", d.page);
+            }
         }
     }
 
@@ -1762,23 +1679,6 @@ mod tests {
                 let w = TEXT.measure(&label);
                 assert!(w <= LINE_MAX, "{label}");
             }
-        }
-    }
-
-    #[test]
-    fn menu_titles_fit_a_line() {
-        for page in [
-            Page::Mode,
-            Page::Count,
-            Page::Die,
-            Page::Pot,
-            Page::Fuse,
-            Page::Players,
-            Page::Token(5),
-            Page::EndGame,
-            Page::Settings,
-        ] {
-            assert!(TEXT.measure(page_title(page)) <= LINE_MAX, "{page:?}");
         }
     }
 

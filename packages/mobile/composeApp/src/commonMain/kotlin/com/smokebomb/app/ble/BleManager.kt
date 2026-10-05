@@ -32,7 +32,7 @@ interface BleManager {
     suspend fun syncHistory(sinceCounter: Long): List<SignedRoll>
 
     /**
-     * Choose which licensed modes the die's Mode page offers
+     * Choose which licensed modes the die's Apps page offers
      * (`PhoneToDie::SetEnabledModes`). The die answers with a new [inventory].
      */
     suspend fun setEnabledModes(modes: Set<ModeId>)

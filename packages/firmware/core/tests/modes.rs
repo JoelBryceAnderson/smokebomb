@@ -47,11 +47,11 @@ fn licenses_survive_replaced_settings() {
         "settings can't grant or drop licenses"
     );
     fw.set_enabled_modes(ModeSet::DICE);
-    assert!(!fw.settings().mode_page());
+    assert_eq!(fw.settings().modes(), ModeSet::DICE);
     fw.unlock_mode(ModeId::PigToss);
     assert!(
         fw.inventory().enabled.contains(ModeId::PigToss),
         "a new mode starts on"
     );
-    assert!(fw.settings().mode_page());
+    assert!(fw.settings().modes().contains(ModeId::PigToss));
 }

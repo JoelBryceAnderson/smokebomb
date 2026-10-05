@@ -1,7 +1,7 @@
 # Store: modes and themes
 
 The phone app decides what a Sugarcube offers: which game modes appear on its
-Mode page, and which theme it draws with. Both are sold in the in-app store.
+Apps page, and which theme it draws with. Both are sold in the in-app store.
 This document is the design; the [status table](#status) says what exists.
 
 ## Two kinds of item
@@ -81,12 +81,11 @@ It isn't the default.
 - `licensed`: what the die may play.
 - `enabled`: what the owner turned on in the app.
 
-The Mode page offers `licensed ∩ enabled`, always with Dice. With only Dice
-left there is no Mode page and the menu is the plain Count, Die, Settings
-ring. If the mode in use is turned off or loses its license, the die plays
+The Apps page offers `licensed ∩ enabled`, always with Dice, then Settings.
+With only Dice left the Apps page holds Dice and Settings. If the mode in use is turned off or loses its license, the die plays
 Dice, and the saved mode comes back if it's turned on again.
 
-Mode page order is wire order for now. Reordering from the app needs an
+Apps page order is wire order for now. Reordering from the app needs an
 ordered list in `Settings` instead of a bitset: a later step.
 
 ## BLE messages
@@ -96,7 +95,7 @@ In `smokebomb_shared::protocol`, mirrored in Kotlin:
 | Direction | Message | Purpose |
 |---|---|---|
 | phone → die | `GetInventory` | Ask what the die can play |
-| phone → die | `SetEnabledModes(ModeSet)` | Choose the Mode page's modes |
+| phone → die | `SetEnabledModes(ModeSet)` | Choose the Apps page's games |
 | phone → die | `InstallLicense(License)` | Unlock a store item |
 | phone → die | `ClearLicenses` | On release or claim: back to the free modes (planned) |
 | die → phone | `Inventory { licensed, enabled, active }` | The answer, and pushed on every change (including a mode picked on the die) |
@@ -157,7 +156,7 @@ simulated die. See [Getting started](GETTING_STARTED.md#the-app-with-the-simulat
 | Piece | Status |
 |---|---|
 | `ModeId`, `ModeSet`, `License`, inventory messages (shared) | ✅ Defined |
-| Firmware: licensed and enabled sets, Mode page follows them, `inventory` / `set_enabled_modes` / `unlock_mode` | ✅ Working, tested |
+| Firmware: licensed and enabled sets, Apps page follows them, `inventory` / `set_enabled_modes` / `unlock_mode` | ✅ Working, tested |
 | Firmware: license signature check, store key, licenses in flash | 🗓 Planned |
 | Pairing, claim, release, restore; `ClearLicenses` | 🗓 Planned |
 | App: Modes and Dice sections on the Die tab | ✅ Working against the simulator; Bluetooth still stubbed |

@@ -124,9 +124,10 @@ fn draft(page: Page, die: DieKind, count: u8) -> Draft {
     d
 }
 
-fn setting(i: u8) -> Draft {
-    let mut d = draft(Page::Settings, DieKind::D20, 1);
-    d.setting = i;
+/// A page of the Settings app.
+fn setting(page: Page) -> Draft {
+    let mut d = draft(page, DieKind::D20, 1);
+    d.in_settings = true;
     d
 }
 
@@ -305,41 +306,23 @@ fn rows() -> Vec<(&'static str, Option<Draw96>, Draw64)> {
         (
             "menu: settings",
             Some(Box::new(|c| {
-                screens::draw_menu(
-                    c,
-                    &draft(Page::Settings, DieKind::D20, 1),
-                    0.78,
-                    0.0,
-                    0.0,
-                    1.0,
-                    1.0,
-                )
+                screens::draw_menu(c, &setting(Page::Setting(0)), 0.78, 0.0, 0.0, 1.0, 1.0)
             })),
-            Box::new(|c| {
-                screens64::draw_menu(
-                    c,
-                    &draft(Page::Settings, DieKind::D20, 1),
-                    0.78,
-                    0.0,
-                    0.0,
-                    1.0,
-                    1.0,
-                )
-            }),
+            Box::new(|c| screens64::draw_menu(c, &setting(Page::Setting(0)), 0.78, 0.0, 0.0, 1.0, 1.0)),
         ),
         (
             "menu: power off",
             Some(Box::new(|c| {
-                screens::draw_menu(c, &setting(6), 0.78, 0.0, 0.0, 1.0, 1.0)
+                screens::draw_menu(c, &setting(Page::Power), 0.78, 0.0, 0.0, 1.0, 1.0)
             })),
-            Box::new(|c| screens64::draw_menu(c, &setting(6), 0.78, 0.0, 0.0, 1.0, 1.0)),
+            Box::new(|c| screens64::draw_menu(c, &setting(Page::Power), 0.78, 0.0, 0.0, 1.0, 1.0)),
         ),
         (
-            "menu: regulatory",
+            "menu: legal",
             Some(Box::new(|c| {
-                screens::draw_menu(c, &setting(8), 0.12, 0.0, 0.0, 1.0, 1.0)
+                screens::draw_menu(c, &setting(Page::Legal), 0.12, 0.0, 0.0, 1.0, 1.0)
             })),
-            Box::new(|c| screens64::draw_menu(c, &setting(8), 0.12, 0.0, 0.0, 1.0, 1.0)),
+            Box::new(|c| screens64::draw_menu(c, &setting(Page::Legal), 0.12, 0.0, 0.0, 1.0, 1.0)),
         ),
         (
             "saved",

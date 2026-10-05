@@ -1,6 +1,6 @@
 # App framework (planned)
 
-Status: agreed with Joel, 5 Oct 2026. Steps 1 to 3 are built; the rest is
+Status: agreed with Joel, 5 Oct 2026. Steps 1 to 4 are built; the rest is
 the plan. It applies `SMOKEBOMB_SIM_UPDATE_BRIEF_3` (text sizes and
 deliberate gestures).
 
@@ -109,7 +109,8 @@ die with only Dice.
    hand, Next game). A hold on Pass the Pot's bills screen counts only when
    a deliberate tap brought it up, so the label after a save still lets a
    hold open the menu. Done.
-4. Apps page and Settings app, with short names.
+4. **Apps page and Settings app**, with short names (SIM_SPEC C3 lists
+   them). One `PageView` per page feeds both panels. Done.
 5. Typed screens, bitmap tier fonts (7/15/18/21/30 px cap) and the size audit.
 6. Docs and the 1 m AR screenshots.
 

@@ -340,7 +340,7 @@ where
         }
     }
 
-    /// The phone picks which licensed modes the Mode page offers. If the
+    /// The phone picks which licensed modes the Apps page offers. If the
     /// current mode is turned off the die goes back to Dice.
     pub fn set_enabled_modes(&mut self, enabled: ModeSet) {
         self.settings.enabled = enabled.with(ModeId::Dice);
@@ -872,30 +872,30 @@ where
             Gesture::Hold { face } => {
                 self.touch_face = face;
                 // In the menu a hold saves, unless the draft has another
-                // step first.
-                let next = self
-                    .menu
-                    .as_ref()
-                    .is_some_and(|m| matches!(m.draft.held(), Held::Next(_)));
-                let _ = events.push(if next { Event::MenuNext } else { Event::LongPress });
+                // step first or it's on Power.
+                let event = match self.menu.as_ref().map(|m| m.draft.held()) {
+                    Some(Held::Next(_)) => Event::MenuNext,
+                    Some(Held::PowerOff) => Event::PowerOff,
+                    _ => Event::LongPress,
+                };
+                let _ = events.push(event);
             }
             // Letting go after a hold that saved the menu shows the setup
             // like a tap does (the mockup's pointer-up); letting go after the
             // hold that opened it doesn't.
             Gesture::Released { face } => {
-                if self.menu.is_none() {
+                // Not after the hold that powered the die off: that would
+                // wake it again.
+                if self.menu.is_none() && !matches!(self.sm.mode(), Mode::Off) {
                     self.touch_face = face;
                     self.tap_deliberate = false;
                     let _ = events.push(Event::Tap);
                 }
             }
-            // A tap inside the menu changes the selected setting, or powers
-            // the die off.
             Gesture::Tap { face, deliberate } => {
                 self.touch_face = face;
                 self.tap_deliberate = deliberate;
-                let off = self.menu.as_ref().is_some_and(|m| m.draft.power_off_selected());
-                let _ = events.push(if off { Event::PowerOff } else { Event::Tap });
+                let _ = events.push(Event::Tap);
             }
         }
         Ok(false)
@@ -974,16 +974,6 @@ where
                         // The new page grows in as the menu did opening.
                         self.ui.menu_opened(now);
                     }
-                }
-            }
-            Command::MenuTap => {
-                if let Some(m) = &mut self.menu {
-                    let next = m.draft.tapped();
-                    if next != m.draft && self.settings.haptics_on() {
-                        self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
-                    }
-                    m.draft = next;
-                    m.last_input = now;
                 }
             }
             // The draft is dropped: powering off saves nothing.

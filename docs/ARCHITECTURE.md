@@ -225,13 +225,12 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
 - **Modes.** `Settings.play` (`PlayMode`) says what the die is being used
   for. Dice keeps the count and die pages; each game brings its own options
   page (Pass the Pot: the bills in your hand, which is how many dice you
-  roll, up to three; everyone starts with three). The Mode page is one tip right of the
-  first page, so the dice flow is as short as it was. The dice setup and
-  each game's options are saved apart, and `Settings::active()` gives the
-  die and count a throw rolls. The Mode page offers the modes that are
+  roll, up to three; everyone starts with three). The Apps page is one tip
+  right of the first page, so the dice flow is as short as it was. The dice
+  setup and each game's options are saved apart, and `Settings::active()`
+  gives the die and count a throw rolls. Apps offers the games that are
   both licensed and turned on from the phone (`Settings.licensed`,
-  `Settings.enabled`; see [STORE.md](STORE.md)). With Dice alone there is
-  no Mode page (most snapshot scenarios use this).
+  `Settings.enabled`; see [STORE.md](STORE.md)), then Settings.
 - **Hot Potato** (`potato.rs`). A game that doesn't roll. The pure `Potato`
   machine (Idle, Lit, Boom) takes the time and a fuse the firmware drew from
   the RNG, and returns `PotatoCommand`s (ignite, tick, boom, clear), which
@@ -241,17 +240,20 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   a shake 1.5 s after it goes off starts the next round, and holds are
   ignored mid-round. Nothing is signed.
 - **Draft.** The menu works on a `Draft` (`menu.rs`): page, mode, die, count,
-  pot count and the Settings item, plus each Settings item's chosen option.
-  On the Settings page a tap steps the selected item to its next value. Only a
-  hold saves the draft into `Settings`, and a hold always saves and returns to
-  the roll. A tap on Power off darkens the die without saving (`Mode::Off`;
-  the next tap boots it); a throw, docking or 25 s without a tip discards the
-  draft. Saving applies brightness, Bluetooth, haptics-off and the smoke
-  amount; Sleep after runs from the main loop (`update_sleep`). Owner is
-  still a placeholder; About shows the firmware version and an id made from
-  the secure element's serial (`Settings.device_id`, kept when settings are
-  replaced). The die always signs its rolls; whether a roll counts as verified
-  is decided by the session on the phone and server.
+  pot count, each setting's chosen option and where the menu is (on Apps
+  with Settings chosen, or in the Settings app). Taps do nothing in the
+  menu. Only a hold saves the draft into `Settings`; a hold on Power powers
+  off without saving (`Held::PowerOff` → `Mode::Off`; the next tap boots
+  it); a throw, docking or 25 s without a tip discards the draft. Saving
+  applies brightness, Bluetooth, haptics-off and the smoke amount; Sleep
+  runs from the main loop (`update_sleep`). Owner and About are the phone's;
+  the die keeps an id made from the secure element's serial
+  (`Settings.device_id`, kept when settings are replaced). The die always
+  signs its rolls; whether a roll counts as verified is decided by the
+  session on the phone and server.
+- **Pages.** `Draft::view` gives what a page shows, `PageView`: status and
+  title (H2), the value (H1 text, a token, an app's picture, or two lines),
+  a caption, whether ▲ ▼ show, and the page dots. Both panels draw from it.
 - **Tips** (`tips.rs`). The menu keeps a `Frame`: the front face (the held
   one) and the sky and viewer's-right axes in die coordinates. A
   `TipTracker` waits for the die to be still for 120 ms after the menu

@@ -34,7 +34,7 @@ pub enum DieToPhone {
 pub struct Inventory {
     /// Modes the die holds a license for (Dice always).
     pub licensed: ModeSet,
-    /// Licensed modes the owner has turned on: the Mode page offers these.
+    /// Licensed modes the owner has turned on: the Apps page offers these.
     pub enabled: ModeSet,
     /// The mode a throw plays now.
     pub active: ModeId,
@@ -54,8 +54,8 @@ pub enum PhoneToDie {
     },
     GetPublicKey,
     GetInventory,
-    /// Which licensed modes the Mode page offers. Unlicensed modes are
-    /// ignored and Dice is always kept; one mode left hides the Mode page.
+    /// Which licensed modes the Apps page offers. Unlicensed modes are
+    /// ignored and Dice is always kept.
     SetEnabledModes(ModeSet),
     /// Unlock a store item on this die (see docs/STORE.md).
     InstallLicense(License),
