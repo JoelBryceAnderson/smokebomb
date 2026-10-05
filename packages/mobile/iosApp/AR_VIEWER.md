@@ -7,7 +7,8 @@ virtual one (see [AR on or off](#ar-on-or-off)), then you can:
 - choose the die's size and colour (it starts on the 30 mm Rainbow)
 - turn and move the die, and scale it if you unlock true size
 - look inside with x-ray and explode it
-- tap a part to see its name
+- touch its screens, in x-ray too
+- take the lid off and turn the lid and the cup on their own
 - throw the die and read which face lands up
 
 It's written in Swift (RealityKit and ARKit) and embedded in the Compose app.
@@ -37,8 +38,9 @@ the picker.
 
 ## AR on or off
 
-The tab is labelled **Simulator**. A small **AR** pane on the left edge of
-the view switches where the die is. AR is **off** by default.
+The tab is labelled **Simulator**. An **AR** toggle switches where the die
+is: on iPhone it sits beside **X-ray** in the controls, on iPad in a small
+pane on the left edge of the view. AR is **off** by default.
 
 - **Off:** the die is on a virtual table in a dark studio, seen from a fixed
   camera close up (32° field of view, looking from the front right, as the
@@ -58,7 +60,7 @@ the view switches where the die is. AR is **off** by default.
     camera glides back to take in the die and its turn pad. It glides in
     again when the menu closes.
   - Everything else works the same: live firmware screens, touch, the menu
-    and its turn pad, x-ray, explode and tap-to-name.
+    and its turn pad, x-ray, explode and the lid.
   - It needs no camera, so it also runs without camera access, on devices
     without AR, and in the iOS Simulator.
 - **On:** the die is on your real table through the camera, and moves and
@@ -66,7 +68,7 @@ the view switches where the die is. AR is **off** by default.
   access is off, the tab offers **Use without AR**.
 
 Switching rebuilds the view, so the die is placed again and the firmware
-reboots. The choice is remembered. The pane is hidden on devices without AR.
+reboots. The choice is remembered. The toggle is hidden on devices without AR.
 The studio's framing is `studioFieldOfView` and `studioCameraDistance` in
 `DiePhysics.swift`; the studio itself is `buildStudio()` in
 `ARSceneController.swift`.
@@ -79,9 +81,9 @@ The studio's framing is `studioFieldOfView` and `studioCameraDistance` in
 | `iosApp/ARViewer/ARViewerScreen.swift` | SwiftUI: iPhone overlay, iPad side panel, control pad, the camera-denied and unsupported-device states |
 | `iosApp/ARViewer/ARViewerModel.swift` | State shared by both layouts (`@Observable`) |
 | `iosApp/ARViewer/ARSceneController.swift` | `ARView`, session, coaching, placing, gestures, physics |
-| `iosApp/ARViewer/DieRig.swift` | Finds contract prims in a loaded model: explode, shell fade, tap picking, highlight |
+| `iosApp/ARViewer/DieRig.swift` | Finds contract prims in a loaded model: explode, shell fade |
+| `iosApp/ARViewer/DieLid.swift` | Cuts the lid off the die at the seam, and puts it back |
 | `iosApp/ARViewer/ModelCatalog.swift` | The model list and loading behind `ModelSource` |
-| `iosApp/ARViewer/PartLabels.json` | Tap labels; edit freely |
 | `iosApp/ARViewer/DiePhysics.swift` | Tunable physics constants, the throw windup, face-up and settle maths |
 | `iosApp/ARViewer/DieFirmware.swift` | What the viewer needs from the firmware, the panels per die, screen axes |
 | `iosApp/ARViewer/ImuSynth.swift` | Die motion → IMU readings at exact 60 Hz ticks |
@@ -89,7 +91,7 @@ The studio's framing is `studioFieldOfView` and `studioCameraDistance` in
 | `iosApp/Firmware/RustDieFirmware.swift` | The firmware over the Rust C ABI (app target only) |
 | `scripts/build_firmware.sh` | Builds `packages/firmware/ffi` for the SDK Xcode is building for |
 | `iosApp/Resources/Models/` | Bundled `.usdz` files (a folder reference; Git LFS) |
-| `iosAppTests/` | `ARViewerTests`: true-size check, explode, picking, labels, face-up |
+| `iosAppTests/` | `ARViewerTests`: true-size check, explode, the lid, face-up |
 | `scripts/convert_usdz.py` | Binary-root conversion and ARKit checks |
 | `scripts/make_contract_fixture.py` | Generates the per-part stand-in model |
 
@@ -166,6 +168,33 @@ many of its die shells have an `Etching`. It warns about any that don't.
 - To check files that are already bundled without rewriting them, add `--check-only`.
 - The exit status is 1 if any file has errors.
 
+### The 30 mm screens: no pinwheel
+
+Since 4 Oct the 30 mm die's screens aren't pinwheeled
+(`sugarcube-assembly.html`, `FACES`): the four side screens' ribbons point
+down, toward the lid; the top screen's points to +X, folding straight into
+the harness channel; the lid screen's to −X, opposite it. Each panel sits
+about 1.8 mm off centre toward its ribbon, so the top and lid cancel as the
+four sides do; −X also keeps the lid's ribbon fold clear of its locating pin
+at −Z, and its connector away from the hub at +X. The firmware turns each
+panel's picture to suit (`Rgb64::MOUNT` in `packages/firmware/hal/src/target.rs`), so what the
+glass shows is unchanged.
+
+`scripts/unpinwheel_30.py` brought the 30 mm x-rays (assembled and exploded)
+up to date without a re-export. It turns each face's module (panel glass,
+encapsulation, driver chip, ribbon) about its face's axis to its new ribbon
+direction, and rebuilds the screen harness (`Internal_w_spi_*`): from each
+ribbon's end in to the wall, round a ring just above the board to its
+connector on the +X side. A fresh export from the model generator replaces
+both.
+
+```sh
+# On the pinwheel exports (the bundled ones are already done):
+python3 unpinwheel_30.py pinwheel/sugarcube_30_xray.usdz \
+    pinwheel/sugarcube_30_xray_exploded.usdz --out /tmp/unpinwheeled
+python3 convert_usdz.py --check-only /tmp/unpinwheeled/*.usdz
+```
+
 ## Adding a model
 
 1. Export it real-size, with 1 unit = 1 m, Y up, the origin at the bottom
@@ -215,11 +244,7 @@ Today's models group geometry by material. These names work today:
 - `Screen_px` … `Screen_nz`
 - in the x-rays, `Internal_<part>` and the wiring `Internal_w_*`
 
-Tapping any of these names it.
-
-`Etching` (the lid's etching, above) sits next to each `Shell`. It has no label,
-so a tap on the lid still names the shell, and the screws flush with it still
-win their taps.
+`Etching` (the lid's etching, above) sits next to each `Shell`.
 
 Per-part models put every physical part in its own prim under the default prim:
 
@@ -245,24 +270,59 @@ rather than breaking:
     opacity (`DieRig.xrayShellOpacity`).
   - Otherwise: x-ray swaps to the matching `_xray` file. The 30 mm x-ray also
     offers the pre-exploded file.
-- **Tap to name:**
-  - The label comes from the outermost labelled prim around the mesh you hit.
-    For example, a tap on `Module_py`'s screen names the module.
-  - In x-ray, taps pass through the shell and windows to what's behind them.
-  - When parts sit flush (a screw in the lid), the smaller part wins.
+- **Lid off:** nothing; see [The lid](#the-lid).
 
 `sugarcube_contract_fixture.usdz` is crude boxes that follow this contract.
 It's generated by `scripts/make_contract_fixture.py` and appears in debug
 builds as "30 mm · Per-part test", so you can try explode, the shell fade and
-tapping before the real per-part models exist.
+the lid before the real per-part models exist.
 
-## Labels
+## The lid
 
-`iosApp/ARViewer/PartLabels.json` maps prim names to labels.
+**Lid off** takes the lid off, as the desktop mockup does. The die turns
+lid-up and the four screws turn out of their holes and lie in a row on the
+table in front of it. Then the lid lifts straight off, swings over and lies
+inside-up beside the cup, to the view's right. **Lid on** puts the lid back,
+the screws back over their holes and in, and turns the die back over onto
+its lid. The timings are `screwTime`, `screwLayTime` and `lidMoveTime` in
+`DiePhysics.swift`. It works on the dice, their x-rays and
+the per-part fixture, not the line-up or the pre-exploded x-ray.
 
-- A key ending in `*` matches by prefix, and the longest match wins.
-- An exact name beats any prefix.
-- Keys starting with `_` are ignored.
+While it's off:
+
+- Drag the lid to turn it on its own: sideways about the vertical, up and down
+  toward you (studio); along the table (AR). A twist on it turns it either way.
+  It always settles back onto the table.
+- Drag the cup to turn it, as before.
+- The lid's screen still runs: touch it to touch −Y. The cup's open end has no
+  screen.
+- Rolling, the menu's pick-up and explode wait until the lid is back on.
+- Changing x-ray, colour or size, or live screens, keeps the lid off where it lay.
+
+The lid is the charging face and the lower half of its four edges, cut at the
+seam 45° round the bottom edge (edge radius 2.5 mm at 34 mm, in proportion on
+the other sizes). Today's models group geometry by material, so `DieLid`
+sorts each mesh by name (`DieLid.rule(for:)`):
+
+| Goes | Parts |
+|---|---|
+| On its own screw entity | `Screw_*`, `LidScrews` (its −Y pieces) and the slots in the heads (the middle of `ScrewSleevesAndSlots`); the sleeves round them stay in the lid. The dice model only the heads, so their screws get an M1.0 shank (4.5 mm at 30 mm, as the x-ray's) in the head's finish |
+| With the lid, whole | `Lid`, `Etching`, `Window_ny`, `Module_ny`, `Screen_ny`, `Board`; in the x-rays the board and what's on and under it (`Internal_board`, `_ic`, `_lra`, `_ind`), the contacts' leads and sleeves (`Internal_w_charge`, `_w_12v`, `_sleeve`) |
+| The lid takes its face's piece | `SapphireWindows`, `Internal_panel_glass`, `_encap`, `_chip`, `_fpc`: one mesh with a piece on every face; the triangles nearest −Y go, so the lid's screen takes its own module and ribbon and the other ribbons stay |
+| Stays in the cup | `Pillar_*` and every other `Internal_*`: the frame, the cell, the tungsten, the pillars and their inserts |
+| Hidden | `LidSeam`, and the wiring that plugs into the board: the screens' harness (`Internal_w_spi_*`) and the cell's lead (`Internal_w_batt`) |
+| Cut at the seam | Everything else (the shell): a triangle goes to the lid when its centre is below the seam, or inside the lid's flat (up to an edge radius from the lid face, clear of the walls) |
+
+The shell is a single skin, so the cut is closed as the mockup draws it, in
+machined titanium: a taper from the seam straight in to the edge's centre
+line on both halves (a cone round each corner), the cup's land round its
+mouth, and the lid's flat plate an edge radius up with a tunnel down to the
+back of its window, a millimetre round it. In x-ray these are as see-through
+as the shell. The cut meshes are drawn double-sided while the lid is off.
+
+The dice have no insides of their own, so with the lid off a die borrows its
+x-ray's `Internal_*` parts (loaded once, then cached), opaque. Lid on puts
+the original meshes back and takes the borrowed parts away.
 
 ## Physics
 
@@ -353,10 +413,13 @@ RealityKit pose ──► ImuSynth ──► sb_die_tick(imu, touch) ──► s
     (`orientation::BASES`), so frames land as on the hardware, whatever the
     model's UVs.
   - Pixels are sampled nearest-neighbour and unlit.
-  - The baked screens are hidden while live screens are on.
+  - The baked screens are hidden while live screens are on. A black skirt
+    runs from each quad's edge back into the die, so no angle sees past the
+    quad's edge where the baked screen was.
   - The quads' corners are rounded like the glass's mask. The sapphire
     window has a square hole for the screen, so the corners the rounding
-    cuts off are filled with the window's own material.
+    cuts off are filled with the window's own material. In x-ray the quads
+    stay square, the panel's whole pixel grid.
   - The quads ride along with explode.
   - If a frame shows upside down on device, flip `LiveScreens.flipVertically`.
 - **Haptics.** The firmware's haptic effects play on the phone.
@@ -386,7 +449,8 @@ Switching panels boots it again, and so does placing the die.
 | Gesture | Does |
 |---|---|
 | Tap the table | Place the die (once a plane is found) |
-| Tap the die | Live screens: touch the face (a hold is a long press). Otherwise, or in x-ray: name the part; tap elsewhere to clear |
+| Tap the die | Live screens: touch the face (a hold is a long press), in x-ray too |
+| Drag the lid (lid off) | Turn it (studio) or slide it along the table (AR) |
 | Drag on the die | Move it along the table |
 | Flick on the die | Throw it: picked up, shaken, let go |
 | Drag elsewhere, or twist | Turn it |
@@ -402,9 +466,9 @@ CI runs it on a simulator.
 - `ModelScaleTests`: every bundled model's visual bounds match the table to
   ±0.1 mm, with the origin at the bottom centre. A model that isn't bundled
   yet is skipped.
-- `DieRigTests`: explode distances, the shell fade and tap picking, on the
+- `DieRigTests`: explode distances, the shell fade and the lid coming off, on the
   contract fixture.
-- `ViewerLogicTests`: face-up, settling, ray picking, labels and captions.
+- `ViewerLogicTests`: face-up, settling, ray picking, the lid's cut and captions.
 - `FirmwareLoopTests`: IMU readings at rest, tilted, falling and spinning; the
   windup's limits; 60 Hz ticks at any frame rate; touch faces; screen axes.
 

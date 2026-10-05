@@ -102,7 +102,7 @@ final class ModelCatalog {
             SugarcubeModel(id: "sugarcube_lineup", size: "Line-up", variant: "16, 30, 34, 40 mm", kind: .lineup,
                            bounds: SIMD3(0.156, 0.040, 0.040), massKg: nil),
             // Crude boxes named per the per-part contract (scripts/make_contract_fixture.py), for trying
-            // explode, the shell fade and tap-to-name before the real per-part models exist. Debug builds only.
+            // explode, the shell fade and the lid before the real per-part models exist. Debug builds only.
             SugarcubeModel(id: "sugarcube_contract_fixture", size: "30 mm", variant: "Per-part test", kind: .fixture,
                            bounds: mm30, massKg: 0.055),
         ]

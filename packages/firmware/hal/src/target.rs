@@ -211,6 +211,46 @@ pub enum TargetId {
     Rgb64 = 2,
 }
 
+/// How a face's panel is turned in its window, relative to the face's
+/// drawing axes (`orientation::BASES` in the core), seen from outside the
+/// die. The firmware draws every face in its drawing axes; a turned panel
+/// gets its frame turned back as it's packed, so the picture on the glass
+/// is the same whichever way the panel went in.
+///
+/// A panel's own axes: its columns run toward the end its ribbon leaves
+/// from, its rows across that, the face's outward normal completing them
+/// (so the panel's "up" is the normal crossed with the ribbon direction).
+/// **Datasheet TODO:** that's the module drawing's convention, not yet
+/// checked against the panel's scan order; if the panel scans the other way
+/// round, every face of a target turns by the same extra amount.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mount {
+    /// The panel's axes are the face's drawing axes.
+    #[default]
+    Upright,
+    /// Turned a quarter clockwise: the panel's right is the face's down.
+    Clockwise,
+    /// Turned a half turn.
+    UpsideDown,
+    /// Turned a quarter anticlockwise: the panel's right is the face's up.
+    Anticlockwise,
+}
+
+impl Mount {
+    /// For panel pixel (`col`, `row`) of a `side`-pixel square panel, the
+    /// pixel of the face's upright picture that lands there.
+    #[inline]
+    pub const fn source(self, col: usize, row: usize, side: usize) -> (usize, usize) {
+        let m = side - 1;
+        match self {
+            Mount::Upright => (col, row),
+            Mount::Clockwise => (m - row, col),
+            Mount::UpsideDown => (m - col, m - row),
+            Mount::Anticlockwise => (row, m - col),
+        }
+    }
+}
+
 /// A display target. See the module docs.
 pub trait Target: Sized + 'static {
     const ID: TargetId;
@@ -226,6 +266,8 @@ pub trait Target: Sized + 'static {
     /// panel pixels. The panel itself is square; the simulator's glass
     /// applies the mask (SIM_SPEC B1 step 4).
     const MASK_RADIUS_PX: f32;
+    /// How each face's panel is mounted, in `Face` order.
+    const MOUNT: [Mount; crate::FACE_COUNT] = [Mount::Upright; crate::FACE_COUNT];
 
     /// What a framebuffer stores per pixel.
     type Pixel: Pixel;
@@ -278,6 +320,22 @@ impl Target for Rgb64 {
     /// **Estimate**: the mockup rounds the 30 mm lit area by 34 of its 203
     /// texels, ≈1.80 mm, ≈10.7 panel px. The window's own radius is 1.84 mm.
     const MASK_RADIUS_PX: f32 = 10.7;
+    /// No pinwheel (4 Oct): the four side screens' ribbons point down,
+    /// toward the lid; the top screen's points to +X, folding straight into
+    /// the harness channel; the lid screen's to −X, opposite it. Each panel
+    /// sits ~1.8 mm off centre toward its ribbon, so top and lid cancel (as
+    /// the four sides do), the lid's fold clears its locating pin at −Z, and
+    /// its connector goes on the board's −X side, away from the +X hub.
+    /// Against the faces' drawing axes that leaves the top panel upright,
+    /// the lid's upside down and the four sides turned a quarter clockwise.
+    const MOUNT: [Mount; crate::FACE_COUNT] = [
+        Mount::Clockwise,  // +X: ribbon to −Y
+        Mount::Clockwise,  // −X: ribbon to −Y
+        Mount::Upright,    // +Y: ribbon to +X
+        Mount::UpsideDown, // −Y: ribbon to −X
+        Mount::Clockwise,  // +Z: ribbon to −Y
+        Mount::Clockwise,  // −Z: ribbon to −Y
+    ];
 
     type Pixel = Rgb565;
     type Pixels = [Rgb565; 64 * 64];

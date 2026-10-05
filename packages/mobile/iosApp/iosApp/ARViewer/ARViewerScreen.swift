@@ -72,7 +72,8 @@ struct ARViewerScreen: View {
                 .padding(.top, 8)
         }
         .overlay(alignment: .leading) {
-            if model.arSupported {
+            // On iPhone the AR toggle sits with X-ray in the controls.
+            if model.arSupported, widthClass == .regular {
                 ARPane(model: model)
                     .padding(.leading, 12)
             }
@@ -108,7 +109,7 @@ private struct ARViewContainer: UIViewRepresentable {
     }
 }
 
-// MARK: - Status: caption, hints, part label, result
+// MARK: - Status: caption, hints, result
 
 private struct StatusOverlay: View {
     let model: ARViewerModel
@@ -140,9 +141,6 @@ private struct StatusOverlay: View {
             if let error = model.loadError {
                 Text(error).font(.footnote).foregroundStyle(.red).pill()
             }
-            if let part = model.selectedPart {
-                Text(part).font(.callout.weight(.medium)).pill()
-            }
             if let face = model.faceUp {
                 Text("Face up: \(face.label)").font(.callout.weight(.medium)).pill()
             }
@@ -152,7 +150,6 @@ private struct StatusOverlay: View {
         }
         .multilineTextAlignment(.center)
         .padding(.horizontal, 16)
-        .animation(.default, value: model.selectedPart)
         .animation(.default, value: model.faceUp)
     }
 }
@@ -164,15 +161,15 @@ private struct CompactControls: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            if model.canExplode {
+            if model.canExplode, !model.isLidOff {
                 ExplodeSlider(model: model)
                     .padding(.horizontal, 12)
                     .pill()
             }
-            HStack(spacing: 8) {
-                ViewButtons(model: model)
-                Spacer(minLength: 0)
-                SizeLock(model: model)
+            // Icons only when the labels don't fit the width.
+            ViewThatFits(in: .horizontal) {
+                viewRow
+                viewRow.labelStyle(.iconOnly)
             }
             .padding(.horizontal, 12)
             HStack(spacing: 8) {
@@ -181,6 +178,14 @@ private struct CompactControls: View {
             ModelPicker(model: model)
         }
         .padding(.bottom, 12)
+    }
+
+    private var viewRow: some View {
+        HStack(spacing: 8) {
+            ViewButtons(model: model)
+            Spacer(minLength: 0)
+            SizeLock(model: model)
+        }
     }
 }
 
@@ -267,9 +272,12 @@ private struct SidePanel: View {
             Section("Roll") {
                 ControlPad(model: model)
                     .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                // Icons only: the side panel is too narrow for their titles,
+                // which wrapped. VoiceOver still reads them.
                 HStack {
                     RollButtons(model: model)
                 }
+                .labelStyle(.iconOnly)
                 if let face = model.faceUp {
                     LabeledContent("Face up", value: face.label)
                 }
@@ -286,11 +294,12 @@ private struct SidePanel: View {
                         model.toggleExplodedFile()
                     }
                 }
-                if model.canExplode {
-                    ExplodeSlider(model: model)
+                if model.canTakeLidOff {
+                    Toggle("Lid off", isOn: Binding(get: { model.isLidOff }, set: { _ in model.toggleLid() }))
+                        .disabled(!model.canToggleLid)
                 }
-                if let part = model.selectedPart {
-                    LabeledContent("Part", value: part)
+                if model.canExplode, !model.isLidOff {
+                    ExplodeSlider(model: model)
                 }
             }
             Section("Size") {
@@ -352,8 +361,9 @@ private struct ControlPad: View {
 
 // MARK: - AR pane
 
-/// A small pane on the left edge: AR on (the camera and your table) or off
-/// (the die locked in place on a virtual table).
+/// A small pane on the left edge, on iPad: AR on (the camera and your table)
+/// or off (the die locked in place on a virtual table). On iPhone it's a
+/// toggle beside X-ray instead.
 private struct ARPane: View {
     @Bindable var model: ARViewerModel
 
@@ -395,6 +405,22 @@ private struct ViewButtons: View {
             }
             .buttonStyle(.bordered)
             .tint(model.isXray ? .accentColor : .primary)
+        }
+        if model.arSupported {
+            Toggle(isOn: $model.augmented) {
+                Label("AR", systemImage: "arkit")
+            }
+            .toggleStyle(.button)
+            .buttonStyle(.bordered)
+            .tint(model.augmented ? .accentColor : .primary)
+        }
+        if model.canTakeLidOff {
+            Button { model.toggleLid() } label: {
+                Label(model.isLidOff ? "Lid on" : "Lid off", systemImage: model.isLidOff ? "square.stack.3d.down.forward.fill" : "square.stack.3d.down.forward")
+            }
+            .buttonStyle(.bordered)
+            .tint(model.isLidOff ? .accentColor : .primary)
+            .disabled(!model.canToggleLid)
         }
         if let other = model.explodedCounterpart {
             Button { model.toggleExplodedFile() } label: {

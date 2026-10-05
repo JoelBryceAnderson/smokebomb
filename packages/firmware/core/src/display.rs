@@ -11,7 +11,7 @@
 //! Screens draw into these through [`crate::gfx`]; the built-in 3x5 digits
 //! below remain only for the placeholder menu and Nest screens.
 
-use smokebomb_hal::{FrameBytes, Grey96, Pixel, Target, PANEL_HEIGHT, PANEL_WIDTH};
+use smokebomb_hal::{FrameBytes, Grey96, Mount, Pixel, Target, PANEL_HEIGHT, PANEL_WIDTH};
 
 use crate::orientation::Quarter;
 
@@ -168,6 +168,33 @@ impl Framebuffer<Grey96> {
         }
     }
 
+    /// [`Framebuffer::quantize`] for a panel mounted `mount` in its window
+    /// ([`Mount`]): the picture turned back so it reads upright on the glass.
+    pub fn quantize_mounted(&self, mount: Mount, out: &mut FrameBytes) {
+        self.quantize(out);
+        if mount == Mount::Upright {
+            return;
+        }
+        let upright = *out;
+        let level = |i: usize| {
+            if i % 2 == 0 {
+                upright[i / 2] >> 4
+            } else {
+                upright[i / 2] & 0x0f
+            }
+        };
+        for i in 0..96 * 96 {
+            let (x, y) = mount.source(i % 96, i / 96, 96);
+            let l = level(y * 96 + x);
+            let b = &mut out[i / 2];
+            *b = if i % 2 == 0 {
+                (*b & 0x0f) | (l << 4)
+            } else {
+                (*b & 0xf0) | l
+            };
+        }
+    }
+
     /// Reduce to 16 levels and pack for the panel, exactly as the mockup does:
     /// `level = min(15, floor(v / 255 * 15 + D[x, y]))`, high nibble first.
     pub fn quantize(&self, out: &mut FrameBytes) {
@@ -193,6 +220,18 @@ impl Framebuffer<smokebomb_hal::Rgb64> {
     pub fn pack565(&self, out: &mut [u8; 64 * 64 * 2]) {
         for (p, o) in self.buf.iter().zip(out.chunks_exact_mut(2)) {
             o.copy_from_slice(&p.to_be_bytes());
+        }
+    }
+
+    /// Pack for a panel mounted `mount` in its window ([`Mount`]): the
+    /// picture turned back so it reads upright on the glass.
+    pub fn pack565_mounted(&self, mount: Mount, out: &mut [u8; 64 * 64 * 2]) {
+        if mount == Mount::Upright {
+            return self.pack565(out);
+        }
+        for (i, o) in out.chunks_exact_mut(2).enumerate() {
+            let (x, y) = mount.source(i % 64, i / 64, 64);
+            o.copy_from_slice(&self.buf[y * 64 + x].to_be_bytes());
         }
     }
 
@@ -315,6 +354,36 @@ mod tests {
         let mut back = Framebuffer::<Rgb64>::new();
         back.load_packed565(&out);
         assert_eq!(back.pixels(), fb.pixels());
+    }
+
+    #[test]
+    fn a_turned_panel_gets_its_picture_turned_back() {
+        let mut fb = Framebuffer::<Rgb64>::new();
+        let red = Rgb565::from_rgb(255, 0, 0);
+        // The picture's top-left pixel.
+        fb.put(0, 0, red);
+        let mut out = [0u8; 8192];
+        let at = |out: &[u8; 8192], col: usize, row: usize| {
+            Rgb565::from_be_bytes([out[(row * 64 + col) * 2], out[(row * 64 + col) * 2 + 1]])
+        };
+        fb.pack565_mounted(Mount::Upright, &mut out);
+        assert_eq!(at(&out, 0, 0), red);
+        // Turned a quarter clockwise, the panel's right runs down the face
+        // and its rows run leftward: the face's top-left is the panel's
+        // bottom-left.
+        fb.pack565_mounted(Mount::Clockwise, &mut out);
+        assert_eq!(at(&out, 0, 63), red);
+        fb.pack565_mounted(Mount::UpsideDown, &mut out);
+        assert_eq!(at(&out, 63, 63), red);
+        fb.pack565_mounted(Mount::Anticlockwise, &mut out);
+        assert_eq!(at(&out, 63, 0), red);
+
+        let mut g = Framebuffer::<Grey96>::new();
+        g.set_pixel(0, 0, 255);
+        let mut packed = [0u8; 96 * 96 / 2];
+        g.quantize_mounted(Mount::Clockwise, &mut packed);
+        assert_eq!(packed[95 * 96 / 2] >> 4, 15, "the bottom row's first pixel");
+        assert_eq!(packed[0] >> 4, 0);
     }
 
     #[test]

@@ -14,11 +14,9 @@ final class ARViewerModel {
 
     /// The one the app uses; tests make their own.
     static let shared = ARViewerModel(
-        catalog: ModelCatalog(source: BundleModelSource(bundle: .main)),
-        labels: .load(bundle: .main))
+        catalog: ModelCatalog(source: BundleModelSource(bundle: .main)))
 
     let catalog: ModelCatalog
-    let labels: PartLabels
     @ObservationIgnored weak var scene: ARSceneController?
     /// Makes the firmware for live screens. The app sets it (it needs the Rust
     /// library); nil means baked screens only, as in the tests.
@@ -69,17 +67,18 @@ final class ARViewerModel {
     /// The firmware's mode while it runs (debug readout).
     var firmwareMode: String?
 
-    var selectedPart: String?
     private(set) var isRolling = false
+    /// The lid is off (or on its way off or back on): it lies beside the cup
+    /// and turns on its own.
+    private(set) var isLidOff = false
     /// Held in the air with the menu's face toward you (the firmware's menu is open).
     var isHeld = false
     private(set) var faceUp: DieFace?
     /// Visual bounds of the loaded model, measured in metres; the debug overlay compares them with the table.
     private(set) var measured: SIMD3<Float>?
 
-    init(catalog: ModelCatalog, labels: PartLabels) {
+    init(catalog: ModelCatalog) {
         self.catalog = catalog
-        self.labels = labels
         models = catalog.available
         selected = models.first { $0.id == ModelCatalog.defaultID } ?? models.first { $0.kind == .die } ?? models.first
         let supported = ARWorldTrackingConfiguration.isSupported
@@ -130,6 +129,7 @@ final class ARViewerModel {
         if isCoaching { return nil }
         if augmented, !isPlaced { return planeFound ? "Tap the table to place the die" : "Move your device slowly to find the table" }
         if isHeld { return "Menu: tip it with the turn pad · touch the front face" }
+        if isLidOff { return "Drag the lid or the cup to turn it" }
         return nil
     }
 
@@ -139,7 +139,6 @@ final class ARViewerModel {
         guard model != selected else { return }
         if model.kind == .die || model.kind == .fixture { dieBeforeXray = nil }
         selected = model
-        selectedPart = nil
         faceUp = nil
         loadError = nil
         scene?.show(model)
@@ -259,7 +258,30 @@ final class ARViewerModel {
     // MARK: Rolling
 
     var canThrow: Bool {
-        isPlaced && !isRolling && !isHeld && !isLoading && (selected?.isThrowable ?? false)
+        isPlaced && !isRolling && !isHeld && !isLoading && !isLidOff && (selected?.isThrowable ?? false)
+    }
+
+    // MARK: Lid
+
+    /// Whether this model's lid can come off: a single die, assembled.
+    var canTakeLidOff: Bool {
+        switch selected?.kind {
+        case .die?, .xray?, .fixture?: true
+        default: false
+        }
+    }
+
+    /// The Lid button works while the die is down and still.
+    var canToggleLid: Bool { canTakeLidOff && isPlaced && !isRolling && !isHeld && !isLoading }
+
+    func toggleLid() {
+        guard canToggleLid else { return }
+        scene?.setLidOff(!isLidOff)
+    }
+
+    func lidDidChange(off: Bool) {
+        isLidOff = off
+        if off { explode = 0 }
     }
 
     /// The turn pad works once the die is down and not mid-throw.
@@ -284,6 +306,7 @@ final class ARViewerModel {
 
     func sceneDidStart() {
         isPlaced = false
+        isLidOff = false
         planeFound = false
         isRolling = false
         if let selected { scene?.show(selected) }

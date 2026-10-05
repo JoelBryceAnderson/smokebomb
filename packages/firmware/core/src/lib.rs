@@ -1405,7 +1405,8 @@ where
         match TargetOf::<P>::DELIVERY {
             Delivery::WholeFrames => {
                 for face in Face::ALL {
-                    TargetOf::<P>::pack(&self.frames[face.index()], &mut self.panel);
+                    let mount = TargetOf::<P>::MOUNT[face.index()];
+                    TargetOf::<P>::pack(&self.frames[face.index()], mount, &mut self.panel);
                     self.hw.display.write_frame(face, &self.panel)?;
                 }
             }
@@ -1422,7 +1423,11 @@ where
         let layout = TargetOf::<P>::LAYOUT;
         let mut hashes = [TargetOf::<P>::NO_TILES; smokebomb_hal::FACE_COUNT];
         for face in Face::ALL {
-            TargetOf::<P>::pack(&self.frames[face.index()], &mut self.panel);
+            TargetOf::<P>::pack(
+                &self.frames[face.index()],
+                TargetOf::<P>::MOUNT[face.index()],
+                &mut self.panel,
+            );
             panel::hash_tiles(self.panel.as_ref(), layout, hashes[face.index()].as_mut());
         }
         let plan = self.sync.plan(&hashes, layout, now, down, down_every_ms, budget);
@@ -1431,7 +1436,7 @@ where
             if region.is_empty() {
                 continue;
             }
-            TargetOf::<P>::pack(&self.frames[i], &mut self.panel);
+            TargetOf::<P>::pack(&self.frames[i], TargetOf::<P>::MOUNT[i], &mut self.panel);
             self.hw.display.write_region(face, region, &self.panel)?;
             self.sync.sent(i, region, &hashes[i], layout, now);
         }

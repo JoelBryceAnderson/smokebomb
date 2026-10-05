@@ -68,24 +68,66 @@ final class ViewerLogicTests: XCTestCase {
         XCTAssertEqual(t ?? .nan, 8, accuracy: 1e-5)
     }
 
-    // MARK: Labels
+    // MARK: Lid
 
-    func testLabelsPreferExactThenLongestPrefix() throws {
-        let labels = try PartLabels(json: Data(#"{"_about": "x", "Internal_*": "inner", "Internal_w_*": "wire", "Shell": "shell"}"#.utf8))
-        XCTAssertEqual(labels.label(for: "Shell"), "shell")
-        XCTAssertEqual(labels.label(for: "Internal_w_red"), "wire")
-        XCTAssertEqual(labels.label(for: "Internal_board"), "inner")
-        XCTAssertNil(labels.label(for: "_about"))
-        XCTAssertNil(labels.label(for: "Sugarcube"))
+    func testLidCutFollowsTheSeam() {
+        let g = DieLid.Geometry(side: 0.034)
+        XCTAssertEqual(g.edgeRadius, 0.0025, accuracy: 1e-7)
+        XCTAssertEqual(g.seamHeight, 0.0025 * (1 - sin(Float.pi / 4)), accuracy: 1e-7)
+        // The lid face, and the bottom edge below the seam.
+        XCTAssertTrue(g.isLid([0, 0, 0]))
+        XCTAssertTrue(g.isLid([0.0165, 0.0005, 0]))
+        // The lid's flat inside, away from the walls.
+        XCTAssertTrue(g.isLid([0.005, 0.002, -0.005]))
+        // The cup's lower edge above the seam, its walls and its top.
+        XCTAssertFalse(g.isLid([0.0168, 0.0015, 0]))
+        XCTAssertFalse(g.isLid([0.017, 0.01, 0]))
+        XCTAssertFalse(g.isLid([0, 0.034, 0]))
+        // Scaled with the die.
+        XCTAssertEqual(DieLid.Geometry(side: 0.030).edgeRadius, 0.0025 * 30 / 34, accuracy: 1e-7)
     }
 
-    func testBundledLabelsCoverTheContract() {
-        let labels = PartLabels.load(bundle: Bundle(for: Self.self))
-        let contract = ["Shell", "Lid", "Board", "Cell", "BalancePlate", "Wiring"]
-            + DieFace.allCases.flatMap { ["Window_\($0.rawValue)", "Module_\($0.rawValue)"] }
-            + (0..<4).flatMap { ["Screw_\($0)", "Pillar_\($0)"] }
-        for name in contract { XCTAssertNotNil(labels.label(for: name), name) }
-        XCTAssertEqual(labels.label(for: "BalancePlate"), "Tungsten balance plate")
+    func testLidPartsByName() {
+        XCTAssertEqual(DieLid.rule(for: "Screen_ny"), .lid)
+        // The board and what's on it come off together.
+        for name in ["Internal_board", "Internal_ic", "Internal_lra", "Internal_ind", "Internal_w_charge"] {
+            XCTAssertEqual(DieLid.rule(for: name), .lid, name)
+        }
+        // Pieces on every face: the lid takes its own.
+        for name in ["SapphireWindows", "Internal_fpc", "Internal_panel_glass"] {
+            XCTAssertEqual(DieLid.rule(for: name), .byFace, name)
+        }
+        // The screws come out on their own.
+        for name in ["LidScrews", "ScrewSleevesAndSlots", "Screw_2"] {
+            XCTAssertEqual(DieLid.rule(for: name), .screws, name)
+        }
+        // The cup keeps its cell and frame; the wiring into the board is unplugged.
+        for name in ["Pillar_0", "Internal_battery", "Internal_frame", "Internal_pillar"] {
+            XCTAssertEqual(DieLid.rule(for: name), .cup, name)
+        }
+        for name in ["LidSeam", "Internal_w_spi_a", "Internal_w_batt"] {
+            XCTAssertEqual(DieLid.rule(for: name), .hidden, name)
+        }
+        XCTAssertNil(DieLid.rule(for: "Shell"))
+        XCTAssertNil(DieLid.rule(for: "Screen_py"))
+    }
+
+    func testNearestFace() {
+        let g = DieLid.Geometry(side: 0.030)
+        XCTAssertEqual(g.nearestFace([0, 0.002, 0]), .ny)
+        XCTAssertEqual(g.nearestFace([0.012, 0.002, 0]), .ny)
+        XCTAssertEqual(g.nearestFace([0.0134, 0.01, 0]), .px)
+        XCTAssertEqual(g.nearestFace([0, 0.028, 0]), .py)
+    }
+
+    func testLidPlateMeetsTheTaper() {
+        let g = DieLid.Geometry(side: 0.030)
+        XCTAssertLessThan(g.tunnel.half, g.flatHalf)
+        XCTAssertGreaterThan(g.tunnel.half, g.window.half)
+        // The outlines line up point for point, a corner's middle on the diagonal.
+        let outline = DieLid.roundedOutline(half: 0.01, radius: 0.002)
+        XCTAssertEqual(outline.count, 36)
+        XCTAssertEqual(outline[4].x, outline[4].y, accuracy: 1e-7)
     }
 
     // MARK: Catalog
@@ -156,7 +198,7 @@ final class ViewerLogicTests: XCTestCase {
     /// A viewer with every catalog model available, whether or not it's bundled.
     @MainActor
     private func viewer() -> ARViewerModel {
-        ARViewerModel(catalog: ModelCatalog(source: EverythingSource()), labels: try! PartLabels(json: Data("{}".utf8)))
+        ARViewerModel(catalog: ModelCatalog(source: EverythingSource()))
     }
 }
 

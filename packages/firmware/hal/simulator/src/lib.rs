@@ -240,6 +240,43 @@ impl<T: Target> Platform for SimPlatform<T> {
 pub struct SimDisplay<T: Target = Grey96>(SimHandle, PhantomData<T>);
 
 impl<T: Target> SimDisplay<T> {
+    /// A packed frame as the panel scans it, turned back upright.
+    fn as_shown(mount: Mount, wire: &[u8]) -> Vec<u8> {
+        if mount == Mount::Upright || wire.is_empty() {
+            return wire.to_vec();
+        }
+        let mut out = vec![0; wire.len()];
+        match T::ID {
+            TargetId::Grey96 => {
+                let level = |i: usize| {
+                    if i % 2 == 0 {
+                        wire[i / 2] >> 4
+                    } else {
+                        wire[i / 2] & 0x0f
+                    }
+                };
+                for i in 0..T::PIXELS {
+                    let (x, y) = mount.source(i % T::WIDTH, i / T::WIDTH, T::WIDTH);
+                    let j = y * T::WIDTH + x;
+                    let b = &mut out[j / 2];
+                    *b = if j % 2 == 0 {
+                        (*b & 0x0f) | (level(i) << 4)
+                    } else {
+                        (*b & 0xf0) | level(i)
+                    };
+                }
+            }
+            TargetId::Rgb64 => {
+                for i in 0..T::PIXELS {
+                    let (x, y) = mount.source(i % T::WIDTH, i / T::WIDTH, T::WIDTH);
+                    let j = y * T::WIDTH + x;
+                    out[2 * j..2 * j + 2].copy_from_slice(&wire[2 * i..2 * i + 2]);
+                }
+            }
+        }
+        out
+    }
+
     /// The pending frame for `face`, sized for `T` (a fresh panel is black).
     fn pending(s: &mut SimState, face: Face) -> &mut Vec<u8> {
         s.target = Some(T::ID);
@@ -293,10 +330,15 @@ impl<T: Target> Display for SimDisplay<T> {
         Ok(())
     }
 
+    /// Latches the panels' frames. They arrive the way each panel scans
+    /// (turned for how it's mounted, `Target::MOUNT`); `faces` keeps them as
+    /// the glass shows them, upright in each face's drawing axes.
     fn flush(&mut self) -> HalResult<()> {
         let mut s = self.0.lock();
-        if s.faces != s.pending {
-            s.faces = s.pending.clone();
+        let shown: [Vec<u8>; FACE_COUNT] =
+            core::array::from_fn(|i| Self::as_shown(T::MOUNT[i], &s.pending[i]));
+        if s.faces != shown {
+            s.faces = shown;
             s.frame_seq += 1;
         }
         Ok(())
@@ -544,5 +586,30 @@ impl Clock for SimClock {
         let now = self.now_ms();
         let base = self.handle.lock().local_base_s as u64;
         ((base + now / 1000) % 86_400) as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn faces_show_a_turned_panel_upright() {
+        let handle = SimHandle::new();
+        let mut display = SimDisplay::<Rgb64>(handle.clone(), PhantomData);
+        // +X is mounted a quarter clockwise on the 30 mm die: the face's
+        // top-left pixel goes out as the panel's bottom-left.
+        assert_eq!(Rgb64::MOUNT[Face::PosX.index()], Mount::Clockwise);
+        let mut wire = Rgb64::BLANK_PANEL;
+        let (col, row) = (0, 63);
+        wire[(row * 64 + col) * 2..(row * 64 + col) * 2 + 2].copy_from_slice(&[0xF8, 0x00]);
+        display.write_frame(Face::PosX, &wire).unwrap();
+        display.flush().unwrap();
+        let s = handle.lock();
+        assert_eq!(&s.faces[Face::PosX.index()][0..2], &[0xF8, 0x00]);
+        // The top face is upright: as sent.
+        assert_eq!(Rgb64::MOUNT[Face::PosY.index()], Mount::Upright);
+        // The lid's ribbon points to −X, against its drawing axes' x.
+        assert_eq!(Rgb64::MOUNT[Face::NegY.index()], Mount::UpsideDown);
     }
 }
