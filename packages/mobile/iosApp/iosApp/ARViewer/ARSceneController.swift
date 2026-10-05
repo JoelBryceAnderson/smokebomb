@@ -94,6 +94,10 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let swingAxis: SIMD3<Float>?
     }
     private var lidMove: LidMove?
+    /// A die's x-ray, loaded for its insides: the die's own model has none,
+    /// so the x-ray's are shown while the lid is off.
+    private var borrowedInternals: (id: String, entity: Entity)?
+    private var internalsLoading = false
     /// Seconds since the scene started, summed from frame times.
     private var time: TimeInterval = 0
 
@@ -201,7 +205,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         if windup != nil { stepWindup() } else if model.isRolling { trackRoll(dt: dt) }
         stepGlide()
-        if lidOpening, glide == nil {
+        if lidOpening, glide == nil, !internalsLoading {
             lidOpening = false
             beginLidOff()
         }
@@ -246,6 +250,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         syncFirmware()
         if let lidAt, detachLid(at: lidAt) {
             model.lidDidChange(off: true)
+            loadInternals()
         } else if lockedInPlace, !held {
             frameDieOnTable(animated: false)
         }
@@ -978,6 +983,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             guard lid == nil else { return }
             dragTarget = nil
             lidOpening = true
+            loadInternals()
             model.lidDidChange(off: true)
             let c = centre
             glide(to: SIMD3(c.x, halfHeight, c.z), rotation: Self.lidUp(pivot.orientation),
@@ -1066,12 +1072,36 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// Cuts the lid off the die where it sits, or at `transform` (in the anchor's space).
     private func detachLid(at transform: Transform?) -> Bool {
         guard lid == nil, let rig, let placement, model.canTakeLidOff,
-              let cut = DieLid(dieRoot: rig.root, reference: pivot, side: rig.model.bounds.x)
+              let cut = DieLid(dieRoot: rig.root, reference: pivot, side: rig.model.bounds.x,
+                               internals: internalsForRig, opacity: model.isXray ? DieRig.xrayShellOpacity : 1)
         else { return false }
         placement.addChild(cut.root, preservingWorldTransform: true)
         if let transform { cut.root.transform = transform }
         lid = cut
         return true
+    }
+
+    /// The x-ray's insides for the die showing, once loaded; nil for an x-ray (it has its own).
+    private var internalsForRig: Entity? {
+        guard let rig, rig.model.kind == .die, let borrowed = borrowedInternals, borrowed.id == rig.model.xray else { return nil }
+        return borrowed.entity
+    }
+
+    /// Loads the die's x-ray for its insides, if it isn't already. With the
+    /// lid already off when it arrives, the lid is cut again to take them in.
+    private func loadInternals() {
+        guard let rig, rig.model.kind == .die, let id = rig.model.xray, borrowedInternals?.id != id,
+              let xray = model.catalog.model(id: id), model.models.contains(xray)
+        else { return }
+        internalsLoading = true
+        Task { [weak self] in
+            let entity = try? await self?.model.catalog.load(xray)
+            guard let self else { return }
+            self.internalsLoading = false
+            guard let entity else { return }
+            self.borrowedInternals = (id, entity)
+            if self.lid != nil, self.lidMove == nil, self.rig?.model.xray == id { self.keepingLid {} }
+        }
     }
 
     /// Puts the lid back on at once, wherever it was.

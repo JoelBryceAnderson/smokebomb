@@ -270,16 +270,27 @@ While it's off:
 
 The lid is the charging face and the lower half of its four edges, cut at the
 seam 45° round the bottom edge (edge radius 2.5 mm at 34 mm, in proportion on
-the other sizes). Today's models group geometry by material, so `DieLid` cuts
-it out of the meshes it shares with the cup, by triangle, in the die's own
-frame. A triangle goes to the lid when its centre is below the seam, or inside
-the lid's flat (up to an edge radius from the lid face, clear of the walls).
-These parts go with the lid whole: `Lid`, `LidScrews`, `Screw_*`,
-`ScrewSleevesAndSlots`, `Etching`, `Window_ny`, `Module_ny`, `Screen_ny`,
-`Board` and `Internal_board` (the board sits on the lid). `Pillar_*` and
-`Internal_pillar` stay in the cup, and `LidSeam` is hidden. The cut meshes are
-drawn double-sided while the lid is off, so the insides show. Lid on puts the
-original meshes back.
+the other sizes). Today's models group geometry by material, so `DieLid`
+sorts each mesh by name (`DieLid.rule(for:)`):
+
+| Goes | Parts |
+|---|---|
+| With the lid, whole | `Lid`, `Screw_*`, `ScrewSleevesAndSlots`, `Etching`, `Window_ny`, `Module_ny`, `Screen_ny`, `Board`; in the x-rays the board and what's on and under it (`Internal_board`, `_ic`, `_lra`, `_ind`), the contacts' leads and sleeves (`Internal_w_charge`, `_w_12v`, `_sleeve`) |
+| The lid takes its face's piece | `LidScrews`, `SapphireWindows`, `Internal_panel_glass`, `_encap`, `_chip`, `_fpc`: one mesh with a piece on every face; the triangles nearest −Y go, so the lid's screen takes its own module and ribbon and the other ribbons stay |
+| Stays in the cup | `Pillar_*` and every other `Internal_*`: the frame, the cell and its lead, the screens' harness, the tungsten, the pillars and their inserts |
+| Hidden | `LidSeam` |
+| Cut at the seam | Everything else (the shell): a triangle goes to the lid when its centre is below the seam, or inside the lid's flat (up to an edge radius from the lid face, clear of the walls) |
+
+The shell is a single skin, so the cut is closed as the mockup draws it, in
+machined titanium: a taper from the seam straight in to the edge's centre
+line on both halves (a cone round each corner), the cup's land round its
+mouth, and the lid's flat plate an edge radius up with a tunnel down to the
+back of its window, a millimetre round it. In x-ray these are as see-through
+as the shell. The cut meshes are drawn double-sided while the lid is off.
+
+The dice have no insides of their own, so with the lid off a die borrows its
+x-ray's `Internal_*` parts (loaded once, then cached), opaque. Lid on puts
+the original meshes back and takes the borrowed parts away.
 
 ## Physics
 

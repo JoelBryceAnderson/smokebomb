@@ -88,13 +88,41 @@ final class ViewerLogicTests: XCTestCase {
     }
 
     func testLidPartsByName() {
-        XCTAssertEqual(DieLid.side(of: "LidScrews"), true)
-        XCTAssertEqual(DieLid.side(of: "Screw_2"), true)
-        XCTAssertEqual(DieLid.side(of: "Screen_ny"), true)
-        XCTAssertEqual(DieLid.side(of: "Internal_board"), true)
-        XCTAssertEqual(DieLid.side(of: "Pillar_0"), false)
-        XCTAssertNil(DieLid.side(of: "Shell"))
-        XCTAssertNil(DieLid.side(of: "Screen_py"))
+        XCTAssertEqual(DieLid.rule(for: "Screw_2"), .lid)
+        XCTAssertEqual(DieLid.rule(for: "Screen_ny"), .lid)
+        // The board and what's on it come off together.
+        for name in ["Internal_board", "Internal_ic", "Internal_lra", "Internal_ind", "Internal_w_charge"] {
+            XCTAssertEqual(DieLid.rule(for: name), .lid, name)
+        }
+        // Pieces on every face: the lid takes its own.
+        for name in ["LidScrews", "SapphireWindows", "Internal_fpc", "Internal_panel_glass"] {
+            XCTAssertEqual(DieLid.rule(for: name), .byFace, name)
+        }
+        // The cup keeps its harness, cell and frame.
+        for name in ["Pillar_0", "Internal_w_spi_a", "Internal_battery", "Internal_frame", "Internal_pillar"] {
+            XCTAssertEqual(DieLid.rule(for: name), .cup, name)
+        }
+        XCTAssertEqual(DieLid.rule(for: "LidSeam"), .hidden)
+        XCTAssertNil(DieLid.rule(for: "Shell"))
+        XCTAssertNil(DieLid.rule(for: "Screen_py"))
+    }
+
+    func testNearestFace() {
+        let g = DieLid.Geometry(side: 0.030)
+        XCTAssertEqual(g.nearestFace([0, 0.002, 0]), .ny)
+        XCTAssertEqual(g.nearestFace([0.012, 0.002, 0]), .ny)
+        XCTAssertEqual(g.nearestFace([0.0134, 0.01, 0]), .px)
+        XCTAssertEqual(g.nearestFace([0, 0.028, 0]), .py)
+    }
+
+    func testLidPlateMeetsTheTaper() {
+        let g = DieLid.Geometry(side: 0.030)
+        XCTAssertLessThan(g.tunnel.half, g.flatHalf)
+        XCTAssertGreaterThan(g.tunnel.half, g.window.half)
+        // The outlines line up point for point, a corner's middle on the diagonal.
+        let outline = DieLid.roundedOutline(half: 0.01, radius: 0.002)
+        XCTAssertEqual(outline.count, 36)
+        XCTAssertEqual(outline[4].x, outline[4].y, accuracy: 1e-7)
     }
 
     // MARK: Catalog
