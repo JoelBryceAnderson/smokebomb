@@ -92,11 +92,38 @@ function sparkle(x, y, r, fill) {
   return `<path class="solid" d="M${x},${y - r} Q${x + w},${y - w} ${x + r},${y} Q${x + w},${y + w} ${x},${y + r} Q${x - w},${y + w} ${x - r},${y} Q${x - w},${y - w} ${x},${y - r} Z" fill="${fill}"/>`;
 }
 
+// A closed path through `pts` ([x, y, radius]) with each corner rounded.
+function roundedPoly(pts) {
+  const n = pts.length;
+  const toward = (a, b, d) => {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    return [a[0] + ((b[0] - a[0]) * d) / len, a[1] + ((b[1] - a[1]) * d) / len];
+  };
+  let d = "";
+  for (let i = 0; i < n; i++) {
+    const [p, prev, next] = [pts[i], pts[(i + n - 1) % n], pts[(i + 1) % n]];
+    const a = toward(p, prev, p[2]);
+    const b = toward(p, next, p[2]);
+    d += `${i ? "L" : "M"}${a[0].toFixed(1)},${a[1].toFixed(1)} Q${p[0]},${p[1]} ${b[0].toFixed(1)},${b[1].toFixed(1)} `;
+  }
+  return d + "Z";
+}
+
+// The cube's edge rounding. The die's is 2.5 mm on 34 mm (SIM_SPEC); the
+// mascot exaggerates it so it still reads at launcher size.
+const R = 46;
+
 function mascot() {
-  // Cube: front face, top and right side in a loose three-quarter view.
-  const front = "M330,330 L650,330 L650,640 L330,640 Z";
-  const top = "M330,330 L398,268 L718,268 L650,330 Z";
-  const side = "M650,330 L718,268 L718,578 L650,640 Z";
+  // Cube: front face, top and right side in a loose three-quarter view, with
+  // the outer corners rounded and the three inner edges meeting at (650, 330).
+  const front = roundedPoly([[330, 330, R], [650, 330, 0], [650, 640, R], [330, 640, R]]);
+  const top = roundedPoly([[330, 330, R], [398, 268, R * 0.7], [718, 268, R], [650, 330, 0]]);
+  const side = roundedPoly([[650, 330, 0], [718, 268, R], [718, 578, R * 0.7], [650, 640, R]]);
+  const outline = roundedPoly([
+    [330, 330, R], [398, 268, R * 0.7], [718, 268, R], [718, 578, R * 0.7], [650, 640, R], [330, 640, R],
+  ]);
+  // Inner edges fade out where they reach a rounded corner.
+  const edges = `M${330 + R},330 L650,330 L${718 - R * 0.55},${268 + R * 0.5} M650,330 L650,${640 - R}`;
   const grains = [];
   // Granulated sugar: little specks on each face.
   let seed = 11;
@@ -125,11 +152,11 @@ function mascot() {
       <ellipse class="cut" cx="380" cy="726" rx="16" ry="7" fill="#FFFFFF" opacity="0.5"/>
       <ellipse class="cut" cx="620" cy="726" rx="16" ry="7" fill="#FFFFFF" opacity="0.5"/>
       <!-- the cube -->
-      <g stroke="${C.ink}" stroke-width="14" stroke-linejoin="round">
-        <path class="solid-w" d="${side}" fill="${C.sugarSide}"/>
-        <path class="solid-w" d="${top}" fill="${C.sugarTop}"/>
-        <path class="solid-w" d="${front}" fill="${C.sugar}"/>
-      </g>
+      <path class="solid-w" d="${side}" fill="${C.sugarSide}"/>
+      <path class="solid-w" d="${top}" fill="${C.sugarTop}"/>
+      <path class="solid-w" d="${front}" fill="${C.sugar}"/>
+      <path d="${edges}" fill="none" stroke="${C.ink}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="${outline}" fill="none" stroke="${C.ink}" stroke-width="14" stroke-linejoin="round"/>
       <g class="grain" fill="${C.sugarSide}">${grains.join("")}</g>
       <!-- arm on the hip (left), thumbs-up arm (right) -->
       <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
