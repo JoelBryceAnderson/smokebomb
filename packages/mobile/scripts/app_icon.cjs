@@ -39,7 +39,9 @@ const C = {
 
 // --- Pieces, all on a 1024 canvas -----------------------------------------
 
-function paper() {
+// `border` draws the box's solid red border over the ageing (which would
+// muddy it) but under the grain, so it shares the paper's texture.
+function paper(border = false) {
   const rays = [];
   const n = 28;
   const [cx, cy] = [512, 470];
@@ -55,13 +57,17 @@ function paper() {
     <rect width="1024" height="1024" fill="${C.paper}"/>
     <path d="${rays.join(" ")}" fill="${C.ray}"/>
     <rect width="1024" height="1024" fill="url(#age)"/>
+    ${border ? frame() : ""}
     <rect width="1024" height="1024" filter="url(#grain)" opacity="0.35"/>`;
 }
 
+// Solid red from the icon's edge in to a rounded panel, then a navy pinline
+// just inside the panel's edge.
 function frame() {
   return `
-    <rect x="44" y="44" width="936" height="936" rx="196" fill="none" stroke="${C.red}" stroke-width="22"/>
-    <rect x="76" y="76" width="872" height="872" rx="168" fill="none" stroke="${C.navy}" stroke-width="6"/>`;
+    <path d="M0,0 H1024 V1024 H0 Z M60,${60 + 176} A176,176 0 0 1 ${60 + 176},60 H${964 - 176} A176,176 0 0 1 964,${60 + 176}
+      V${964 - 176} A176,176 0 0 1 ${964 - 176},964 H${60 + 176} A176,176 0 0 1 60,${964 - 176} Z" fill="${C.red}" fill-rule="evenodd"/>
+    <rect x="78" y="78" width="868" height="868" rx="158" fill="none" stroke="${C.navy}" stroke-width="6"/>`;
 }
 
 // The thumbs-up glove: where it sits in mascot coordinates, its tilt and
@@ -283,7 +289,7 @@ let ANDROID_FIT = { tx: 0, ty: 0, s: 1 };
 function svg(variant) {
   let body;
   if (variant === "full") {
-    body = paper() + frame() + placedMascot() + banner();
+    body = paper(true) + placedMascot() + banner();
   } else if (variant === "android-bg") {
     body = paper();
   } else if (variant === "android-art" || variant === "mono-art") {
