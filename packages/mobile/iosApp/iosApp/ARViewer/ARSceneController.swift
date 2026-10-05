@@ -353,9 +353,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             return
         }
         let side = max(rig.model.bounds.x, rig.model.bounds.z) * pivot.scale.x
-        let spot = restTransform.translation
         let half = side * DiePhysics.studioDieFraming
-        frameStudio(centre: [spot.x, side / 2, spot.z], half: [half, half], animated: animated)
+        frameStudio(centre: homeCentre, half: [half, half], animated: animated)
     }
 
     /// Moves the studio camera along its fixed viewing direction so a box
@@ -478,7 +477,9 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// Spins the die about the table's vertical.
     func turn(by radians: Float) {
         guard model.isPlaced, !model.isRolling, !held, glide == nil else { return }
-        pivot.orientation = simd_quatf(angle: radians, axis: [0, 1, 0]) * pivot.orientation
+        // About the die's centre, not the model's origin (its lid's centre),
+        // which is off to one side whenever the die isn't lid-down.
+        setPose(centre: centre, rotation: simd_quatf(angle: radians, axis: [0, 1, 0]) * pivot.orientation)
         restTransform = pivot.transform
     }
 
@@ -525,18 +526,18 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             return
         }
         let (offset, rock) = DiePhysics.windup(at: t, lift: lockedInPlace ? DiePhysics.lockedWindupLift : DiePhysics.windupLift)
-        pivot.position = w.base.translation + offset
-        pivot.orientation = rock * w.base.rotation
+        // Lifted, shaken and rocked about the die's centre.
+        setPose(centre: dieCentre(of: w.base) + offset, rotation: rock * w.base.rotation)
     }
 
     private func release(_ w: Windup) {
         windup = nil
         if lockedInPlace, let rig {
-            // A tight ring: room to tumble, not to wander.
+            // A tight ring round the die's home: room to tumble, not to wander.
             let side = max(rig.model.bounds.x, rig.model.bounds.z) * pivot.scale.x
-            buildCorral(around: w.base.translation, radius: side * DiePhysics.lockedCorralFactor)
+            buildCorral(around: homeCentre, radius: side * DiePhysics.lockedCorralFactor)
         } else if let radius = DiePhysics.corralRadius {
-            buildCorral(around: w.base.translation, radius: radius)
+            buildCorral(around: dieCentre(of: w.base), radius: radius)
         }
         setBodyMode(.dynamic)
         pivot.components.set(PhysicsMotionComponent(linearVelocity: w.velocity, angularVelocity: w.spin))
@@ -564,7 +565,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             setBodyMode(.kinematic)
             removeCorral()
             model.rollDidSettle(faceUp: DieFace.faceUp(orientation: orientation))
-            if lockedInPlace { slideBackToSpot() }
+            if lockedInPlace { slideBackHome() }
         }
     }
 
@@ -668,6 +669,15 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     // MARK: Held and turned
 
     private var halfHeight: Float { (rig?.model.bounds.y ?? 0) / 2 * pivot.scale.y }
+
+    /// Where a pose puts the die's centre, in the anchor's space.
+    private func dieCentre(of t: Transform) -> SIMD3<Float> {
+        t.translation + t.rotation.act(SIMD3(0, halfHeight, 0))
+    }
+
+    /// AR off: the die's home, in the middle of the table, resting on a face.
+    /// Fixed, so nothing a roll leaves behind can shift it.
+    private var homeCentre: SIMD3<Float> { SIMD3(0, halfHeight, 0) }
 
     /// The die's centre, in the anchor's space.
     private var centre: SIMD3<Float> {
@@ -800,13 +810,12 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         glide(to: c, rotation: rotation, duration: DiePhysics.tipTime, easeOut: true)
     }
 
-    /// Locked in place: after a toss, ease the die back over its spot, gently
+    /// Locked in place: after a toss, ease the die back over its home, gently
     /// enough that the firmware still reads it as at rest. It keeps the face
     /// it landed on.
-    private func slideBackToSpot() {
-        let spot = restTransform.translation + restTransform.rotation.act(SIMD3(0, halfHeight, 0))
+    private func slideBackHome() {
         let c = centre
-        let target = SIMD3<Float>(spot.x, c.y, spot.z)
+        let target = SIMD3<Float>(homeCentre.x, c.y, homeCentre.z)
         let distance = simd_length(target - c)
         guard distance > 0.0005 else { return }
         // Smoothstep peaks at 6·d/T²; keep that under the limit.
