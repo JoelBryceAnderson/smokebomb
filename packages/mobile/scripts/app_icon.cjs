@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Draws the Sugarcube app icon and writes every iOS and Android size.
 //
-// The icon is an old sugar box: aged cream paper, a sunburst, a red and navy
-// frame and a ribbon with "Sugarcube" in Pacifico (the face the die writes
+// The icon is an old candy-coloured sugar box: a white panel with a yellow
+// sunburst, a pink border and a ribbon with "Sugarcube" in Pacifico (the face the die writes
 // its name in). On it stands the mascot, a rubber-hose sugar cube giving a
 // thumbs up.
 //
@@ -20,13 +20,17 @@ const FONT = path.join(REPO, "packages/firmware/assets/fonts/pacifico-latin-400-
 const IOS_SET = path.join(MOBILE, "iosApp/iosApp/Assets.xcassets/AppIcon.appiconset");
 const ANDROID_RES = path.join(MOBILE, "composeApp/src/androidMain/res");
 
+// Candy-box colours: a bubblegum border, a white panel with butter-yellow
+// rays, a hot-pink ribbon with white lettering, and raspberry trim.
 const C = {
-  paper: "#F4E7C9",
-  paperDark: "#E2C892",
-  ray: "#EED7A1",
-  red: "#C63A2E",
-  redDark: "#8E2620",
-  navy: "#1F2B4D",
+  paper: "#FFFCF5",
+  ray: "#FCE6A0",
+  age: "#E8B95E",
+  border: "#F48FB5",
+  ribbon: "#E2487F",
+  ribbonDark: "#B02D60",
+  trim: "#7C2147",
+  lettering: "#FFFFFF",
   ink: "#1A1410",
   sugar: "#FFFDF5",
   sugarTop: "#FFFFFF",
@@ -39,7 +43,7 @@ const C = {
 
 // --- Pieces, all on a 1024 canvas -----------------------------------------
 
-// `border` draws the box's solid red border over the ageing (which would
+// `border` draws the box's solid border over the ageing (which would
 // muddy it) but under the grain, so it shares the paper's texture.
 function paper(border = false) {
   const rays = [];
@@ -61,13 +65,13 @@ function paper(border = false) {
     <rect width="1024" height="1024" filter="url(#grain)" opacity="0.35"/>`;
 }
 
-// Solid red from the icon's edge in to a rounded panel, then a navy pinline
+// Solid pink from the icon's edge in to a rounded panel, then a pinline
 // just inside the panel's edge.
 function frame() {
   return `
     <path d="M0,0 H1024 V1024 H0 Z M60,${60 + 176} A176,176 0 0 1 ${60 + 176},60 H${964 - 176} A176,176 0 0 1 964,${60 + 176}
-      V${964 - 176} A176,176 0 0 1 ${964 - 176},964 H${60 + 176} A176,176 0 0 1 60,${964 - 176} Z" fill="${C.red}" fill-rule="evenodd"/>
-    <rect x="78" y="78" width="868" height="868" rx="158" fill="none" stroke="${C.navy}" stroke-width="6"/>`;
+      V${964 - 176} A176,176 0 0 1 ${964 - 176},964 H${60 + 176} A176,176 0 0 1 60,${964 - 176} Z" fill="${C.border}" fill-rule="evenodd"/>
+    <rect x="78" y="78" width="868" height="868" rx="158" fill="none" stroke="${C.trim}" stroke-width="6"/>`;
 }
 
 // The thumbs-up glove: where it sits in mascot coordinates, its tilt and
@@ -235,22 +239,22 @@ function banner() {
   // at x = 0, then turned to the band's slope there; mirrored for the right.
   const v = h / 2;
   const tailShape = `
-    <path class="solid" d="M34,${-v + 40} L-78,${-v + 40} L-46,4 L-78,${v + 6} L34,${v + 14} Z" fill="${C.redDark}"/>
-    <path class="solid" d="M0,${v} L34,${v + 14} L34,${v - 6} Z" fill="${C.navy}"/>`;
+    <path class="solid" d="M34,${-v + 40} L-78,${-v + 40} L-46,4 L-78,${v + 6} L34,${v + 14} Z" fill="${C.ribbonDark}"/>
+    <path class="solid" d="M0,${v} L34,${v + 14} L34,${v - 6} Z" fill="${C.trim}"/>`;
   const [lx, ly] = at(R, -theta);
   const fontSize = (WORD_FILL * h) / (WORD_INK.top - WORD_INK.bottom);
   // Shift the baseline down so the ink is centred on the band's centre line.
   const dy = ((WORD_INK.top + WORD_INK.bottom) / 2) * fontSize;
   return `
     <defs><path id="ribbon-line" d="M${arc(R, -theta, theta)}"/></defs>
-    <g class="banner" stroke="${C.navy}" stroke-width="10" stroke-linejoin="round">
+    <g class="banner" stroke="${C.trim}" stroke-width="10" stroke-linejoin="round">
       <g transform="translate(${lx},${ly}) rotate(${-deg})">${tailShape}</g>
       <g transform="translate(${2 * cx - lx},${ly}) rotate(${deg}) scale(-1,1)">${tailShape}</g>
-      <path class="solid" d="${band}" fill="${C.red}"/>
-      <path d="M${arc(ro - 16, -theta, theta)} M${arc(ri + 16, -theta, theta)}" fill="none" stroke="${C.paper}" stroke-width="4" opacity="0.7"/>
+      <path class="solid" d="${band}" fill="${C.ribbon}"/>
+      <path d="M${arc(ro - 16, -theta, theta)} M${arc(ri + 16, -theta, theta)}" fill="none" stroke="${C.lettering}" stroke-width="4" opacity="0.7"/>
     </g>
     <text class="word" font-family="Pacifico" font-size="${fontSize.toFixed(1)}" dy="${dy.toFixed(1)}" text-anchor="middle"
-      fill="${C.paper}" stroke="${C.navy}" stroke-width="7" paint-order="stroke">
+      fill="${C.lettering}" stroke="${C.trim}" stroke-width="7" paint-order="stroke">
       <textPath href="#ribbon-line" startOffset="50%">Sugarcube</textPath>
     </text>`;
 }
@@ -261,8 +265,8 @@ function defs() {
   return `
     <defs>
       <radialGradient id="age" cx="50%" cy="46%" r="70%">
-        <stop offset="55%" stop-color="${C.paperDark}" stop-opacity="0"/>
-        <stop offset="100%" stop-color="#B98F55" stop-opacity="0.55"/>
+        <stop offset="60%" stop-color="${C.age}" stop-opacity="0"/>
+        <stop offset="100%" stop-color="${C.age}" stop-opacity="0.3"/>
       </radialGradient>
       <filter id="grain" x="0" y="0" width="100%" height="100%">
         <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="4"/>
