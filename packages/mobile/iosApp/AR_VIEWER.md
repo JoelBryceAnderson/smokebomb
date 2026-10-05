@@ -354,6 +354,8 @@ RealityKit pose ──► ImuSynth ──► sb_die_tick(imu, touch) ──► s
     model's UVs.
   - Pixels are sampled nearest-neighbour and unlit.
   - The baked screens are hidden while live screens are on.
+  - The quads' corners are rounded like the glass's mask and filled black,
+    so the square the baked screen covered stays covered.
   - The quads ride along with explode.
   - If a frame shows upside down on device, flip `LiveScreens.flipVertically`.
 - **Haptics.** The firmware's haptic effects play on the phone.
