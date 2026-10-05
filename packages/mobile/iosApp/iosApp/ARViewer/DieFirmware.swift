@@ -36,6 +36,33 @@ protocol DieFirmware: AnyObject {
     var mode: String { get }
     /// While the menu is open, the face it's read on (held toward the person).
     var menuFront: DieFace? { get }
+
+    /// The phone link: the app's BLE messages as JSON, as on the desktop
+    /// simulator's `/phone` WebSocket. Connecting, the die greets the app
+    /// with Hello and its inventory.
+    func setPhoneConnected(_ connected: Bool)
+    /// One message from the app; false if it isn't one.
+    func sendFromPhone(_ message: String) -> Bool
+    /// The next message for the app, if any: answers, rolls, mode changes.
+    func nextMessageForPhone() -> String?
+}
+
+extension DieFirmware {
+    /// A firmware without a phone link (the tests' stand-ins).
+    func setPhoneConnected(_ connected: Bool) {}
+    func sendFromPhone(_ message: String) -> Bool { false }
+    func nextMessageForPhone() -> String? { nil }
+}
+
+/// Connects the die the Simulator tab runs to the app, as if over BLE. The
+/// app supplies it (`iosApp/iosApp/ARDiePort.swift`, which the app's die
+/// links reach); nil leaves the die on its own, as in the tests.
+@MainActor
+protocol DiePhoneLink: AnyObject {
+    /// The die running now, or nil when there's none.
+    func attach(_ firmware: DieFirmware?)
+    /// Passes on what the die has said since. Called after each step.
+    func pump()
 }
 
 /// Makes a firmware for a panel kind; nil if it can't boot.

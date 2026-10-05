@@ -11,6 +11,8 @@ final class ARViewerFactory: NSObject, @preconcurrency ArViewControllerFactory {
         let model = ARViewerModel.shared
         // Live screens: the real firmware, from the Rust library.
         model.makeFirmware = { RustDieFirmware(panel: $0) }
+        // The app's die links reach the running die through this.
+        model.phoneLink = ARDiePort.shared
         return UIHostingController(rootView: ARViewerScreen(model: model))
     }
 }

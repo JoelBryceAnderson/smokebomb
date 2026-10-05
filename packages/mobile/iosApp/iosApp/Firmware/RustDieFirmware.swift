@@ -50,6 +50,23 @@ final class RustDieFirmware: DieFirmware {
         return DieFace.allCases.indices.contains(face) ? DieFace.allCases[face] : nil
     }
 
+    func setPhoneConnected(_ connected: Bool) {
+        sb_die_phone_connect(die, connected)
+    }
+
+    func sendFromPhone(_ message: String) -> Bool {
+        message.withCString { sb_die_phone_send(die, $0) }
+    }
+
+    func nextMessageForPhone() -> String? {
+        // Its length first, then the message, NUL-terminated.
+        let length = sb_die_phone_receive(die, nil, 0)
+        guard length > 0 else { return nil }
+        var text = [CChar](repeating: 0, count: length + 1)
+        guard sb_die_phone_receive(die, &text, text.count) == length else { return nil }
+        return String(cString: text)
+    }
+
     private static func secondsSinceMidnight() -> UInt32 {
         let now = Date()
         return UInt32(max(0, now.timeIntervalSince(Calendar.current.startOfDay(for: now))))
