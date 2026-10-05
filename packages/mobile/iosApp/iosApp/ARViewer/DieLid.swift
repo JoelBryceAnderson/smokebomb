@@ -104,7 +104,7 @@ final class DieLid {
     }
 
     /// How a part is sorted; nil means cut at the seam (the shell).
-    static func rule(for name: String) -> Rule? {
+    nonisolated static func rule(for name: String) -> Rule? {
         switch name {
         // The seam's hairline, and the wiring that plugs into the board and
         // would hang loose with it gone: the screens' harness and the cell's lead.
@@ -584,7 +584,7 @@ final class DieLid {
 
     /// A rounded square's outline about the origin, 9 points a corner, so any
     /// two line up point for point (each corner's middle point on the diagonal).
-    static func roundedOutline(half: Float, radius: Float) -> [SIMD2<Float>] {
+    nonisolated static func roundedOutline(half: Float, radius: Float) -> [SIMD2<Float>] {
         let r = max(0, min(radius, half)), c = half - r, segments = 8
         var outline: [SIMD2<Float>] = []
         let corners: [(centre: SIMD2<Float>, start: Float)] = [([c, c], 0), ([-c, c], .pi / 2), ([-c, -c], .pi), ([c, -c], .pi * 1.5)]
