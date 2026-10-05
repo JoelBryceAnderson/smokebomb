@@ -350,7 +350,7 @@ final class DieLid {
     private func close(opacity: Float) {
         var material = PhysicallyBasedMaterial()
         material.baseColor = .init(tint: UIColor(red: 0.60, green: 0.62, blue: 0.64, alpha: 1))
-        material.metallic = 1
+        material.metallic = 1.0
         material.roughness = 0.42
         material.faceCulling = .none
 
