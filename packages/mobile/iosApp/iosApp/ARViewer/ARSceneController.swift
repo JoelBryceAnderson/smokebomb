@@ -34,6 +34,11 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// it rather than moving it, and a roll is tossed straight up so it lands
     /// where it was.
     private var lockedInPlace: Bool { !augmented }
+    /// What the studio camera frames: a box around the die (and its turn pad,
+    /// with the menu open), as half its width and height across the view.
+    /// Reframed when the view changes shape.
+    private var studioFraming: (centre: SIMD3<Float>, half: SIMD2<Float>)?
+    private var studioAspect: CGFloat = 0
 
     private let coaching = ARCoachingOverlayView()
     private var placement: AnchorEntity?
@@ -170,6 +175,10 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             }
         }
         time += dt
+        if let framing = studioFraming, arView.bounds.height > 0,
+           abs(arView.bounds.width / arView.bounds.height - studioAspect) > 0.01 {
+            frameStudio(centre: framing.centre, half: framing.half, animated: false)
+        }
         if windup != nil { stepWindup() } else if model.isRolling { trackRoll(dt: dt) }
         stepGlide()
         stepDrag(dt: Float(dt))
@@ -208,6 +217,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         updateBody()
         model.rigDidLoad(rig, measured: rig.measuredSize())
         syncFirmware()
+        if lockedInPlace, !held { frameDieOnTable(animated: false) }
     }
 
     func setExplode(_ e: Float) { rig?.setExplode(e) }
@@ -330,6 +340,46 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
         arView.scene.addAnchor(studio)
         place(on: matrix_identity_float4x4)
+        frameDieOnTable(animated: false)
+    }
+
+    /// The direction the studio camera looks from (SIM_SPEC A5).
+    private static let studioViewDirection = simd_normalize(SIMD3<Float>(0.55, 0.62, 1))
+
+    /// Frames the die on the table, with a little room around it.
+    private func frameDieOnTable(animated: Bool) {
+        guard lockedInPlace, let rig else {
+            if lockedInPlace { frameStudio(centre: [0, 0.015, 0], half: [0.04, 0.04], animated: animated) }
+            return
+        }
+        let side = max(rig.model.bounds.x, rig.model.bounds.z) * pivot.scale.x
+        let spot = restTransform.translation
+        let half = side * DiePhysics.studioDieFraming
+        frameStudio(centre: [spot.x, side / 2, spot.z], half: [half, half], animated: animated)
+    }
+
+    /// Moves the studio camera along its fixed viewing direction so a box
+    /// (half width and height, across the view) fills it, whatever its shape.
+    private func frameStudio(centre: SIMD3<Float>, half: SIMD2<Float>, animated: Bool) {
+        guard let camera = studioCamera else { return }
+        studioFraming = (centre, half)
+        let size = arView.bounds.size
+        let aspect = size.height > 0 ? Float(size.width / size.height) : 1
+        studioAspect = size.height > 0 ? size.width / size.height : 0
+        let halfV = DiePhysics.studioFieldOfView * .pi / 360
+        let halfH = atan(tan(halfV) * aspect)
+        let distance = max(half.x / tan(halfH), half.y / tan(halfV)) * DiePhysics.studioFramingMargin
+
+        // Looking along −Z at the centre, Y up.
+        let z = Self.studioViewDirection
+        let x = simd_normalize(simd_cross([0, 1, 0], z))
+        let y = simd_cross(z, x)
+        let target = Transform(rotation: simd_quatf(simd_float3x3(columns: (x, y, z))), translation: centre + z * distance)
+        if animated {
+            camera.move(to: target, relativeTo: nil, duration: DiePhysics.studioReframeTime, timingFunction: .easeInOut)
+        } else {
+            camera.transform = target
+        }
     }
 
     // MARK: Gestures
@@ -514,6 +564,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             setBodyMode(.kinematic)
             removeCorral()
             model.rollDidSettle(faceUp: DieFace.faceUp(orientation: orientation))
+            if lockedInPlace { slideBackToSpot() }
         }
     }
 
@@ -672,7 +723,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         model.isHeld = true
         dragTarget = nil
         let c = centre
-        let target = SIMD3<Float>(c.x, DiePhysics.heldHeight + halfHeight * 1.5, c.z)
+        let lift = lockedInPlace ? DiePhysics.studioHeldHeight : DiePhysics.heldHeight
+        let target = SIMD3<Float>(c.x, lift + halfHeight * 1.5, c.z)
         let rotation = DiePhysics.heldOrientation(front: front, current: pivot.orientation, toCamera: cam.position - target)
         glide(to: target, rotation: rotation, duration: DiePhysics.heldMoveTime, easeOut: false)
         showMenuPanel(dieCentre: target, dieRotation: rotation, front: front)
@@ -694,6 +746,15 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             + right * (side / 2 + DiePhysics.menuPanelGap + panel.width / 2)
         panel.show(at: position, rotation: rotation, in: placement)
         menuPanel = panel
+
+        // In the studio, pull the camera back to take in the die and the pad:
+        // from the die's far edge to the pad's.
+        if lockedInPlace {
+            let left = dieCentre - right * (side / 2)
+            let farEdge = position + right * (panel.width / 2)
+            let half = SIMD2<Float>(simd_distance(left, farEdge) / 2, max(panel.height, side) / 2)
+            frameStudio(centre: (left + farEdge) / 2, half: half, animated: true)
+        }
     }
 
     private func hideMenuPanel() {
@@ -706,6 +767,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         held = false
         model.isHeld = false
         hideMenuPanel()
+        frameDieOnTable(animated: true)
         let rotation = DiePhysics.setDownOrientation(current: pivot.orientation)
         // Straight down over the spot it was lifted from; resting on a face,
         // the centre is half a side up.
@@ -736,6 +798,20 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let pivotAxis = DiePhysics.nearestDieAxis(to: wanted, orientation: pivot.orientation)
         let rotation = simd_quatf(angle: Float(direction) * .pi / 2, axis: pivotAxis) * pivot.orientation
         glide(to: c, rotation: rotation, duration: DiePhysics.tipTime, easeOut: true)
+    }
+
+    /// Locked in place: after a toss, ease the die back over its spot, gently
+    /// enough that the firmware still reads it as at rest. It keeps the face
+    /// it landed on.
+    private func slideBackToSpot() {
+        let spot = restTransform.translation + restTransform.rotation.act(SIMD3(0, halfHeight, 0))
+        let c = centre
+        let target = SIMD3<Float>(spot.x, c.y, spot.z)
+        let distance = simd_length(target - c)
+        guard distance > 0.0005 else { return }
+        // Smoothstep peaks at 6·d/T²; keep that under the limit.
+        let duration = max(0.3, TimeInterval(sqrt(6 * distance / DiePhysics.lockedReturnAcceleration)))
+        glide(to: target, rotation: pivot.orientation, duration: duration, easeOut: false)
     }
 
     // MARK: Corral

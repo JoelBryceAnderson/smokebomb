@@ -28,8 +28,15 @@ the view switches where the die is. AR is **off** by default.
   desktop simulator frames it). It's placed straight away and locked in place:
   - Dragging turns the die rather than moving it.
   - A flick on the die, or **Roll**, winds up, then tosses the die straight
-    up. It tumbles and lands where it was, inside a tight ring of walls
-    (`lockedTossLift`, `lockedCorralFactor`).
+    up. It tumbles inside a tight ring of walls (`lockedTossLift`,
+    `lockedCorralFactor`). Once it's at rest, it slides back to its spot,
+    keeping the face it landed on. The slide is gentle enough
+    (`lockedReturnAcceleration`, about 0.04 g) that the firmware still reads
+    the die as resting, so the reveal isn't cut short.
+  - The camera frames the die to fit the view's shape (`studioDieFraming`).
+    When the menu opens, the die lifts a little (`studioHeldHeight`) and the
+    camera glides back to take in the die and its turn pad. It glides in
+    again when the menu closes.
   - Everything else works the same: live firmware screens, touch, the menu
     and its turn pad, x-ray, explode and tap-to-name.
   - It needs no camera, so it also runs without camera access, on devices

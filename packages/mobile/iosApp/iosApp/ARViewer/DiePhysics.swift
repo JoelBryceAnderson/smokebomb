@@ -49,14 +49,27 @@ enum DiePhysics {
     // The studio, with AR off: the desktop simulator's framing.
     /// The studio camera's vertical field of view, in degrees.
     static let studioFieldOfView: Float = 32
-    /// How far the studio camera is from the die, in metres. The die stays
-    /// put with AR off, so this frames it closely.
+    /// Where the studio camera starts, in metres from the die; it then frames
+    /// the die (`studioDieFraming`) to fit the view.
     static let studioCameraDistance: Float = 0.2
     /// Locked in place (AR off), a roll goes straight up this fast, in m/s.
     static let lockedTossLift: Float = 0.45
     /// …and lands inside walls this many die sides from its centre: room to
     /// tumble over an edge, not to wander off.
     static let lockedCorralFactor: Float = 1.4
+    /// …and once it has come to rest, it slides back to its spot no harder
+    /// than this (m/s²): about 0.04 g, under the firmware's 80 mg "still"
+    /// band, so the reveal isn't cut short.
+    static let lockedReturnAcceleration: Float = 0.4
+    /// In the studio the die is lifted less for the menu, in metres.
+    static let studioHeldHeight: Float = 0.025
+    /// The studio camera frames what matters (the die and its toss ring, or
+    /// the held die and its turn pad) with this much margin.
+    static let studioFramingMargin: Float = 1.15
+    /// On the table, the studio frames this many die sides either side of its centre.
+    static let studioDieFraming: Float = 1.1
+    /// Seconds for the studio camera to reframe.
+    static let studioReframeTime: TimeInterval = 0.5
 
     /// Space between the held die's edge and the glass turn pad, in metres.
     static let menuPanelGap: Float = 0.008
