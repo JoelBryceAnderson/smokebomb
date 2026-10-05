@@ -116,8 +116,11 @@ What's done and what isn't:
   marked `MODULE TODO`: which SEG/COM lines it uses, remap, VCC and tuning.
 - **Estimates.** The lit-area, window and mask sizes and the number of SPI
   buses are estimates.
-- **Fallback screens.** Pig Toss, Hot Potato, Pass the Pot's bills and the
-  Nest's clock fall back to the 96×96 layout.
+- **Pig Toss** has its own 64×64 design: pink pigs that fade, then a big
+  throw score, then whose turn it is with icon hints
+  (`cargo test -p smokebomb-core --test pigs64` draws its contact sheet).
+- **Fallback screens.** Hot Potato, Pass the Pot's bills and the Nest's
+  clock fall back to the 96×96 layout.
 
 Findings, contact sheets and the full list of what's stubbed:
 [docs/30mm](docs/30mm/README.md).

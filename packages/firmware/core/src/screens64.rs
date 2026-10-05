@@ -23,6 +23,7 @@ use crate::gfx::{Painter, Style};
 use crate::menu::{Draft, Page, Setup};
 use crate::nest::{ChargeView, Label, NestFace, Screen};
 use crate::palette64 as pal;
+use crate::pigs::{throw_label, Locked, Outcome, Symbol, Throw, Token};
 use crate::screens::{self, setup_label, Ctx, BOOT_FADE, BOOT_STEP, BOOT_STEPS, FACE_START, LOOP_END};
 use crate::smoke::Special;
 use crate::sprites64 as spr;
@@ -468,6 +469,19 @@ pub fn draw_menu<A: AssetStore, T: Target>(
                 rows.draw(p, alpha);
             }
         }
+        Page::Token(i) => {
+            // A player's initial or symbol, big and pink.
+            draw_token(
+                p,
+                m.tokens[i as usize],
+                0.0,
+                -4.0,
+                2.0,
+                pal::PINK,
+                alpha,
+                Align::Center,
+            );
+        }
         _ => {
             let value = m.value();
             let colour = if m.page == Page::Die {
@@ -797,6 +811,365 @@ pub fn draw_text_block<A: AssetStore, T: Target>(
         }
     });
     fits
+}
+
+// ---------- Pig Toss ----------
+//
+// The 96×96 die fits a lot on a face at once: the shrunken pigs, the
+// throw's points, the pose, the turn's tally and two lines of prompts. At
+// 64×64 that is unreadable, so these screens take turns instead: the pigs
+// settle at full size and fade (the target's `pig_settle`), the throw's
+// points pop in with the pose under them, then a resting screen shows only
+// whose turn it is, the turn's points, and two hints as icons: shake to roll
+// again, or bank (a padlock and what the score would be). Players' tokens
+// are pink, and so are the pigs.
+
+/// A player's symbol as a 9×7 sprite.
+pub fn symbol_sprite(symbol: Symbol) -> &'static Glyph<7> {
+    match symbol {
+        Symbol::Hat => &spr::HAT,
+        Symbol::Car => &spr::CAR,
+        Symbol::Boot => &spr::BOOT,
+        Symbol::Boat => &spr::BOAT,
+        Symbol::Crown => &spr::CROWN,
+        Symbol::Star => &spr::STAR,
+    }
+}
+
+/// A token's width in pixels at scale 1 (a capital is 5, a symbol 9).
+pub fn token_width(token: Token) -> usize {
+    match token.as_symbol() {
+        Some(_) => 9,
+        None => token
+            .initial()
+            .and_then(|c| TEXT.find(c))
+            .map_or(5, |g| g.width as usize),
+    }
+}
+
+/// Draw a player's initial or symbol, the top of its 7 rows at `y`.
+#[allow(clippy::too_many_arguments)]
+fn draw_token<T: Target>(
+    p: &mut Painter<T>,
+    token: Token,
+    x: f32,
+    y: f32,
+    scale: f32,
+    colour: Color,
+    alpha: f32,
+    align: Align,
+) {
+    let w = token_width(token) as f32 * scale;
+    let left = match align {
+        Align::Left => x,
+        Align::Center => x - floorf(token_width(token) as f32 / 2.0) * scale,
+        Align::Right => x - w,
+    };
+    match token.as_symbol() {
+        Some(sym) => draw_glyph(p, symbol_sprite(sym), left, y, scale, style(colour, alpha)),
+        None => {
+            let mut s: String<2> = String::new();
+            let _ = s.push(token.initial().unwrap_or('?'));
+            TEXT.draw(p, &s, left, y, scale, Align::Left, style(colour, alpha));
+        }
+    }
+}
+
+/// A line of 5×7 text with a token in it, centred on `cx`: `before`, the
+/// token (pink), `after`.
+#[allow(clippy::too_many_arguments)]
+fn token_line<T: Target>(
+    p: &mut Painter<T>,
+    before: &str,
+    token: Token,
+    after: &str,
+    cx: f32,
+    y: f32,
+    text: Color,
+    alpha: f32,
+) {
+    let gap = |s: &str| if s.is_empty() { 0 } else { TEXT.gap as usize };
+    let wb = TEXT.measure(before);
+    let wa = TEXT.measure(after);
+    let w = wb + gap(before) + token_width(token) + gap(after) + wa;
+    let mut x = cx - floorf(w as f32 / 2.0);
+    if !before.is_empty() {
+        TEXT.draw(p, before, x, y, 1.0, Align::Left, style(text, alpha));
+        x += (wb + gap(before)) as f32;
+    }
+    draw_token(p, token, x, y, 1.0, pal::PINK, alpha, Align::Left);
+    x += (token_width(token) + gap(after)) as f32;
+    if !after.is_empty() {
+        TEXT.draw(p, after, x, y, 1.0, Align::Left, style(text, alpha));
+    }
+}
+
+/// The happy pig, 19×16 at `scale`, its top-left at `(x, y)`.
+fn draw_pig_face<T: Target>(p: &mut Painter<T>, x: f32, y: f32, scale: f32, alpha: f32) {
+    draw_glyph(p, &spr::PIG_FACE, x, y, scale, style(pal::PINK, alpha));
+    draw_glyph(p, &spr::PIG_SNOUT, x, y, scale, style(pal::PINK_LIGHT, alpha));
+    draw_glyph(p, &spr::PIG_DARK, x, y, scale, style(pal::PINK_DARK, alpha));
+}
+
+/// A number in 30 px numerals with an optional plus in front, centred on
+/// `cx`. The plus is drawn to match: 14 px arms, 4 px stems.
+fn draw_points<T: Target>(p: &mut Painter<T>, n: u16, plus: bool, cx: f32, y: f32, s: Style) {
+    let mut digits: String<6> = String::new();
+    let _ = write!(digits, "{n}");
+    let (arm, stem, gap) = (14.0, 4.0, 3.0);
+    let wd = NUM_M.measure(&digits) as f32;
+    let w = wd + if plus { arm + gap } else { 0.0 };
+    let x0 = cx - floorf(w / 2.0);
+    if plus {
+        let mid = y + 15.0;
+        p.fill_rect(x0, mid - stem / 2.0, arm, stem, s);
+        p.fill_rect(x0 + (arm - stem) / 2.0, mid - arm / 2.0, stem, arm, s);
+    }
+    let dx = x0 + if plus { arm + gap } else { 0.0 };
+    NUM_M.draw(p, &digits, dx + floorf(wd / 2.0), y, s);
+}
+
+/// 0 before `at`, rising to 1 over `over` seconds.
+fn ramp(t: f32, at: f32, over: f32) -> f32 {
+    ((t - at) / over).clamp(0.0, 1.0)
+}
+
+/// Between turns: a happy pig and whose go it is (or who won).
+pub fn draw_pigs_label<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, token: Token, won: bool, alpha: f32) {
+    in_pixels(c, |p| {
+        draw_pig_face(p, -19.0, -28.0, 2.0, alpha);
+        if won {
+            token_line(p, "", token, " wins!", 0.0, 10.0, pal::GOLD, alpha);
+        } else {
+            token_line(p, "", token, " to roll", 0.0, 10.0, pal::WHITE, alpha);
+        }
+    });
+}
+
+/// After a throw, `t` seconds after landing (the 96×96 die's timeline,
+/// [`screens::pig_score`]): the throw's points (or OOPS, or a smooch's
+/// heart) with the pose under them, then the resting screen.
+pub fn draw_pig_score<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    throw: &Throw,
+    t: f32,
+    next_player: u8,
+    tokens: &[Token],
+    alpha: f32,
+) {
+    use screens::pig_score::*;
+    let token = |p: u8| tokens.get(p as usize).copied().unwrap_or(Token::default_for(p));
+    let lost = !matches!(throw.outcome, Outcome::Score(_));
+    let rest = ramp(t, PROMPT_AT, 0.3);
+    let first = 1.0 - rest;
+    in_pixels(c, |p| {
+        // The throw.
+        let pop = ramp(t, POP_AT, 0.3);
+        let drop = roundf(4.0 * (1.0 - pop));
+        let label_a = ramp(t, LABEL_AT, 0.25) * first;
+        if pop > 0.0 && first > 0.0 {
+            let a = alpha * pop * first;
+            match throw.outcome {
+                Outcome::Score(n) => {
+                    let colour = if n >= 20 { pal::GOLD } else { pal::WHITE };
+                    draw_points(p, n, true, 0.0, -24.0 - drop, style(colour, a));
+                }
+                Outcome::Bust => {
+                    TEXT.draw(
+                        p,
+                        "OOPS",
+                        0.0,
+                        -16.0 - drop,
+                        2.0,
+                        Align::Center,
+                        style(pal::RED, a),
+                    );
+                }
+                Outcome::Smooch => {
+                    draw_centered(p, &spr::HEART, 0.0, -18.0 - drop, 2.0, style(pal::RED, a));
+                    TEXT.draw(p, "SMOOCH", 0.0, -4.0, 1.0, Align::Center, style(pal::RED, a));
+                }
+            }
+        }
+        if label_a > 0.0 {
+            let a = alpha * label_a;
+            let mut label: String<32> = String::new();
+            let colour = match throw.outcome {
+                Outcome::Smooch if throw.banked_before > 0 && t >= TURN_AT => {
+                    // The banked score counts down to nothing.
+                    let k = ramp(t, TURN_AT, COUNT_S);
+                    let shown = roundf(throw.banked_before as f32 * (1.0 - k * k)) as u16;
+                    let _ = write!(label, "Score {shown}");
+                    pal::RED
+                }
+                Outcome::Smooch => {
+                    let _ = write!(label, "Pigs touched!");
+                    pal::DIM
+                }
+                Outcome::Bust if throw.turn_before > 0 => {
+                    let _ = write!(label, "Lost {}", throw.turn_before);
+                    pal::DIM
+                }
+                Outcome::Bust => {
+                    let _ = write!(label, "Nothing lost");
+                    pal::DIM
+                }
+                Outcome::Score(_) => {
+                    let _ = write!(label, "{}", throw_label(throw.poses, false));
+                    pal::DIM
+                }
+            };
+            let y = if lost { 6.0 } else { 10.0 };
+            draw_lines(p, &label, 0.0, y, colour, a);
+        }
+
+        // The resting screen.
+        if rest <= 0.0 {
+            return;
+        }
+        let a = alpha * rest;
+        if lost {
+            TEXT.draw(p, "Pass to", 0.0, -27.0, 1.0, Align::Center, style(pal::DIM, a));
+            draw_token(
+                p,
+                token(next_player),
+                0.0,
+                -15.0,
+                3.0,
+                pal::PINK,
+                a,
+                Align::Center,
+            );
+            draw_hint_roll(p, 0.0, 16.0, a);
+        } else {
+            let turn = match throw.outcome {
+                Outcome::Score(n) => throw.turn_before + n,
+                _ => 0,
+            };
+            token_line(p, "", token(throw.player), "'s turn", 0.0, -28.0, pal::DIM, a);
+            draw_points(p, turn, false, 0.0, -17.0, style(pal::WHITE, a));
+            // Roll again, or bank for this.
+            let total = throw.banked_before + turn;
+            let mut bank: String<6> = String::new();
+            let _ = write!(bank, "{total}");
+            let w_roll = spr::SHAKE.width as usize + 2 + TEXT.measure("roll");
+            let w_bank = 5 + 2 + TEXT.measure(&bank);
+            let x0 = -floorf((w_roll + 8 + w_bank) as f32 / 2.0);
+            draw_hint_roll(p, x0 + floorf(w_roll as f32 / 2.0), 17.0, a);
+            let xb = x0 + (w_roll + 8) as f32;
+            draw_glyph(p, &LOCK_SMALL, xb, 17.0, 1.0, style(pal::MINT, a));
+            TEXT.draw(p, &bank, xb + 7.0, 17.0, 1.0, Align::Left, style(pal::MINT, a));
+        }
+    });
+}
+
+/// A 5×7 padlock for the bank hint.
+static LOCK_SMALL: Glyph<7> = crate::font64::glyph(' ', ".###. #...# #...# ##### ##.## ##.## #####");
+
+/// "Shake: roll", as an icon and a word, centred on `cx`, top at `y`.
+fn draw_hint_roll<T: Target>(p: &mut Painter<T>, cx: f32, y: f32, alpha: f32) {
+    let w = spr::SHAKE.width as usize + 2 + TEXT.measure("roll");
+    let x = cx - floorf(w as f32 / 2.0);
+    draw_glyph(p, &spr::SHAKE, x, y + 1.0, 1.0, style(pal::DIM, alpha));
+    TEXT.draw(
+        p,
+        "roll",
+        x + (spr::SHAKE.width + 2) as f32,
+        y,
+        1.0,
+        Align::Left,
+        style(pal::WHITE, alpha),
+    );
+}
+
+/// A bank locking in, `t` seconds after the tap ([`screens::lock_in`]): the
+/// padlock drops shut and turns mint with a ring of sparks, the points
+/// become the player's new total counting up, then whose turn is next.
+pub fn draw_locked<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, l: &Locked, next: Token, t: f32, fade: f32) {
+    use screens::lock_in::*;
+    let alpha = ramp(t, 0.0, 0.15) * fade;
+    in_pixels(c, |p| {
+        let closing = (t / SNAP_AT).clamp(0.0, 1.0);
+        let lift = roundf(5.0 * (1.0 - closing * closing));
+        let snapped = t >= SNAP_AT;
+        let colour = if snapped { pal::MINT } else { pal::WHITE };
+        draw_glyph(p, &spr::SHACKLE, -6.0, -29.0 - lift, 1.0, style(colour, alpha));
+        draw_glyph(p, &spr::LOCK_BODY, -6.0, -24.0, 1.0, style(colour, alpha));
+        if snapped {
+            let u = ((t - SNAP_AT) / 0.55).min(1.0);
+            if u < 1.0 {
+                for k in 0..8 {
+                    let a = k as f32 * core::f32::consts::PI / 4.0 + 0.4;
+                    let r = 12.0 + 14.0 * u;
+                    let (x, y) = (roundf(libm::cosf(a) * r), roundf(-20.0 + libm::sinf(a) * r));
+                    p.fill_rect(x - 1.0, y - 1.0, 2.0, 2.0, style(pal::MINT, alpha * (1.0 - u)));
+                }
+            }
+        }
+        let count = ramp(t, COUNT_AT, COUNT_S);
+        let eased = 1.0 - (1.0 - count) * (1.0 - count);
+        if t < COUNT_AT {
+            draw_points(p, l.points, true, 0.0, -10.0, style(pal::WHITE, alpha));
+        } else {
+            let shown = l.before + roundf(l.points as f32 * eased) as u16;
+            let colour = if count >= 1.0 { pal::MINT } else { pal::WHITE };
+            draw_points(p, shown, false, 0.0, -10.0, style(colour, alpha));
+        }
+        let next_a = ramp(t, NEXT_AT, 0.3);
+        if next_a > 0.0 {
+            token_line(p, "", next, " to roll", 0.0, 22.0, pal::WHITE, alpha * next_a);
+        }
+    });
+}
+
+/// The win, `t` seconds in: the happy pig bounces in with gold sparks, then
+/// who won, and how to start again.
+pub fn draw_pig_win<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    winner: Token,
+    total: u16,
+    t: f32,
+    fade: f32,
+) {
+    let _ = total;
+    let alpha = ramp(t, 0.0, 0.2) * fade;
+    in_pixels(c, |p| {
+        let pop = ramp(t, 0.0, 0.45);
+        let bob = if pop >= 1.0 {
+            roundf(sinf((t - 0.45) * 3.5))
+        } else {
+            roundf(8.0 * (1.0 - pop))
+        };
+        draw_pig_face(p, -19.0, -30.0 + bob, 2.0, alpha * pop);
+        let u = ((t - 0.35) / 0.7).clamp(0.0, 1.0);
+        if t > 0.35 && u < 1.0 {
+            for k in 0..10 {
+                let a = k as f32 * core::f32::consts::PI / 5.0 + 0.2;
+                let r = 20.0 + 12.0 * u;
+                let (x, y) = (roundf(libm::cosf(a) * r), roundf(-14.0 + libm::sinf(a) * r));
+                p.fill_rect(x - 1.0, y - 1.0, 2.0, 2.0, style(pal::GOLD, alpha * (1.0 - u)));
+            }
+        }
+        let words = ramp(t, 0.6, 0.3);
+        if words > 0.0 {
+            token_line(p, "", winner, " wins!", 0.0, 7.0, pal::GOLD, alpha * words);
+        }
+        let prompt = ramp(t, 1.6, 0.3);
+        if prompt > 0.0 {
+            let w = spr::TAP.width as usize + 2 + TEXT.measure("new game");
+            let x = -floorf(w as f32 / 2.0);
+            draw_glyph(p, &spr::TAP, x, 17.0, 1.0, style(pal::DIM, alpha * prompt));
+            TEXT.draw(
+                p,
+                "new game",
+                x + (spr::TAP.width + 2) as f32,
+                17.0,
+                1.0,
+                Align::Left,
+                style(pal::WHITE, alpha * prompt),
+            );
+        }
+    });
 }
 
 #[cfg(test)]

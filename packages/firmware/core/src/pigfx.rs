@@ -23,7 +23,7 @@ use core::ptr::addr_of_mut;
 
 use libm::{acosf, cosf, fabsf, sinf, sqrtf};
 
-use smokebomb_hal::{Pixel, Target};
+use smokebomb_hal::{Color, Pixel, Target};
 
 use crate::display::{Framebuffer, PIXELS};
 
@@ -362,6 +362,44 @@ pub fn rest(i: usize, poses: [Pose; 2], touching: bool) -> PigState {
 }
 
 /// What the faces show of the pigs.
+/// How a panel frames the pigs. The 96×96 die sees the table whole; a
+/// smaller panel can zoom in, and pull the pigs' wandering in to match, so
+/// that they stay big and on the face.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lens {
+    /// Pig size against the 96×96 design.
+    pub zoom: f32,
+    /// How far across the table the pigs wander, tumble and rest, against
+    /// the 96×96 design. Pigs that land touching still touch.
+    pub spread: f32,
+    /// The bounce height in the air, against the 96×96 design.
+    pub hop: f32,
+    /// Moves the table's centre down the face in the air, canvas units.
+    pub drop: f32,
+    /// Landed, the pair turns this far about the vertical (radians), as one
+    /// piece so that touching pigs still touch. Then the view zooms to fit
+    /// them, `fit` pixels across at most, and centres them. 0 keeps
+    /// the 96×96 table's view.
+    pub turn: f32,
+    pub fit: f32,
+    /// Lay a smaller panel's pixels 1:1 from the middle of the picture,
+    /// rather than shrinking the whole picture onto it.
+    pub crop: bool,
+}
+
+impl Lens {
+    /// The 96×96 die's view.
+    pub const WHOLE: Lens = Lens {
+        zoom: 1.0,
+        spread: 1.0,
+        hop: 1.0,
+        drop: 0.0,
+        turn: 0.0,
+        fit: 0.0,
+        crop: false,
+    };
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Scene {
     /// In the air `t` seconds since the throw began.
@@ -403,8 +441,9 @@ pub struct Canvas {
     cover: [u8; 96 * STRIP],
     /// The pixels the picture holds anything in, unrotated.
     bounds: Region,
-    /// The scene cast last, so an unchanged one isn't cast again.
-    cast: Option<Scene>,
+    /// The scene cast last, and through what, so an unchanged one isn't
+    /// cast again.
+    cast: Option<(Scene, Lens)>,
 }
 
 impl Canvas {
@@ -434,12 +473,17 @@ impl Canvas {
     /// Cast the pigs for `scene`, unless that is what the canvas already
     /// holds. Returns the work it took, which is none for a repeat.
     pub fn draw(&mut self, scene: Scene) -> Stats {
+        self.draw_through(scene, Lens::WHOLE)
+    }
+
+    /// [`Self::draw`], framed by `lens`.
+    pub fn draw_through(&mut self, scene: Scene, lens: Lens) -> Stats {
         let scene = scene.at_rest_clamped();
-        if self.cast == Some(scene) {
+        if self.cast == Some((scene, lens)) {
             return Stats::default();
         }
-        self.cast = Some(scene);
-        let (states, view) = layout(scene);
+        self.cast = Some((scene, lens));
+        let (states, view) = layout(scene, lens);
         self.n = prepare(&states, view, &mut self.casts);
         let mut stats = Stats::default();
         let mut lo = (usize::MAX, usize::MAX);
@@ -504,12 +548,26 @@ impl Canvas {
 
     /// Lay the pigs onto a face turned by `rot`, over whatever it shows,
     /// dimmed by `alpha`. The picture is cast at 96×96; a smaller panel
-    /// samples it nearest (a stopgap: Pig Toss has no 64×64 design yet).
+    /// takes the middle of it 1:1 if the lens crops, else samples it whole,
+    /// nearest.
     pub fn lay_onto<T: Target>(&self, fb: &mut Framebuffer<T>, rot: Quarter, alpha: f32) {
+        self.lay_onto_tinted(fb, rot, alpha, Color::WHITE);
+    }
+
+    /// [`Self::lay_onto`], the pigs' shades taken as `tint`. White keeps them
+    /// grey, exactly as before; a colour also fades their coverage with
+    /// `alpha`, so they can fade out over the score (the 64×64 layout).
+    pub fn lay_onto_tinted<T: Target>(&self, fb: &mut Framebuffer<T>, rot: Quarter, alpha: f32, tint: Color) {
         let put = |fb: &mut Framebuffer<T>, x: usize, y: usize, shade: f32, a: f32| {
-            let under = fb.pixel(x, y).level() as f32;
-            let v = under * (1.0 - a) + shade * a * alpha;
-            fb.put(x, y, T::Pixel::grey((v + 0.5).clamp(0.0, 255.0) as u8));
+            if tint == Color::WHITE {
+                let under = fb.pixel(x, y).level() as f32;
+                let v = under * (1.0 - a) + shade * a * alpha;
+                fb.put(x, y, T::Pixel::grey((v + 0.5).clamp(0.0, 255.0) as u8));
+            } else {
+                // Here `alpha` fades the pigs out whole, coverage and all,
+                // so a fading pig doesn't darken what's under it.
+                fb.blend_rgb(x, y, tint.tint(shade), a * alpha);
+            }
         };
         let b = self.bounds;
         if T::WIDTH == 96 {
@@ -525,9 +583,15 @@ impl Canvas {
             return;
         }
         let n = T::WIDTH;
+        let crop = self.cast.is_some_and(|(_, l)| l.crop);
+        let off = (96 - n) / 2;
         for ty in 0..n {
             for tx in 0..n {
-                let (sx, sy) = ((tx * 96 + 48) / n, (ty * 96 + 48) / n);
+                let (sx, sy) = if crop {
+                    (tx + off, ty + off)
+                } else {
+                    ((tx * 96 + 48) / n, (ty * 96 + 48) / n)
+                };
                 let Some((shade, a)) = decode(self.picture[sy * 96 + sx]) else {
                     continue;
                 };
@@ -666,7 +730,10 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
 }
 
 /// Where the two pigs are for `scene`, and how the table is seen.
-fn layout(scene: Scene) -> ([PigState; 2], View) {
+fn layout(scene: Scene, lens: Lens) -> ([PigState; 2], View) {
+    if lens != Lens::WHOLE {
+        return framed(scene, lens);
+    }
     let mut states = match scene {
         Scene::Tumbling(t) => [tumble(0, t), tumble(1, t)],
         Scene::Settling {
@@ -702,6 +769,95 @@ fn layout(scene: Scene) -> ([PigState; 2], View) {
         origin: (CENTRE.0, CENTRE.1 + 10.0 - lift),
     };
     (states, view)
+}
+
+/// [`layout`] through a lens other than the whole table's. In the air the
+/// pigs are zoomed in, with their wandering and bounce pulled in to match.
+/// As they land, the view eases to the landed pair turned by `lens.turn`,
+/// zoomed to fit and centred. The shrink is ignored: such a panel fades
+/// the pigs instead.
+fn framed(scene: Scene, lens: Lens) -> ([PigState; 2], View) {
+    let squeeze = |mut st: PigState| {
+        st.pos[0] *= lens.spread;
+        st.pos[1] *= lens.hop;
+        st.pos[2] *= lens.spread;
+        st
+    };
+    let air = View {
+        elevation: ELEVATION,
+        scale: SCALE * lens.zoom,
+        origin: (CENTRE.0, CENTRE.1 + 10.0 + lens.drop),
+    };
+    let Scene::Settling {
+        land,
+        u,
+        poses,
+        touching,
+        ..
+    } = scene
+    else {
+        let Scene::Tumbling(t) = scene else { unreachable!() };
+        return ([squeeze(tumble(0, t)), squeeze(tumble(1, t))], air);
+    };
+    let to = landings(poses, touching);
+    let states = [0, 1].map(|i| {
+        let from = squeeze(tumble(i, land));
+        // Where it rests, turned with the pair.
+        // The pair turns in step with the settle.
+        turned_about_y(settle(i, from, to[i], u), lens.turn * ease_out(u.clamp(0.0, 1.0)))
+    });
+    // The landed pair's bounds as the view sees them, and the view that
+    // fits and centres them.
+    let rest = [0, 1].map(|i| turned_about_y(settle(i, tumble(i, land), to[i], 1.0), lens.turn));
+    let (lo, hi) = view_bounds(&rest);
+    let span = (hi.0 - lo.0).max(hi.1 - lo.1);
+    // `fit` is in pixels of the 96×96 picture.
+    let fit_scale = (lens.fit / crate::gfx::K / span).min(SCALE * lens.zoom * 1.25);
+    let fit = View {
+        elevation: ELEVATION,
+        scale: fit_scale,
+        origin: (-0.5 * (lo.0 + hi.0) * fit_scale, 0.5 * (lo.1 + hi.1) * fit_scale),
+    };
+    let e = ease_out(u.clamp(0.0, 1.0));
+    let mix = |a: f32, b: f32| a + (b - a) * e;
+    let view = View {
+        elevation: ELEVATION,
+        scale: mix(air.scale, fit.scale),
+        origin: (mix(air.origin.0, fit.origin.0), mix(air.origin.1, fit.origin.1)),
+    };
+    (states, view)
+}
+
+/// `st` turned `a` radians about the table's vertical through its centre.
+fn turned_about_y(st: PigState, a: f32) -> PigState {
+    let (c, sn) = (cosf(a), sinf(a));
+    let (x, z) = (st.pos[0], st.pos[2]);
+    PigState {
+        q: Quat::axis_angle([0.0, 1.0, 0.0], a).mul(st.q),
+        pos: [x * c + z * sn, st.pos[1], -x * sn + z * c],
+    }
+}
+
+/// The smallest box, in world units across and up the view, that holds
+/// the solid parts of the pigs in `states`: `((left, bottom), (right, top))`.
+fn view_bounds(states: &[PigState]) -> ((f32, f32), (f32, f32)) {
+    let (ce, se) = (cosf(ELEVATION), sinf(ELEVATION));
+    let up = [0.0, ce, -se];
+    let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+    for st in states {
+        for p in PARTS.iter().filter(|p| p.solid) {
+            let r = st.q.rotate(p.centre);
+            let w = [r[0] + st.pos[0], r[1] + st.pos[1], r[2] + st.pos[2]];
+            let (x, y) = (w[0], dot(w, up));
+            let (rx, ry) = (
+                support_along(st.q, p, [1.0, 0.0, 0.0]),
+                support_along(st.q, p, up),
+            );
+            lo = (lo.0.min(x - rx), lo.1.min(y - ry));
+            hi = (hi.0.max(x + rx), hi.1.max(y + ry));
+        }
+    }
+    (lo, hi)
 }
 
 /// How much work a draw took, counted rather than timed, so a budget on it
@@ -1186,7 +1342,7 @@ mod tests {
             let mut p = Painter::new(&mut own, &mut layer, Transform::quarter(rot));
             let xf = p.xf;
             let fb = p.framebuffer();
-            let (states, view) = layout(scene);
+            let (states, view) = layout(scene, Lens::WHOLE);
             let mut casts = [Cast::NONE; MAX_CASTS];
             let n = prepare(&states, view, &mut casts);
             let mut z = [0u16; PIXELS];
@@ -1257,5 +1413,64 @@ mod tests {
         let b = Quat::axis_angle([1.0, 0.0, 0.0], 2.0);
         assert!(a.slerp(b, 0.0).dot(a) > 0.9999);
         assert!(a.slerp(b, 1.0).dot(b) > 0.9999);
+    }
+}
+
+#[cfg(test)]
+mod lens_tests {
+    use super::*;
+
+    /// How much of the pigs a 64×64 face crops away (the share of the
+    /// picture's coverage outside the middle 64×64), worst over a long
+    /// tumble and every landing, and how big the landed pigs are.
+    #[test]
+    fn a_64_face_keeps_the_pigs_on_it() {
+        use crate::target::DisplayTarget;
+        let lens = <smokebomb_hal::Rgb64 as DisplayTarget>::pig_lens();
+        let mut canvas = Canvas::new();
+        let mut off = |scene: Scene| {
+            canvas.draw_through(scene, lens);
+            let (mut all, mut out) = (0u32, 0u32);
+            for y in 0..96 {
+                for x in 0..96 {
+                    if let Some((_, a)) = decode(canvas.picture[y * 96 + x]) {
+                        let c = (a * 255.0) as u32;
+                        all += c;
+                        if !(16..80).contains(&x) || !(16..80).contains(&y) {
+                            out += c;
+                        }
+                    }
+                }
+            }
+            let b = canvas.bounds;
+            (out as f32 / all.max(1) as f32, b.w.max(b.h))
+        };
+        let mut worst_air: f32 = 0.0;
+        for k in 0..400 {
+            worst_air = worst_air.max(off(Scene::Tumbling(k as f32 * 0.025)).0);
+        }
+        let (mut worst_rest, mut smallest): (f32, usize) = (0.0, 96);
+        for pa in Pose::ALL {
+            for pb in Pose::ALL {
+                for touching in [false, true] {
+                    for land in [0.3, 1.1, 2.6] {
+                        let (o, span) = off(Scene::Settling {
+                            land,
+                            u: 1.0,
+                            shrink: 0.0,
+                            poses: [pa, pb],
+                            touching,
+                        });
+                        worst_rest = worst_rest.max(o);
+                        smallest = smallest.min(span);
+                    }
+                }
+            }
+        }
+        assert!(worst_rest < 0.01, "landed pigs {worst_rest} off the face");
+        assert!(worst_air < 0.12, "tumbling pigs {worst_air} off the face");
+        // Landed, the pair fills most of the face (the 96×96 table's pigs
+        // shrunk onto it spanned about 30 px).
+        assert!(smallest >= 50, "landed pigs only {smallest} px across");
     }
 }

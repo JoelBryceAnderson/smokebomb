@@ -253,6 +253,83 @@ pub static BOLT: Glyph<14> = glyph(
 /// The status bar's battery, 11×5 outline; the level fills its inside.
 pub static BATTERY: Glyph<5> = glyph(' ', "#########.. #.......### #.......### #.......### #########..");
 
+// ---------- Pig Toss ----------
+
+/// The players' symbols (the 96×96 die draws them as shapes; these are the
+/// same six at 64×64, 9 wide and 7 tall like a capital): top hat, car,
+/// boot, boat, crown, star.
+pub static HAT: Glyph<7> = glyph(
+    ' ',
+    "..#####.. ..#####.. ..#####.. ..#####.. ..#...#.. ..#####.. #########",
+);
+pub static CAR: Glyph<7> = glyph(
+    ' ',
+    "......... ..####... .#..#.#.. ######### ######### .##...##. .##...##.",
+);
+pub static BOOT: Glyph<7> = glyph(
+    ' ',
+    "..###.... ..###.... ..###.... ..####... ..######. ..####### ..#######",
+);
+pub static BOAT: Glyph<7> = glyph(
+    ' ',
+    "....#.... ....##... ....###.. ....#.... ######### .#######. ..#####..",
+);
+pub static CROWN: Glyph<7> = glyph(
+    ' ',
+    "#...#...# ##.###.## ######### ######### ######### ......... #########",
+);
+pub static STAR: Glyph<7> = glyph(
+    ' ',
+    "....#.... ...###... ######### .#######. ..#####.. .###.###. .#.....#.",
+);
+
+/// A padlock: the shackle (lifted while it's open) over the body, with
+/// the keyhole cut out. 13 wide.
+pub static SHACKLE: Glyph<6> = glyph(
+    ' ',
+    "...#######... ..##.....##.. ..#.......#.. ..#.......#.. ..#.......#.. ..#.......#..",
+);
+pub static LOCK_BODY: Glyph<9> = glyph(
+    ' ',
+    "############# ############# ############# ######.###### #####...##### ######.###### ######.###### ############# #############",
+);
+
+/// A happy pig's face, 19×16: `#` face, `o` snout, `x` eyes, nostrils and
+/// smile.
+const PIG: &str = "
+.##.............##.
+.###...........###.
+.####.#######.####.
+..###############..
+.#################.
+####xx#######xx####
+####xx#######xx####
+###################
+######ooooooo######
+#####ooxoooxoo#####
+######ooooooo######
+.#################.
+.####x#######x####.
+..####xxxxxxx####..
+...#############...
+.....#########.....
+";
+pub static PIG_FACE: Glyph<16> = layer(' ', PIG, b'#');
+pub static PIG_SNOUT: Glyph<16> = layer(' ', PIG, b'o');
+pub static PIG_DARK: Glyph<16> = layer(' ', PIG, b'x');
+
+/// A smooch, 9×8.
+pub static HEART: Glyph<8> = glyph(
+    ' ',
+    ".##...##. ####.#### ######### ######### .#######. ..#####.. ...###... ....#....",
+);
+
+/// Shake: a die with motion lines, 9×5.
+pub static SHAKE: Glyph<5> = glyph(' ', "....##### .#..#...# ....#.#.# ##..#...# ....#####");
+
+/// Tap, 7×7.
+pub static TAP: Glyph<7> = glyph(' ', "..###.. .#...#. #..#..# #.###.# #..#..# .#...#. ..###..");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +359,12 @@ mod tests {
             assert_eq!(l & r, 0);
         }
         assert!(symmetric(&PIP) && symmetric(&UP) && symmetric(&DOWN) && symmetric(&SPARKLE));
+        for g in [&PIG_FACE, &PIG_SNOUT, &PIG_DARK] {
+            assert!(symmetric(g));
+        }
+        assert!(symmetric(&HEART) && symmetric(&TAP) && symmetric(&SHACKLE) && symmetric(&LOCK_BODY));
+        for y in 0..16 {
+            assert_eq!(PIG_FACE.rows[y] & (PIG_SNOUT.rows[y] | PIG_DARK.rows[y]), 0);
+        }
     }
 }

@@ -14,6 +14,7 @@
 //! | [`VIOLET`] | the die itself: its icon, the menu's arrows, the sugar |
 //! | [`MINT`] | good news that isn't a roll: charging, saved, a + modifier |
 //! | [`EMBER`] | warmth and warning: embers, a − modifier, the low-battery bolt |
+//! | [`PINK`] | Pig Toss: the pigs, and its players' turn |
 //!
 //! Values are sRGB as the panel is driven (RGB565 keeps 5/6/5 bits of them).
 //! The emitters' real colour points and the module's white balance aren't
@@ -43,3 +44,10 @@ pub const EMBER: Color = Color::hex(0xFF9646);
 /// The sugar crystals: a pale violet-white, so the cloud reads as sugar and
 /// not as text.
 pub const SUGAR: Color = Color::hex(0xD8D4FF);
+
+/// Pig Toss's pigs, and whose turn it is.
+pub const PINK: Color = Color::hex(0xFF8FB8);
+/// A pig's snout, lighter than its face.
+pub const PINK_LIGHT: Color = Color::hex(0xFFC9DC);
+/// The dark of a pig's eyes and nostrils.
+pub const PINK_DARK: Color = Color::hex(0x6A2A40);

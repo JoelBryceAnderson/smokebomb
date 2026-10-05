@@ -1212,9 +1212,7 @@ where
                 .map(|t| pigfx::Scene::Settling {
                     land: self.pig_land,
                     u: since_landing / pigfx::SETTLE_S,
-                    shrink: ease_inout(
-                        (since_landing - screens::pig_score::SHRINK_AT) / screens::pig_score::SHRINK_S,
-                    ),
+                    shrink: TargetOf::<P>::pig_settle(since_landing).0,
                     poses: t.poses,
                     touching: t.touching,
                 })
@@ -1222,7 +1220,9 @@ where
         let pig_alpha = if matches!(mode, Mode::Shaking | Mode::Airborne | Mode::Settling) {
             1.0
         } else {
-            self.ui.result_dim(now) * screens::pig_win::score_fade(self.sessions.pigs.last(), since_landing)
+            self.ui.result_dim(now)
+                * screens::pig_win::score_fade(self.sessions.pigs.last(), since_landing)
+                * TargetOf::<P>::pig_settle(since_landing).1
         };
         // A bank locking in: a padlock snaps shut and the score counts up.
         let locked = self
@@ -1261,7 +1261,7 @@ where
         // Every face shows the same pigs: cast them once for all of them.
         if let Some(scene) = pig_scene.filter(|_| !blackout) {
             if let Some(pigs) = fx.pigs() {
-                pigs.draw(scene);
+                pigs.draw_through(scene, TargetOf::<P>::pig_lens());
             }
         }
 
@@ -1321,7 +1321,7 @@ where
                 FaceContent::Blank => {}
                 FaceContent::Boot { t, top } => TargetOf::<P>::draw_boot(&mut c, face.index(), top, t),
                 FaceContent::Wake { alpha } if pigs_on => {
-                    screens::draw_pigs_label(&mut c, setup, tokens[pigs_up as usize], pigs_won, alpha)
+                    TargetOf::<P>::draw_pigs_label(&mut c, setup, tokens[pigs_up as usize], pigs_won, alpha)
                 }
                 FaceContent::Wake { alpha } => {
                     TargetOf::<P>::draw_wake_label(&mut c, setup, &label, alpha, face.index())
@@ -1330,7 +1330,7 @@ where
                     if let Some(t) = pigs_throw {
                         let next = (t.player + 1) % players;
                         let alpha = alpha * screens::pig_win::score_fade(Some(&t), since_landing);
-                        screens::draw_pig_score(&mut c, &t, since_landing, next, &tokens, alpha);
+                        TargetOf::<P>::draw_pig_score(&mut c, &t, since_landing, next, &tokens, alpha);
                     } else if let Some(r) = record {
                         TargetOf::<P>::draw_result(&mut c, r, ui.special(), alpha);
                     }
@@ -1362,7 +1362,7 @@ where
             }
             if let Some((l, t)) = locked {
                 if face != up.opposite() {
-                    screens::draw_locked(
+                    TargetOf::<P>::draw_locked(
                         &mut c,
                         &l,
                         tokens[l.next as usize],
@@ -1373,7 +1373,7 @@ where
             }
             if let Some((player, total, t, fade)) = pig_win {
                 if face != up.opposite() {
-                    screens::draw_pig_win(&mut c, player, total, t, fade);
+                    TargetOf::<P>::draw_pig_win(&mut c, player, total, t, fade);
                 }
             }
             if let Some(scene) = pig_scene {
@@ -1383,7 +1383,7 @@ where
                 let in_air = matches!(scene, pigfx::Scene::Tumbling(_));
                 if in_air || face != up.opposite() {
                     if let Some(pigs) = fx.pigs() {
-                        pigs.lay_onto(fb_of(c.painter), rot, pig_alpha);
+                        pigs.lay_onto_tinted(fb_of(c.painter), rot, pig_alpha, TargetOf::<P>::pig_tint());
                     }
                 }
             }
@@ -1528,12 +1528,6 @@ fn page_frame(m: &MenuSession, face: Face) -> Option<Frame> {
 /// (the held face pointing up, SIM_SPEC H7).
 fn page_quarter(frame: &Frame, face: Face, live: &TextOrientation) -> orientation::Quarter {
     orientation::upright(face, frame.up).unwrap_or_else(|| live.quarter(face))
-}
-
-/// 0 to 1 with a soft start and end; clamped outside.
-fn ease_inout(u: f32) -> f32 {
-    let u = u.clamp(0.0, 1.0);
-    u * u * (3.0 - 2.0 * u)
 }
 
 fn fb_of<'a, T: Target>(painter: &'a mut Painter<'_, T>) -> &'a mut Framebuffer<T> {
