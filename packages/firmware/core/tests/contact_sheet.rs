@@ -11,10 +11,11 @@
 //! * `tests/snapshots/rgb64-screens.png`: every 64×64 screen at 1:1 in a
 //!   strip, compared exactly. Regenerate with `UPDATE_SNAPSHOTS=1` when a
 //!   change is intended, like the 96×96 sheets.
-//! * `docs/30mm/contact-sheet.png` (written with `UPDATE_SNAPSHOTS=1`, and
-//!   always to `target/contact-sheet-64.png`): per screen, the 64×64 at 1:1
-//!   and 8×, beside the 96×96 at 1:1 and 5×, with the glass's rounded mask
-//!   shaded on the enlarged tiles.
+//! * `docs/30mm/contact-sheet-1.png` and `-2.png` (written with
+//!   `UPDATE_SNAPSHOTS=1`, and always to `target/`): per screen, the 64×64
+//!   at 1:1 and 8×, beside the 96×96 at 1:1 and 5×, with the glass's rounded
+//!   mask shaded on the enlarged tiles. Two pages, so each stays under
+//!   8000 px tall.
 
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
@@ -527,37 +528,40 @@ fn contact_sheet() {
     let x_96_5 = x_64_8 + 64 * s64 + PAD;
     let width = x_96_5 + 96 * s96 + PAD;
     let header = 96;
-    let mut sheet = Sheet::new(width, header + tiles.len() * row_h, BG);
-    sheet.text(
-        "Sugarcube 30 mm: 64x64 RGB565 vs 34 mm: 96x96 grey",
-        PAD,
-        20,
-        3,
-        INK,
-    );
-    sheet.text(
-        "64x64 at 1:1 | 96x96 at 1:1 | 64x64 at 8x | 96x96 at 5x (same shown size). Shaded corners: the glass mask.",
-        PAD,
-        60,
-        2,
-        SOFT,
-    );
-    for (i, (name, t96, t64)) in tiles.iter().enumerate() {
-        let y = header + i * row_h;
-        sheet.text(name, PAD, y + 8, 2, INK);
-        sheet.tile(t64, x_64_1, y, 1, None);
-        sheet.tile(t64, x_64_8, y, s64, Some(Rgb64::MASK_RADIUS_PX));
-        match t96 {
-            Some(t) => {
-                sheet.tile(t, x_96_1, y, 1, None);
-                sheet.tile(t, x_96_5, y, s96, Some(Grey96::MASK_RADIUS_PX));
+    let per_page = tiles.len().div_ceil(2);
+    for (page, chunk) in tiles.chunks(per_page).enumerate() {
+        let mut sheet = Sheet::new(width, header + chunk.len() * row_h, BG);
+        let title = format!(
+            "Sugarcube 30 mm: 64x64 RGB565 vs 34 mm: 96x96 grey  ({}/2)",
+            page + 1
+        );
+        sheet.text(&title, PAD, 20, 3, INK);
+        sheet.text(
+            "64x64 at 1:1 | 96x96 at 1:1 | 64x64 at 8x | 96x96 at 5x (same shown size). Shaded corners: the glass mask.",
+            PAD,
+            60,
+            2,
+            SOFT,
+        );
+        for (i, (name, t96, t64)) in chunk.iter().enumerate() {
+            let y = header + i * row_h;
+            sheet.text(name, PAD, y + 8, 2, INK);
+            sheet.tile(t64, x_64_1, y, 1, None);
+            sheet.tile(t64, x_64_8, y, s64, Some(Rgb64::MASK_RADIUS_PX));
+            match t96 {
+                Some(t) => {
+                    sheet.tile(t, x_96_1, y, 1, None);
+                    sheet.tile(t, x_96_5, y, s96, Some(Grey96::MASK_RADIUS_PX));
+                }
+                None => sheet.text("no 96x96 screen", x_96_5 + 24, y + 24, 2, SOFT),
             }
-            None => sheet.text("no 96x96 screen", x_96_5 + 24, y + 24, 2, SOFT),
         }
-    }
-    sheet.write(&repo_root().join("target/contact-sheet-64.png"));
-    if update {
-        sheet.write(&repo_root().join("docs/30mm/contact-sheet.png"));
+        assert!(sheet.h < 8000, "page {} is {} px tall", page + 1, sheet.h);
+        let name = format!("contact-sheet-{}.png", page + 1);
+        sheet.write(&repo_root().join("target").join(&name));
+        if update {
+            sheet.write(&repo_root().join("docs/30mm").join(&name));
+        }
     }
 }
 

@@ -866,6 +866,33 @@ mod tests {
     }
 
     #[test]
+    fn every_result_fits() {
+        use smokebomb_shared::types::MAX_DICE;
+        for die in DieKind::NUMERIC {
+            for n in 1..=MAX_DICE as u8 {
+                // The widest total and the longest label this setup can make.
+                let label = setup_label(die, n);
+                let max = die.sides() as u16 * n as u16;
+                let mut t: String<8> = String::new();
+                let _ = write!(t, "{max}");
+                let size = num_size(t.len(), n > 1);
+                assert!(size.measure(&t) <= LINE_MAX + 2, "{n}{die:?}: total {t}");
+                let tagged = TAG.measure("MAX") + 4 + TEXT.measure(&label);
+                assert!(tagged <= LINE_MAX, "{n}{die:?}: {label}");
+                // Parts, if shown, fit their line.
+                let values = [die.sides(); MAX_DICE];
+                if let Some((p, tag)) = parts_line(&values[..n as usize]) {
+                    let w = if tag { TAG.measure(&p) } else { TEXT.measure(&p) };
+                    assert!(w <= LINE_MAX, "{p}");
+                }
+                // The idle label at its size.
+                let w = TEXT.measure(&label);
+                assert!(w <= LINE_MAX, "{label}");
+            }
+        }
+    }
+
+    #[test]
     fn menu_titles_fit_a_line() {
         for page in [
             Page::Mode,

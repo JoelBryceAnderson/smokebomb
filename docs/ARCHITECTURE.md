@@ -143,7 +143,10 @@ animation rate; panels accept at most 100 Hz. Each tick:
    mockup's ordered dither and pack it at 4 bpp (`display.rs`, SIM_SPEC B1).
    The integer quantizer matches the mockup's float formula exactly for every
    pixel and value. Write all six frames, then `flush()` so every face
-   changes on the same frame.
+   changes on the same frame. That is the 34 mm die's display target
+   (`Grey96`); the 30 mm proof of concept (`Rgb64`) draws RGB565 and sends
+   only the tiles that changed, within its SPI budget (`panel.rs`;
+   see [docs/30mm](30mm/README.md)).
 
 ### State machine
 

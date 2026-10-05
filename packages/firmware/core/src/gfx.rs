@@ -693,6 +693,80 @@ mod tests {
     }
 
     #[test]
+    fn the_transform_follows_the_target() {
+        use smokebomb_hal::Rgb64;
+        // On both panels the lit edge (83 canvas units) is the panel edge.
+        let xf = Transform::quarter_on::<Rgb64>(Quarter::R0);
+        assert_eq!(xf.forward(0.0, 0.0), (32.0, 32.0));
+        assert!((xf.forward(83.0, 0.0).0 - 64.0).abs() < 1e-3);
+        assert_eq!(xf.panel(), (64, 64));
+        // In pixel units one unit is one panel pixel.
+        let px = xf.in_pixels();
+        let (x, y) = px.forward(-32.0, 31.0);
+        assert!((x - 0.0).abs() < 1e-4 && (y - 63.0).abs() < 1e-4);
+        // Bounds clip to the target's panel, not the 96×96 one.
+        let r = xf.bounds(-200.0, -200.0, 200.0, 200.0, 0.0);
+        assert_eq!((r.x1, r.y1), (64, 64));
+    }
+
+    #[test]
+    fn primitives_draw_on_both_targets() {
+        use smokebomb_hal::{Color, Pixel, Rgb565, Rgb64};
+        let gold = Color::hex(0xF5C451);
+        // A filled circle and a stroke in colour, on the 64×64 target.
+        let mut fb = Framebuffer::<Rgb64>::new();
+        let mut layer = Layer::<Rgb64>::new();
+        let mut p = Painter::new(&mut fb, &mut layer, Transform::quarter_on::<Rgb64>(Quarter::R0));
+        p.fill_circle(0.0, 0.0, 20.0, Style::color(gold, 1.0, 0.0));
+        p.stroke_polyline(&[(-60.0, 60.0), (60.0, 60.0)], 6.0, Style::new(255, 1.0, 0.0));
+        p.fill_rect(
+            -80.0,
+            -80.0,
+            10.0,
+            10.0,
+            Style::color(Color::rgb(0, 0, 255), 1.0, 0.0),
+        );
+        assert_eq!(fb.pixel(32, 32), Rgb565::from_color(gold));
+        assert_eq!(fb.pixel(32, 55).color(), Color::WHITE);
+        assert_eq!(fb.pixel(2, 2), Rgb565::from_rgb(0, 0, 255));
+        assert_eq!(fb.pixel(63, 0), Rgb565::BLACK);
+        // The same calls on the 96×96 target give grey: the colour's
+        // brightest channel, as the mockup's quantiser reads it.
+        let mut g = Framebuffer::<Grey96>::new();
+        let mut gl = Layer::<Grey96>::new();
+        let mut q = Painter::new(&mut g, &mut gl, Transform::quarter(Quarter::R0));
+        q.fill_circle(0.0, 0.0, 20.0, Style::color(gold, 1.0, 0.0));
+        assert_eq!(g.pixel(48, 48), 0xF5);
+    }
+
+    #[test]
+    fn bitmaps_land_on_whole_pixels_at_every_quarter_turn() {
+        use smokebomb_hal::{Pixel, Rgb64};
+        // An L: the top row and the left column of a 3×3 box.
+        let rows = [0b111u32 << 29, 0b100 << 29, 0b100 << 29];
+        for q in [Quarter::R0, Quarter::R90, Quarter::R180, Quarter::R270] {
+            let mut fb = Framebuffer::<Rgb64>::new();
+            let mut layer = Layer::<Rgb64>::new();
+            let xf = Transform::quarter_on::<Rgb64>(q).in_pixels();
+            let mut p = Painter::new(&mut fb, &mut layer, xf);
+            p.begin();
+            p.cover_rows(&rows, 3, 4.0, 4.0, 1.0);
+            p.finish(Style::new(255, 1.0, 0.0));
+            let lit: usize = fb.pixels().iter().filter(|px| px.level() == 255).count();
+            let partial = fb
+                .pixels()
+                .iter()
+                .filter(|px| (1..255).contains(&px.level()))
+                .count();
+            assert_eq!((lit, partial), (5, 0), "{q:?}: every bit is one whole pixel");
+            // Content pixel (4 + 32, 4 + 32) is the L's corner, wherever the
+            // quarter turn puts it.
+            let (x, y) = q.map_in(36, 36, 64);
+            assert_eq!(fb.pixel(x, y).level(), 255, "{q:?}");
+        }
+    }
+
+    #[test]
     fn box_blur_preserves_mass() {
         use crate::display::PIXELS;
         let mut src = [0u8; PIXELS];
