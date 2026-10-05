@@ -229,8 +229,8 @@ final class DieLid {
 
     private static func mesh(_ models: [MeshResource.Model], _ instances: [MeshResource.Instance]) -> MeshResource? {
         var contents = MeshResource.Contents()
-        contents.models = MeshResource.Models(models)
-        contents.instances = MeshResource.Instances(instances)
+        contents.models = MeshModelCollection(models)
+        contents.instances = MeshInstanceCollection(instances)
         return try? MeshResource.generate(from: contents)
     }
 
