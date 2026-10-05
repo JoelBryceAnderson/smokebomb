@@ -15,6 +15,19 @@ final class LiveScreens {
     static let flipVertically = false
     /// How far in front of the model's screen the quad sits, in metres.
     static let lift: Float = 0.00005
+    /// Segments in each rounded corner of the quad.
+    static let cornerSegments = 8
+
+    /// The glass's ink mask rounds the lit area, as the web simulator draws it
+    /// (`geometry.ts` `maskTexels` / `texelsPerPx`): 14 px on the 96×96 panel,
+    /// 10.75 px on the 64×64. A fraction of the side, so it fits any quad.
+    static func cornerFraction(side: Int) -> Float {
+        switch side {
+        case 96: return 14 / 96
+        case 64: return 10.75 / 64
+        default: return 0.15
+        }
+    }
 
     private struct Screen {
         let quad: ModelEntity
@@ -46,7 +59,8 @@ final class LiveScreens {
             let depth = abs(simd_dot(bounds.extents, normal))
             guard width > 0, height > 0 else { continue }
 
-            let quad = ModelEntity(mesh: Self.quad(width: width, height: height), materials: [Self.material(texture)])
+            let radius = min(width, height) * Self.cornerFraction(side: side)
+            let quad = ModelEntity(mesh: Self.quad(width: width, height: height, radius: radius), materials: [Self.material(texture)])
             quad.name = "LiveScreen_\(face.rawValue)"
             parent.addChild(quad)
             // Face the screen's way, on its outer surface, in the die's frame.
@@ -98,17 +112,44 @@ final class LiveScreens {
         return material
     }
 
-    /// A quad in the XY plane facing +Z, with the image's top row along +Y.
-    private static func quad(width: Float, height: Float) -> MeshResource {
+    /// A rounded quad in the XY plane facing +Z, with the image's top row
+    /// along +Y: a fan from the centre round the outline, each corner an arc
+    /// of `radius`, UVs mapped straight from position so the panel isn't
+    /// squashed, just cut at the corners like the glass's mask.
+    private static func quad(width: Float, height: Float, radius: Float) -> MeshResource {
         let w = width / 2, h = height / 2
-        let (bottom, top): (Float, Float) = flipVertically ? (1, 0) : (0, 1)
+        let r = max(0, min(radius, w, h))
+        // Corner centres, counter-clockwise from bottom-right, with each arc's start angle.
+        let corners: [(SIMD2<Float>, Float)] = [
+            ([w - r, -h + r], -.pi / 2),
+            ([w - r, h - r], 0),
+            ([-w + r, h - r], .pi / 2),
+            ([-w + r, -h + r], .pi),
+        ]
+        var outline: [SIMD2<Float>] = []
+        for (centre, start) in corners {
+            for k in 0...cornerSegments {
+                let a = start + Float(k) / Float(cornerSegments) * (.pi / 2)
+                outline.append(centre + r * SIMD2(cos(a), sin(a)))
+            }
+        }
+        let points = [SIMD2<Float>(0, 0)] + outline
+        func uv(_ p: SIMD2<Float>) -> SIMD2<Float> {
+            let v = (p.y + h) / height
+            return [(p.x + w) / width, flipVertically ? 1 - v : v]
+        }
+        var indices: [UInt32] = []
+        for i in 0..<outline.count {
+            indices += [0, UInt32(1 + i), UInt32(1 + (i + 1) % outline.count)]
+        }
         var mesh = MeshDescriptor(name: "LiveScreen")
-        mesh.positions = MeshBuffer([[-w, -h, 0], [w, -h, 0], [w, h, 0], [-w, h, 0]])
-        mesh.normals = MeshBuffer(Array(repeating: SIMD3<Float>(0, 0, 1), count: 4))
-        mesh.textureCoordinates = MeshBuffer([[0, bottom], [1, bottom], [1, top], [0, top]])
-        mesh.primitives = .triangles([0, 1, 2, 0, 2, 3])
+        mesh.positions = MeshBuffer(points.map { SIMD3($0.x, $0.y, 0) })
+        mesh.normals = MeshBuffer(Array(repeating: SIMD3<Float>(0, 0, 1), count: points.count))
+        mesh.textureCoordinates = MeshBuffer(points.map(uv))
+        mesh.primitives = .triangles(indices)
         // A fallback that can't fail: a plain plane, if the custom mesh is refused.
-        return (try? MeshResource.generate(from: [mesh])) ?? .generatePlane(width: width, height: height)
+        return (try? MeshResource.generate(from: [mesh]))
+            ?? .generatePlane(width: width, height: height, cornerRadius: r)
     }
 
     private static func image(_ rgba: [UInt8], side: Int) -> CGImage? {
