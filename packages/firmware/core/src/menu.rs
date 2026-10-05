@@ -124,11 +124,6 @@ impl PlayMode {
         }
     }
 
-    /// Whether a throw rolls and signs dice in this mode.
-    pub const fn rolls(self) -> bool {
-        !matches!(self, PlayMode::HotPotato)
-    }
-
     /// The mode's id on the wire and in the store.
     pub const fn id(self) -> ModeId {
         match self {
@@ -844,11 +839,10 @@ mod tests {
     }
 
     #[test]
-    fn hot_potato_has_a_fuse_page_and_does_not_roll() {
+    fn hot_potato_has_a_fuse_page() {
         let mode = draft().tipped(TipDir::Right);
         let potato = mode.tipped(TipDir::Up).tipped(TipDir::Up);
         assert_eq!(potato.play, PlayMode::HotPotato);
-        assert!(!potato.play.rolls());
         assert_eq!(potato.setup(), Setup::HotPotato);
         assert_eq!(potato.setup().label().as_str(), "Hot Potato");
         assert_eq!(potato.setup().short_label().as_str(), "Potato");

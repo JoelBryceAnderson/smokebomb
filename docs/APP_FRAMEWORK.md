@@ -1,6 +1,6 @@
 # App framework (planned)
 
-Status: agreed with Joel, 5 Oct 2026. Step 1 (gestures) is built; the rest is
+Status: agreed with Joel, 5 Oct 2026. Steps 1 and 2 are built; the rest is
 the plan. It applies `SMOKEBOMB_SIM_UPDATE_BRIEF_3` (text sizes and
 deliberate gestures).
 
@@ -100,8 +100,10 @@ die with only Dice.
 
 1. **Gesture arbiter** (`gesture.rs`): grip, steady die, tap before the
    ring, cancel between ring and hold, dead until lifted. Done.
-2. App trait and platform shell; port Dice first (snapshots as the check),
-   then Pot, Potato and Pig Toss.
+2. **App trait and platform shell** (`apps/`): Dice, Pot, Potato and Pig
+   Toss behind `App`, their branches gone from the main loop, `session.rs`
+   folded into `Apps`. Taps still commit through `App::tapped` until step 3.
+   Rendering still reads app state directly until step 5. Done.
 3. Holds, actions, previews and tap hints; convert the table above.
 4. Apps page and Settings app, with short names.
 5. Typed screens, bitmap tier fonts (7/15/18/21/30 px cap) and the size audit.

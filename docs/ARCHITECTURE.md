@@ -149,6 +149,28 @@ animation rate; panels accept at most 100 Hz. Each tick:
    only the tiles that changed, within its SPI budget (`panel.rs`;
    see [docs/30mm](30mm/README.md)).
 
+### Apps
+
+The firmware hosts one app at a time: Dice, Pass the Pot, Hot Potato or Pig
+Toss, the saved mode (`apps/`, plan in [APP_FRAMEWORK.md](APP_FRAMEWORK.md)).
+The platform keeps what they share (boot, Nest, sleep, the roll flow,
+gestures, the menu, rendering); an app implements `App`:
+
+- `kind()`: whether a throw rolls (`MotionUse::Rolls`) or a shake triggers
+  the app (`MotionUse::Shake`), and whether it keeps score.
+- `throw()`: dice for the platform to roll and sign, or `Throw::Own` and
+  `landed()` draws what the app needs (Pig Toss's poses).
+- `shaken()`, `tapped()` → `commit()`, `tick()`: the app's rules. They see
+  the platform through `apps::Ctx` (time, mode, settings, RNG) and return
+  `Effect`s (haptics, smoke, clearing the result) for the platform to carry
+  out. Haptics follow the Haptics setting for every app.
+- `busy()` keeps the screens awake; `blocks_hold()` stops a hold opening the
+  menu (a lit fuse).
+
+`Apps` keeps every app's state whichever is active, so Pig Toss's game
+outlives the menu and switching modes, and ends only from End game. Rendering
+still asks the apps' state directly; typed screens replace that later.
+
 ### Gestures
 
 `gesture.rs` turns the touch mask into deliberate gestures (SMOKEBOMB_SIM_UPDATE_BRIEF_3,
@@ -205,8 +227,9 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   no Mode page (most snapshot scenarios use this).
 - **Hot Potato** (`potato.rs`). A game that doesn't roll. The pure `Potato`
   machine (Idle, Lit, Boom) takes the time and a fuse the firmware drew from
-  the RNG, and returns `PotatoCommand`s (ignite, tick, boom, clear) that the firmware turns into haptics and smoke. In this mode
-  `StateMachine::set_rolls(false)` stops the roll flow reacting to motion;
+  the RNG, and returns `PotatoCommand`s (ignite, tick, boom, clear), which
+  its app (`apps/potato.rs`) turns into effects. Its app is triggered by a
+  shake, so `StateMachine::set_rolls(false)` stops the roll flow reacting to motion;
   the state machine still owns the menu and the Nest. Shakes light the fuse,
   taps reset a spent die, and holds are ignored mid-round. Nothing is signed.
 - **Draft.** The menu works on a `Draft` (`menu.rs`): page, mode, die, count,

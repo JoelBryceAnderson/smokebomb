@@ -12,6 +12,7 @@
 #[cfg(test)]
 extern crate std;
 
+pub mod apps;
 pub mod bench;
 pub mod display;
 pub mod effects;
@@ -34,7 +35,6 @@ pub mod potato;
 pub mod roll;
 pub mod screens;
 pub mod screens64;
-pub mod session;
 pub mod smoke;
 pub mod sprites64;
 pub mod state;
@@ -51,9 +51,9 @@ use smokebomb_hal::{
     SecureElement, Target, TargetOf, Touch,
 };
 use smokebomb_shared::protocol::Inventory;
-use smokebomb_shared::types::MAX_POT_DICE;
 use smokebomb_shared::{DieKind, ModeId, ModeSet, SignedRoll};
 
+use apps::{App, Apps, Effect, Effects, MotionUse, SmokeOp, Tap, Throw};
 use display::Framebuffer;
 use font::Fonts;
 use gesture::{Gesture, Gestures};
@@ -64,10 +64,9 @@ use nest::{Nest, NestFace};
 use orientation::TextOrientation;
 use pack::PackIndex;
 use pigs::Pigs;
-use potato::{Potato, PotatoCommand};
+use potato::Potato;
 use roll::RollEngine;
 use screens::Ctx;
-use session::Sessions;
 use smoke::{Smoke, Special};
 use state::{Command, Event, Mode, StateMachine};
 use target::{Delivery, DisplayTarget};
@@ -125,14 +124,8 @@ where
     sm: StateMachine,
     motion: MotionDetector,
     settings: Settings,
-    potato: Potato,
-    sessions: Sessions,
-    /// Seconds into the pigs' tumble, and how far in they were when the
-    /// die landed. Runs only while the die is shaken or thrown.
-    pig_clock: f32,
-    pig_land: f32,
-    /// When the die landed, so the pigs settle from there.
-    pig_landed_ms: u64,
+    /// Every app's state: the active one is the saved mode's.
+    apps: Apps,
     roller: RollEngine,
     /// The smoke, or in Pig Toss the pigs (cast once a frame and laid onto
     /// every face): they share the memory.
@@ -159,8 +152,6 @@ where
     still_since: Option<u64>,
     /// The last tap was on a die that had been resting.
     tap_deliberate: bool,
-    /// A bank that just locked in, and when.
-    locked: Option<(pigs::Locked, u64)>,
     /// The face the last tap or hold was on.
     touch_face: Face,
     menu: Option<MenuSession>,
@@ -233,11 +224,7 @@ where
             addr_of_mut!((*p).sm).write(StateMachine::new());
             addr_of_mut!((*p).motion).write(MotionDetector::new());
             addr_of_mut!((*p).settings).write(settings);
-            addr_of_mut!((*p).potato).write(Potato::new());
-            addr_of_mut!((*p).sessions).write(Sessions::default());
-            addr_of_mut!((*p).pig_clock).write(0.0);
-            addr_of_mut!((*p).pig_land).write(0.0);
-            addr_of_mut!((*p).pig_landed_ms).write(0);
+            addr_of_mut!((*p).apps).write(Apps::default());
             addr_of_mut!((*p).roller).write(roller);
             addr_of_mut!((*p).pending_special).write(None);
             addr_of_mut!((*p).last_tick_ms).write(None);
@@ -248,7 +235,6 @@ where
             addr_of_mut!((*p).gestures).write(Gestures::new());
             addr_of_mut!((*p).still_since).write(None);
             addr_of_mut!((*p).tap_deliberate).write(false);
-            addr_of_mut!((*p).locked).write(None);
             addr_of_mut!((*p).touch_face).write(Face::PosZ);
             addr_of_mut!((*p).menu).write(None);
             addr_of_mut!((*p).up_face).write(Face::PosY);
@@ -270,11 +256,7 @@ where
                 sm,
                 motion,
                 settings,
-                potato,
-                sessions,
-                pig_clock,
-                pig_land,
-                pig_landed_ms,
+                apps,
                 roller,
                 fx,
                 pending_special,
@@ -291,7 +273,6 @@ where
                 gestures,
                 still_since,
                 tap_deliberate,
-                locked,
                 touch_face,
                 menu,
                 up_face,
@@ -377,26 +358,71 @@ where
             smoke.set_reduced_motion(self.reduced_motion);
             smoke.set_up(self.gravity.up());
         }
-        self.sm.set_rolls(self.settings.play().rolls());
-        self.potato = Potato::new();
+        self.sm.set_rolls(self.app().kind().motion == MotionUse::Rolls);
         // A game in play carries on through the menu and other modes; it
-        // ends only from its End game page. Pig Toss needs one to play, so
-        // arriving without one (a fresh die, settings from the phone) starts
-        // one for the table as set.
-        self.locked = None;
-        if self.settings.play() == PlayMode::PigToss && !self.sessions.live(ModeId::PigToss) {
-            self.sessions.start_pigs(self.settings.players);
+        // ends only from its End game page.
+        self.apps.settings_applied(&self.settings);
+    }
+
+    /// The app in use.
+    fn app(&self) -> &dyn App {
+        self.apps.get(self.settings.play().id())
+    }
+
+    /// Let the active app handle something, then carry out what it asks.
+    fn with_app(
+        &mut self,
+        now: u64,
+        f: impl FnOnce(&mut dyn App, &mut apps::Ctx) -> HalResult<Effects>,
+    ) -> HalResult<()> {
+        let id = self.settings.play().id();
+        let mut cx = apps::Ctx {
+            now,
+            mode: *self.sm.mode(),
+            label_up: self.ui.label_up(now),
+            settings: &mut self.settings,
+            rng: &mut self.hw.rng,
+        };
+        let effects = f(self.apps.get_mut(id), &mut cx)?;
+        self.run_effects(effects)
+    }
+
+    /// Carry out what an app asked for.
+    fn run_effects(&mut self, effects: Effects) -> HalResult<()> {
+        for effect in effects {
+            match effect {
+                Effect::Haptic(h) => {
+                    if self.settings.haptics_on() {
+                        self.hw.haptics.play(h)?;
+                    }
+                }
+                Effect::Smoke(op) => {
+                    if let Some(smoke) = self.fx.smoke() {
+                        match op {
+                            SmokeOp::Smolder(amount) => smoke.smolder(amount),
+                            SmokeOp::Burst => {
+                                smoke.throw();
+                                smoke.land();
+                            }
+                            SmokeOp::Clear => smoke.clear(),
+                        }
+                    }
+                }
+                Effect::GameStarted => self.ui.game_started(),
+                Effect::DismissResult => self.ui.dismiss_result(),
+            }
         }
+        Ok(())
     }
 
     /// The Pig Toss game: scores, whose turn and the last throw.
     pub fn pigs(&self) -> &Pigs {
-        &self.sessions.pigs
+        &self.apps.pigs.game
     }
 
     /// The Hot Potato round in play, if any.
     pub fn potato(&self) -> &Potato {
-        &self.potato
+        &self.apps.potato
     }
 
     pub fn last_roll(&self) -> Option<&SignedRoll> {
@@ -494,62 +520,40 @@ where
         let before = *self.sm.mode();
         let input = !events.is_empty();
         let _ = events.push(Event::Tick);
-        let game = !self.settings.play().rolls();
         for event in events {
-            if game && !matches!(self.sm.mode(), Mode::Menu | Mode::Nest | Mode::Off) {
-                match event {
-                    Event::Motion(Motion::Shaking) if self.potato.is_idle() => self.light_potato(now)?,
-                    Event::Tap => {
-                        for cmd in self.potato.tap(now) {
-                            self.run_potato(cmd)?;
-                        }
-                    }
-                    // No opening the menu mid-round.
-                    Event::LongPress if self.potato.is_lit() => continue,
-                    _ => {}
+            let outside = !matches!(self.sm.mode(), Mode::Menu | Mode::Nest | Mode::Off);
+            match event {
+                Event::Motion(Motion::Shaking) if outside && self.app().kind().motion == MotionUse::Shake => {
+                    self.with_app(now, |app, cx| app.shaken(cx))?;
                 }
-            }
-            // Only a deliberate tap on the top screen banks: short, on a die
-            // that was resting and stays put. Picking the die up to throw
-            // it puts a finger on that screen too, and mustn't pass the turn.
-            if event == Event::Tap
-                && self.settings.play() == PlayMode::PigToss
-                && self.touch_face == self.up_face
-                && self.tap_deliberate
-                && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. })
-            {
-                self.bank_pigs(now)?;
-            }
-            if event == Event::Docked(true) {
-                self.locked = None;
-                for cmd in self.potato.reset() {
-                    self.run_potato(cmd)?;
+                // No opening the menu mid-round.
+                Event::LongPress if outside && self.app().blocks_hold() => continue,
+                Event::Tap => {
+                    let tap = Tap {
+                        face: self.touch_face,
+                        up: self.up_face,
+                        deliberate: self.tap_deliberate,
+                    };
+                    self.with_app(now, |app, cx| {
+                        Ok(match app.tapped(tap, cx) {
+                            Some(action) => app.commit(action, cx),
+                            None => Effects::new(),
+                        })
+                    })?;
+                    self.ui.tap(now, self.sm.mode());
                 }
-            }
-            if event == Event::Tap
-                && self.settings.play() == PlayMode::PassThePot
-                && self.tap_deliberate
-                && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. })
-            {
-                self.tap_bills(now)?;
-            }
-            if event == Event::Tap {
-                self.ui.tap(now, self.sm.mode());
+                Event::Docked(true) => {
+                    let effects = self.apps.docked();
+                    self.run_effects(effects)?;
+                }
+                _ => {}
             }
             let commands = self.sm.handle(event, now);
             for cmd in commands {
                 self.execute(cmd, now)?;
             }
         }
-        for cmd in self.potato.tick(now) {
-            self.run_potato(cmd)?;
-        }
-        if self.potato.is_lit() {
-            let heat = self.potato.heat(now);
-            if let Some(smoke) = self.fx.smoke() {
-                smoke.smolder(SMOLDER_MIN + (SMOLDER_MAX - SMOLDER_MIN) * heat);
-            }
-        }
+        self.with_app(now, |app, cx| Ok(app.tick(cx)))?;
         let after = *self.sm.mode();
         self.update_sleep(now, input, &after)?;
         self.ui.tick(now, &before, &after, self.up_face, self.docked);
@@ -609,125 +613,13 @@ where
         Ok(())
     }
 
-    /// A shake lit Hot Potato: pick the fuse at random within the setting.
-    fn light_potato(&mut self, now: u64) -> HalResult<()> {
-        let range = self.settings.fuse.range_ms();
-        let fuse = potato::fuse_from(self.hw.rng.next_u32()?, range);
-        self.ui.game_started();
-        for cmd in self.potato.light(now, fuse, range.1) {
-            self.run_potato(cmd)?;
-        }
-        Ok(())
-    }
-
-    /// A throw landed in Pig Toss: draw both pigs' poses. It is a game,
-    /// not a signed roll, so the roll chain stays as it was.
-    fn throw_pigs(&mut self) -> HalResult<()> {
-        let poses = [
-            pigs::Pose::from_random(self.hw.rng.next_u32()?),
-            pigs::Pose::from_random(self.hw.rng.next_u32()?),
-        ];
-        // A third word decides whether the pigs landed touching.
-        let touching = pigs::smooch_from_random(self.hw.rng.next_u32()?);
-        let throw = self.sessions.pigs.throw(poses, touching);
-        self.locked = None;
-        self.pending_special = None;
-        if self.settings.haptics_on() {
-            let effect = match throw.outcome {
-                _ if throw.won => smokebomb_hal::HapticEffect::MaxCelebration,
-                pigs::Outcome::Smooch => smokebomb_hal::HapticEffect::Dud,
-                pigs::Outcome::Bust => smokebomb_hal::HapticEffect::Buzz,
-                pigs::Outcome::Score(_) => smokebomb_hal::HapticEffect::Tick,
-            };
-            self.hw.haptics.play(effect)?;
-        }
-        Ok(())
-    }
-
-    /// A tap in Pass the Pot between rolls. The first puts the last result
-    /// away and shows the bills screen; a tap while that's up changes how
-    /// many bills the next roll uses, 3 → 2 → 1 → 3. Only deliberate taps
-    /// count, so picking the die up doesn't change it.
-    fn tap_bills(&mut self, now: u64) -> HalResult<()> {
-        if self.ui.label_up(now) {
-            let n = self.settings.pot_count;
-            self.settings.pot_count = if n <= 1 { MAX_POT_DICE as u8 } else { n - 1 };
-            if self.settings.haptics_on() {
-                self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
-            }
-        } else {
-            self.ui.dismiss_result();
-        }
-        Ok(())
-    }
-
-    /// A tap in Pig Toss: bank the turn and pass the die, or start a new
-    /// game once the win screen is up.
-    fn bank_pigs(&mut self, now: u64) -> HalResult<()> {
-        // A winning throw is still counting up: don't wipe it before the
-        // win screen has had its moment.
-        if self.sessions.pigs.last().is_some_and(|t| t.won) && self.pig_win_t(now).is_none() {
-            return Ok(());
-        }
-        let players = self.sessions.pigs.players();
-        let locked = match self.sessions.pigs.bank() {
-            pigs::Banked::Passed {
-                player,
-                points,
-                total,
-            } => Some(pigs::Locked {
-                player,
-                points,
-                before: total - points,
-                after: total,
-                next: (player + 1) % players,
-            }),
-            pigs::Banked::Nothing | pigs::Banked::NewGame => None,
-        };
-        self.locked = locked.map(|l| (l, now));
-        if locked.is_some() && self.settings.haptics_on() {
-            // A thunk as it locks.
-            self.hw.haptics.play(smokebomb_hal::HapticEffect::LandingThud)?;
-        }
-        Ok(())
-    }
-
     /// Seconds since the winning throw's score gave way to the win screen,
     /// once it has.
     fn pig_win_t(&self, now: u64) -> Option<f32> {
-        let since_landing = now.saturating_sub(self.pig_landed_ms) as f32 / 1000.0;
-        (self.settings.play() == PlayMode::PigToss
-            && self.sessions.pigs.last().is_some_and(|t| t.won)
-            && matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. })
-            && since_landing >= screens::pig_win::AT)
-            .then_some(since_landing - screens::pig_win::AT)
-    }
-
-    /// Do what the game asked for: haptics and smoke.
-    fn run_potato(&mut self, cmd: PotatoCommand) -> HalResult<()> {
-        match cmd {
-            PotatoCommand::Ignite => {
-                self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?;
-                if let Some(smoke) = self.fx.smoke() {
-                    smoke.smolder(SMOLDER_MIN);
-                }
-            }
-            PotatoCommand::Tick => self.hw.haptics.play(smokebomb_hal::HapticEffect::Tick)?,
-            PotatoCommand::Boom => {
-                self.hw.haptics.play(smokebomb_hal::HapticEffect::Buzz)?;
-                // A full cloud that drains over the faces, with embers.
-                if let Some(smoke) = self.fx.smoke() {
-                    smoke.throw();
-                    smoke.land();
-                }
-            }
-            PotatoCommand::Clear => {
-                if let Some(smoke) = self.fx.smoke() {
-                    smoke.clear();
-                }
-            }
+        if self.settings.play() != PlayMode::PigToss {
+            return None;
         }
-        Ok(())
+        self.apps.pigs.win_t(now, self.sm.mode())
     }
 
     /// The Sleep after setting: the screens go dark once the die has sat
@@ -737,7 +629,7 @@ where
         let busy = input
             || self.gestures.touching()
             || !matches!(mode, Mode::Idle)
-            || !self.potato.is_idle()
+            || self.app().busy()
             || self.ui.booting();
         if busy {
             self.last_activity = now;
@@ -790,7 +682,7 @@ where
             self.pending_special = None;
         }
         let dt = self.frame_dt(now);
-        self.step_pigs(dt, before, after, now);
+        self.apps.pigs.animate(dt, before, after, now);
         // Pig Toss has no smoke.
         let Some(smoke) = self.fx.smoke() else {
             return;
@@ -822,23 +714,6 @@ where
                 self.ui.set_special(now, special);
                 self.pending_special = None;
             }
-        }
-    }
-
-    /// Run the pigs' tumble while the die is shaken or thrown, and note when
-    /// it lands so they can settle from there.
-    fn step_pigs(&mut self, dt: f32, before: &Mode, after: &Mode, now: u64) {
-        let flying = |m: &Mode| matches!(m, Mode::Shaking | Mode::Airborne | Mode::Settling);
-        if flying(after) {
-            if !flying(before) {
-                self.pig_clock = 0.0;
-            }
-            // Rattling in the hand is quicker than the tumble.
-            self.pig_clock += dt * if matches!(after, Mode::Shaking) { 1.7 } else { 1.0 };
-        }
-        if matches!(after, Mode::Reveal { .. }) && !matches!(before, Mode::Reveal { .. }) {
-            self.pig_land = self.pig_clock;
-            self.pig_landed_ms = now;
         }
     }
 
@@ -967,7 +842,7 @@ where
     /// The face being held toward a hold and how far it has got (0–1),
     /// while the ring shows.
     fn hold_progress(&self, now: u64) -> Option<(Face, f32)> {
-        let ring = !self.potato.is_lit()
+        let ring = !self.app().blocks_hold()
             && matches!(
                 self.sm.mode(),
                 Mode::Idle | Mode::Reveal { .. } | Mode::Menu | Mode::Nest
@@ -984,11 +859,12 @@ where
                     self.hw.haptics.play(effect)?;
                 }
             }
-            Command::Roll if self.settings.play() == PlayMode::PigToss => {
-                self.throw_pigs()?;
-            }
             Command::Roll => {
-                let (die, count) = self.settings.active();
+                let Throw::Dice(die, count) = self.app().throw(&self.settings) else {
+                    // The app's own throw: nothing is signed.
+                    self.pending_special = None;
+                    return self.with_app(now, |app, cx| app.landed(cx));
+                };
                 let signed =
                     self.roller
                         .roll(&mut self.hw.rng, &mut self.hw.secure_element, die, count, now)?;
@@ -1006,10 +882,9 @@ where
                 self.last_roll = Some(signed);
             }
             Command::MenuOpen => {
-                self.potato = Potato::new();
-                self.locked = None;
+                self.apps.menu_opened();
                 let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
-                let live = self.sessions.live(ModeId::PigToss);
+                let live = self.apps.pigs.live;
                 self.menu = Some(MenuSession {
                     draft: Draft::new(&self.settings).with_session(live),
                     frame: Frame::new(
@@ -1066,10 +941,10 @@ where
                         // Ending a game, or setting up a new one, happens
                         // only now: backing out of the menu leaves it be.
                         if m.draft.ended {
-                            self.sessions.end(ModeId::PigToss);
+                            self.apps.pigs.end();
                         }
                         if m.draft.set_up() {
-                            self.sessions.start_pigs(m.draft.players);
+                            self.apps.pigs.start(m.draft.players);
                         }
                         m.draft.commit(&mut self.settings);
                         self.apply_settings();
@@ -1144,20 +1019,21 @@ where
         // Between throws the Pig Toss label says whose go it is, or who won.
         let tokens = self.settings.tokens;
         let pigs_up = self
-            .sessions
+            .apps
             .pigs
+            .game
             .winner()
-            .unwrap_or(self.sessions.pigs.current());
-        let pigs_won = self.sessions.pigs.winner().is_some();
+            .unwrap_or(self.apps.pigs.game.current());
+        let pigs_won = self.apps.pigs.game.winner().is_some();
         let battery = self.hw.power.battery()?.percent;
         let potato_view = if matches!(mode, Mode::Menu | Mode::Nest) {
             None
-        } else if let Some(t) = self.potato.boomed_for(now) {
+        } else if let Some(t) = self.apps.potato.boomed_for(now) {
             Some(PotatoView::Boom(t as f32 / 1000.0))
-        } else if self.potato.is_lit() {
+        } else if self.apps.potato.is_lit() {
             Some(PotatoView::Fuse(
-                self.potato.heat(now),
-                self.potato.pulse(now),
+                self.apps.potato.heat(now),
+                self.apps.potato.pulse(now),
                 (now % 1_000_000) as f32 / 1000.0,
             ))
         } else {
@@ -1165,16 +1041,16 @@ where
         };
         // Pig Toss: the pigs tumble while the die is in the air, and settle
         // into their poses once it lands, for as long as the result is up.
-        let since_landing = now.saturating_sub(self.pig_landed_ms) as f32 / 1000.0;
-        let players = self.sessions.pigs.players();
+        let since_landing = now.saturating_sub(self.apps.pigs.landed_ms) as f32 / 1000.0;
+        let players = self.apps.pigs.game.players();
         // A winning throw's score gives way to the win screen.
         let pig_win = self.pig_win_t(now).and_then(|t| {
             let fade = (LOCKED_MS as f32 / 1000.0 - t).clamp(0.0, 1.5) / 1.5;
-            let winner = self.sessions.pigs.winner()?;
+            let winner = self.apps.pigs.game.winner()?;
             (fade > 0.0).then(|| {
                 (
                     tokens[winner as usize],
-                    self.sessions.pigs.scores()[winner as usize],
+                    self.apps.pigs.game.scores()[winner as usize],
                     t,
                     fade,
                 )
@@ -1184,14 +1060,15 @@ where
         let pig_scene = if !pigs_on || win_up || matches!(mode, Mode::Menu | Mode::Nest | Mode::Off) {
             None
         } else if matches!(mode, Mode::Shaking | Mode::Airborne | Mode::Settling) {
-            Some(pigfx::Scene::Tumbling(self.pig_clock))
+            Some(pigfx::Scene::Tumbling(self.apps.pigs.clock))
         } else {
-            self.sessions
+            self.apps
                 .pigs
+                .game
                 .last()
                 .filter(|_| self.ui.showing_result(now))
                 .map(|t| pigfx::Scene::Settling {
-                    land: self.pig_land,
+                    land: self.apps.pigs.land,
                     u: since_landing / pigfx::SETTLE_S,
                     shrink: TargetOf::<P>::pig_settle(since_landing).0,
                     poses: t.poses,
@@ -1202,11 +1079,13 @@ where
             1.0
         } else {
             self.ui.result_dim(now)
-                * screens::pig_win::score_fade(self.sessions.pigs.last(), since_landing)
+                * screens::pig_win::score_fade(self.apps.pigs.game.last(), since_landing)
                 * TargetOf::<P>::pig_settle(since_landing).1
         };
         // A bank locking in: a padlock snaps shut and the score counts up.
         let locked = self
+            .apps
+            .pigs
             .locked
             .filter(|_| pigs_on && pig_scene.is_none() && matches!(mode, Mode::Idle | Mode::Reveal { .. }))
             .filter(|(_, at)| now.saturating_sub(*at) < LOCKED_MS)
@@ -1223,13 +1102,13 @@ where
             orientation,
             last_roll,
             menu,
-            sessions,
+            apps,
             fx,
             ..
         } = self;
         let record = last_roll.as_ref().map(|r| &r.record);
         let pigs_throw = if pigs_on {
-            sessions.pigs.last().copied()
+            apps.pigs.game.last().copied()
         } else {
             None
         };
@@ -1421,11 +1300,6 @@ where
         self.sync.bytes
     }
 }
-
-/// How much of a full cloud a lit fuse's smoke may reach, at the start and
-/// at full heat: enough to build, little enough to read "PASS IT" through.
-const SMOLDER_MIN: f32 = 0.08;
-const SMOLDER_MAX: f32 = 0.3;
 
 /// What a round of Hot Potato shows on the faces.
 #[derive(Clone, Copy)]
