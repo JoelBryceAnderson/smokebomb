@@ -1,7 +1,8 @@
 # AR viewer
 
-The **AR** tab, iOS only. You place a Sugarcube on your table at true size,
-then you can:
+The **Simulator** tab, iOS only (it began as the AR tab). You place a
+Sugarcube at true size, on your real table through the camera or on a
+virtual one (see [AR on or off](#ar-on-or-off)), then you can:
 
 - switch between the models
 - turn and move the die, and scale it if you unlock true size
@@ -16,6 +17,30 @@ It needs iOS 18 or later, and runs on iPhone and iPad.
 - **iPad:** the controls sit in a side panel next to the camera view. The panel
   includes a control pad: drag on it to turn the die, flick it to throw the
   die, while you watch the table.
+
+## AR on or off
+
+The tab is labelled **Simulator**. Its **AR** toggle (in the iPhone controls,
+or the iPad side panel's View section) picks where the die is:
+
+- **On:** through the camera, on your real table. This needs camera access
+  and an AR-capable device.
+- **Off:** on a virtual table in a dark studio, seen from a fixed camera
+  framed like the desktop simulator's (32° field of view, looking from the
+  front right). The die is placed straight away, with no plane finding.
+  Everything else works the same: live firmware screens, throws, the menu
+  and its turn pad, x-ray, explode and tap-to-name. It needs no camera, so
+  it also runs where AR can't: without camera access, on devices without AR,
+  and in the iOS Simulator.
+
+Switching rebuilds the view, so the die is placed again and the firmware
+reboots. The choice is remembered. AR is on by default where it's
+available, and the toggle is hidden where it isn't. When AR is on but camera
+access is off, the tab offers **Use without AR**.
+
+The studio's framing is `studioFieldOfView` and `studioCameraDistance` in
+`DiePhysics.swift`; the studio itself is `buildStudio()` in
+`ARSceneController.swift`.
 
 ## Where things are
 

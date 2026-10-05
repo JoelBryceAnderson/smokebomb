@@ -5,6 +5,9 @@ import UIKit
 import UIKit.UIGestureRecognizerSubclass
 
 /// Owns the ARView: the AR session, plane coaching, placing the die, gestures and physics.
+/// With AR off (`augmented` false) the same scene sits on a virtual table in a
+/// studio, seen from a fixed camera like the desktop simulator's, and needs
+/// neither a camera nor ARKit.
 /// UI state lives in `ARViewerModel`; this pushes changes back to it.
 ///
 /// The scene, all under one anchor at the spot you tapped:
@@ -22,7 +25,11 @@ import UIKit.UIGestureRecognizerSubclass
 @MainActor
 final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     let arView: ARView
+    /// The camera and the real table (true), or a virtual table in a studio.
+    let augmented: Bool
     private unowned let model: ARViewerModel
+    /// The studio's camera, with AR off.
+    private var studioCamera: PerspectiveCamera?
 
     private let coaching = ARCoachingOverlayView()
     private var placement: AnchorEntity?
@@ -87,9 +94,10 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var lastPanX: CGFloat = 0
     private var pinchStartScale: Float = 1
 
-    init(model: ARViewerModel) {
+    init(model: ARViewerModel, augmented: Bool) {
         self.model = model
-        arView = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
+        self.augmented = augmented
+        arView = ARView(frame: .zero, cameraMode: augmented ? .ar : .nonAR, automaticallyConfigureSession: false)
         super.init()
         arView.renderOptions.formUnion([.disableMotionBlur, .disableDepthOfField])
 
@@ -103,6 +111,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             mode: .static))
         pivot.name = "Die"
 
+        installGestures()
+        guard augmented else { return }
         coaching.session = arView.session
         coaching.goal = .horizontalPlane
         coaching.activatesAutomatically = true
@@ -114,12 +124,19 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             coaching.topAnchor.constraint(equalTo: arView.topAnchor),
             coaching.bottomAnchor.constraint(equalTo: arView.bottomAnchor),
         ])
-        installGestures()
     }
 
     // MARK: Session
 
     func start() {
+        updates = arView.scene.subscribe(to: SceneEvents.Update.self) { [weak self] event in
+            self?.update(dt: event.deltaTime)
+        }
+        guard augmented else {
+            model.sceneDidStart()
+            buildStudio()
+            return
+        }
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal]
         config.environmentTexturing = .automatic
@@ -129,9 +146,6 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
         model.sceneDidStart()
-        updates = arView.scene.subscribe(to: SceneEvents.Update.self) { [weak self] event in
-            self?.update(dt: event.deltaTime)
-        }
     }
 
     func stop() {
@@ -139,13 +153,15 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         dropFirmware()
         updates?.cancel()
         updates = nil
-        arView.session.pause()
+        if augmented { arView.session.pause() }
     }
 
     private func update(dt: TimeInterval) {
-        if model.isCoaching != coaching.isActive { model.isCoaching = coaching.isActive }
-        if !model.planeFound, arView.session.currentFrame?.anchors.contains(where: { $0 is ARPlaneAnchor }) == true {
-            model.planeFound = true
+        if augmented {
+            if model.isCoaching != coaching.isActive { model.isCoaching = coaching.isActive }
+            if !model.planeFound, arView.session.currentFrame?.anchors.contains(where: { $0 is ARPlaneAnchor }) == true {
+                model.planeFound = true
+            }
         }
         time += dt
         if windup != nil { stepWindup() } else if model.isRolling { trackRoll(dt: dt) }
@@ -222,19 +238,25 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     // MARK: Placing
 
     private func place(at point: CGPoint) -> Bool {
+        guard augmented else { return false }  // the studio places the die itself
         let hits = arView.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .horizontal)
         guard let hit = hits.first ?? arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first
         else { return false }
+        place(on: hit.worldTransform)
+        return true
+    }
 
+    /// Puts the table's origin (and the die) at `spot`, a world transform with Y up.
+    private func place(on spot: simd_float4x4) {
         placement?.removeFromParent()
-        let anchor = AnchorEntity(world: hit.worldTransform)
+        let anchor = AnchorEntity(world: spot)
         anchor.addChild(table)
         anchor.addChild(pivot)
         arView.scene.addAnchor(anchor)
         placement = anchor
 
         // Turn the +Z face towards the camera.
-        let toCamera = anchor.convert(position: arView.cameraTransform.translation, from: nil)
+        let toCamera = anchor.convert(position: cameraTransform.translation, from: nil)
         let yaw = atan2(toCamera.x, toCamera.z)
         pivot.transform = Transform(scale: SIMD3(repeating: model.scale), rotation: simd_quatf(angle: yaw, axis: [0, 1, 0]), translation: .zero)
         restTransform = pivot.transform
@@ -242,16 +264,66 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         imu.reset()
         ticks.reset()
         syncFirmware()
-        return true
     }
 
-    /// Takes the die off the table so the next tap places it again.
+    /// Takes the die off the table so the next tap places it again. In the
+    /// studio it goes straight back to the middle of the table.
     func unplace() {
         reset()
+        guard augmented else {
+            place(on: matrix_identity_float4x4)
+            return
+        }
         placement?.removeFromParent()
         placement = nil
         model.isPlaced = false
         syncFirmware()
+    }
+
+    /// Where the view's camera is: the phone in AR, the studio's camera otherwise.
+    private var cameraTransform: Transform {
+        studioCamera.map { Transform(matrix: $0.transformMatrix(relativeTo: nil)) } ?? arView.cameraTransform
+    }
+
+    /// Where a screen point's ray meets the table (y = 0 of the placement), in world space.
+    private func tablePoint(at point: CGPoint) -> SIMD3<Float>? {
+        guard let placement, let ray = arView.ray(through: point) else { return nil }
+        let origin = placement.convert(position: ray.origin, from: nil)
+        let direction = placement.convert(direction: ray.direction, from: nil)
+        guard direction.y < -1e-4 else { return nil }
+        let t = -origin.y / direction.y
+        return placement.convert(position: origin + direction * t, to: nil)
+    }
+
+    // MARK: Studio (AR off)
+
+    /// A dark studio: a matte table, a key light with shadows and a fixed
+    /// camera looking down at the die from the front right, as the desktop
+    /// simulator frames it (SIM_SPEC A5: 32° field of view, from (0.55, 0.62, 1)).
+    private func buildStudio() {
+        arView.environment.background = .color(UIColor(white: 0.07, alpha: 1))
+        let studio = AnchorEntity(world: matrix_identity_float4x4)
+
+        let top = ModelEntity(
+            mesh: .generatePlane(width: 1.2, depth: 1.2, cornerRadius: 0.05),
+            materials: [SimpleMaterial(color: UIColor(white: 0.16, alpha: 1), roughness: 0.85, isMetallic: false)])
+        studio.addChild(top)
+
+        let light = DirectionalLight()
+        light.light.intensity = 2500
+        light.shadow = DirectionalLightComponent.Shadow(maximumDistance: 1.5, depthBias: 2)
+        light.look(at: .zero, from: [0.4, 1.2, 0.6], relativeTo: nil)
+        studio.addChild(light)
+
+        let camera = PerspectiveCamera()
+        camera.camera.fieldOfViewInDegrees = DiePhysics.studioFieldOfView
+        let from = simd_normalize(SIMD3<Float>(0.55, 0.62, 1)) * DiePhysics.studioCameraDistance
+        camera.look(at: [0, 0.02, 0], from: from, relativeTo: nil)
+        studio.addChild(camera)
+        studioCamera = camera
+
+        arView.scene.addAnchor(studio)
+        place(on: matrix_identity_float4x4)
     }
 
     // MARK: Gestures
@@ -309,8 +381,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         case .changed:
             if panMode == .move {
                 // Slide along the table: where the finger meets the plane, in the anchor's space.
-                if let hit = arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first {
-                    let world = SIMD3(hit.worldTransform.columns.3.x, hit.worldTransform.columns.3.y, hit.worldTransform.columns.3.z)
+                if let world = tablePoint(at: point) {
                     let local = placement.convert(position: world, from: nil)
                     dragTarget = SIMD2(local.x, local.z)
                 }
@@ -364,7 +435,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         dragTarget = nil
 
         // Camera right and forward, flattened onto the table, in the anchor's space.
-        let camera = arView.cameraTransform.matrix
+        let camera = cameraTransform.matrix
         let right = flatten(placement.convert(direction: SIMD3(camera.columns.0.x, camera.columns.0.y, camera.columns.0.z), from: nil))
         let forward = flatten(placement.convert(direction: -SIMD3(camera.columns.2.x, camera.columns.2.y, camera.columns.2.z), from: nil))
         var direction = right * Float(screenDirection.dx) - forward * Float(screenDirection.dy)
@@ -574,9 +645,9 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     private var cameraInAnchor: (position: SIMD3<Float>, right: SIMD3<Float>)? {
         guard let placement else { return nil }
-        let camera = arView.cameraTransform.matrix
+        let camera = cameraTransform.matrix
         let right = SIMD3(camera.columns.0.x, camera.columns.0.y, camera.columns.0.z)
-        return (placement.convert(position: arView.cameraTransform.translation, from: nil),
+        return (placement.convert(position: cameraTransform.translation, from: nil),
                 placement.convert(direction: right, from: nil))
     }
 

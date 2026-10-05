@@ -24,7 +24,18 @@ final class ARViewerModel {
     /// library); nil means baked screens only, as in the tests.
     @ObservationIgnored var makeFirmware: DieFirmwareFactory?
 
+    /// AR's own availability (camera access, device support). It doesn't
+    /// matter with AR off.
     var availability = Availability.checking
+
+    /// AR on: the camera and your table. Off: the die on a virtual table, like
+    /// the desktop simulator; it needs no camera and runs anywhere. Remembered.
+    var augmented: Bool {
+        didSet { UserDefaults.standard.set(augmented, forKey: Self.augmentedKey) }
+    }
+    /// Whether this device can do AR at all.
+    let arSupported: Bool
+    private static let augmentedKey = "simulator.augmented"
     let models: [SugarcubeModel]
     private(set) var selected: SugarcubeModel?
     /// The die to go back to when x-ray is switched off.
@@ -70,6 +81,10 @@ final class ARViewerModel {
         self.labels = labels
         models = catalog.available
         selected = models.first { $0.kind == .die } ?? models.first
+        let supported = ARWorldTrackingConfiguration.isSupported
+        let saved = UserDefaults.standard.object(forKey: Self.augmentedKey) as? Bool
+        arSupported = supported
+        augmented = supported && (saved ?? true)
     }
 
     // MARK: Availability
@@ -112,7 +127,7 @@ final class ARViewerModel {
 
     var hint: String? {
         if isCoaching { return nil }
-        if !isPlaced { return planeFound ? "Tap the table to place the die" : "Move your device slowly to find the table" }
+        if augmented, !isPlaced { return planeFound ? "Tap the table to place the die" : "Move your device slowly to find the table" }
         if isHeld { return "Menu: tip it with the turn pad · touch the front face" }
         return nil
     }

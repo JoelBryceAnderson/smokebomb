@@ -46,6 +46,13 @@ enum DiePhysics {
     static let heldMoveTime: TimeInterval = 0.5
     /// Seconds for one quarter turn from the turn pad (a menu tip).
     static let tipTime: TimeInterval = 0.35
+    // The studio, with AR off: the desktop simulator's framing.
+    /// The studio camera's vertical field of view, in degrees.
+    static let studioFieldOfView: Float = 32
+    /// How far the studio camera is from the die, in metres: enough to see a
+    /// throw land inside the corral.
+    static let studioCameraDistance: Float = 0.32
+
     /// Space between the held die's edge and the glass turn pad, in metres.
     static let menuPanelGap: Float = 0.008
     /// How far the pad sits in front of the menu screen's plane, in metres
