@@ -109,6 +109,21 @@ function glove() {
     </g>`;
 }
 
+// The front face's centre line, which the legs and boots mirror about.
+const FACE_X = 490;
+
+function boot(x, y, side) {
+  // A chubby cartoon boot with its ankle at (x, y): a round toe turned
+  // outward (side 1 is the left foot), a pink cuff and a shine on the toe.
+  return `
+    <g transform="translate(${x},${y}) scale(${side},1)" stroke="${C.ink}" stroke-width="10" stroke-linejoin="round">
+      <path class="solid" d="M-18,-6 L18,-6 C20,10 24,22 30,30 C36,40 30,50 16,50 L-46,50
+        C-70,50 -76,26 -58,16 C-46,8 -26,10 -20,4 Z" fill="${C.ink}"/>
+      <ellipse class="cut" cx="-48" cy="26" rx="12" ry="6" fill="#FFFFFF" opacity="0.55" stroke="none" transform="rotate(-18 -48 26)"/>
+      <rect class="solid-w" x="-27" y="-22" width="54" height="26" rx="13" fill="${C.border}" stroke-width="8"/>
+    </g>`;
+}
+
 function hipGlove(x, y) {
   return `
     <g transform="translate(${x},${y})" stroke="${C.ink}" stroke-width="12" stroke-linejoin="round">
@@ -172,15 +187,13 @@ function mascot() {
     </g>`;
   return `
     <g class="mascot">
-      <!-- legs and shoes -->
+      <!-- legs and boots, mirrored about the front face's centre -->
       <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
-        <path d="M440,630 Q430,690 418,724"/>
-        <path d="M545,630 Q560,690 578,724"/>
+        <path d="M${FACE_X - 38},632 Q${FACE_X - 44},672 ${FACE_X - 50},706"/>
+        <path d="M${FACE_X + 38},632 Q${FACE_X + 44},672 ${FACE_X + 50},706"/>
       </g>
-      <ellipse class="solid" cx="398" cy="736" rx="56" ry="26" fill="${C.ink}"/>
-      <ellipse class="solid" cx="602" cy="736" rx="56" ry="26" fill="${C.ink}"/>
-      <ellipse class="cut" cx="380" cy="726" rx="16" ry="7" fill="#FFFFFF" opacity="0.5"/>
-      <ellipse class="cut" cx="620" cy="726" rx="16" ry="7" fill="#FFFFFF" opacity="0.5"/>
+      ${boot(FACE_X - 50, 706, 1)}
+      ${boot(FACE_X + 50, 706, -1)}
       <!-- the cube -->
       <path class="solid-w" d="${side}" fill="${C.sugarSide}"/>
       <path class="solid-w" d="${top}" fill="${C.sugarTop}"/>
