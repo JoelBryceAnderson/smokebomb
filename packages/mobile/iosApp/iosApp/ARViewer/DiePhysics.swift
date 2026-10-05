@@ -46,6 +46,36 @@ enum DiePhysics {
     static let heldMoveTime: TimeInterval = 0.5
     /// Seconds for one quarter turn from the turn pad (a menu tip).
     static let tipTime: TimeInterval = 0.35
+    // The studio, with AR off: the desktop simulator's framing.
+    /// The studio camera's vertical field of view, in degrees.
+    static let studioFieldOfView: Float = 32
+    /// Where the studio camera starts, in metres from the die; it then frames
+    /// the die (`studioDieFraming`) to fit the view.
+    static let studioCameraDistance: Float = 0.2
+    /// Locked in place (AR off), the windup lifts the die only this far, in
+    /// metres, so it stays in the studio's close frame. The push still reads
+    /// as a pick-up (about 0.1 g).
+    static let lockedWindupLift: Float = 0.015
+    /// …and the roll goes straight up this fast, in m/s: about 2 cm at the
+    /// top, ~5 ticks in the air (free fall), landing at 2.8–4.7 g (an impact).
+    static let lockedTossLift: Float = 0.25
+    /// …and lands inside walls this many die sides from its centre: room to
+    /// tumble over an edge, not to wander off.
+    static let lockedCorralFactor: Float = 1.4
+    /// …and once it has come to rest, it slides back to its spot no harder
+    /// than this (m/s²): about 0.04 g, under the firmware's 80 mg "still"
+    /// band, so the reveal isn't cut short.
+    static let lockedReturnAcceleration: Float = 0.4
+    /// In the studio the die is lifted less for the menu, in metres.
+    static let studioHeldHeight: Float = 0.025
+    /// The studio camera frames what matters (the die and its toss ring, or
+    /// the held die and its turn pad) with this much margin.
+    static let studioFramingMargin: Float = 1.15
+    /// On the table, the studio frames this many die sides either side of its centre.
+    static let studioDieFraming: Float = 1.1
+    /// Seconds for the studio camera to reframe.
+    static let studioReframeTime: TimeInterval = 0.5
+
     /// Space between the held die's edge and the glass turn pad, in metres.
     static let menuPanelGap: Float = 0.008
     /// How far the pad sits in front of the menu screen's plane, in metres
@@ -93,9 +123,9 @@ enum DiePhysics {
 
     /// The die's offset from its spot and its rocking, `t` seconds into the
     /// windup: an eased lift, then a shake that starts from rest (1 − cos).
-    static func windup(at t: TimeInterval) -> (offset: SIMD3<Float>, rock: simd_quatf) {
+    static func windup(at t: TimeInterval, lift: Float = windupLift) -> (offset: SIMD3<Float>, rock: simd_quatf) {
         let u = Float(min(max(t / windupLiftTime, 0), 1))
-        var offset = SIMD3<Float>(0, windupLift * u * u * (3 - 2 * u), 0)
+        var offset = SIMD3<Float>(0, lift * u * u * (3 - 2 * u), 0)
         var rock = simd_quatf(angle: 0, axis: [0, 1, 0])
         if t > windupLiftTime {
             let ts = Float(t - windupLiftTime)

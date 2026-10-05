@@ -271,3 +271,69 @@ fn a_long_press_opens_the_menu_and_names_its_front() {
     let front = unsafe { sb_die_menu_front(&die) };
     assert!((0..6).contains(&front), "menu front is {front}");
 }
+
+/// AR off: the die locked in place. A small windup (1.5 cm) and a toss
+/// straight up (0.25 m/s) still read as a roll: picked up, shaken, airborne
+/// for a few ticks, a hard landing.
+#[test]
+fn the_locked_in_place_toss_reads_as_a_roll() {
+    const DT: f32 = 1.0 / 60.0;
+    const G: f32 = 9.80665;
+    let windup = |t: f32| -> [f32; 3] {
+        let u = (t / 0.3).clamp(0.0, 1.0);
+        let mut p = [0.0, 0.015 * u * u * (3.0 - 2.0 * u), 0.0];
+        if t > 0.3 {
+            let ts = t - 0.3;
+            let amp = [0.0075, 0.002, 0.0057];
+            let freq = [6.5, 7.0, 7.5];
+            for i in 0..3 {
+                p[i] += amp[i] * (1.0 - (std::f32::consts::TAU * freq[i] * ts).cos());
+            }
+        }
+        p
+    };
+    let mut path: Vec<[f32; 3]> = vec![[0.0; 3]; 30];
+    for k in 0..48 {
+        path.push(windup(k as f32 * DT));
+    }
+    let mut p = *path.last().unwrap();
+    let mut vy = 0.25_f32;
+    loop {
+        vy -= G * DT;
+        p[1] += vy * DT;
+        if p[1] <= 0.0 {
+            p[1] = 0.0;
+            break;
+        }
+        path.push(p);
+    }
+    for _ in 0..61 {
+        path.push(p);
+    }
+    for panel in [SB_PANEL_GREY96, SB_PANEL_RGB64] {
+        let mut die = SbDie::new(panel).unwrap();
+        run(&mut die, UP_Y, 8.0);
+        let mut saw_airborne = false;
+        for k in 0..path.len() {
+            let mut accel = [0.0, 1000.0, 0.0];
+            if k >= 2 {
+                for i in 0..3 {
+                    accel[i] += (path[k][i] - 2.0 * path[k - 1][i] + path[k - 2][i]) / (DT * DT) / G * 1000.0;
+                }
+            }
+            let reading = SbImu {
+                accel_mg: accel.map(|a| a.round().clamp(-32768.0, 32767.0) as i16),
+                gyro_mdps: [0; 3],
+            };
+            die.tick(reading.into(), 0);
+            saw_airborne |= die.mode() == "Airborne";
+        }
+        run(&mut die, UP_Y, 1.5);
+        assert!(saw_airborne, "panel {panel}: the toss reads as airborne");
+        assert!(
+            die.mode().starts_with("Reveal"),
+            "panel {panel}: mode is {}",
+            die.mode()
+        );
+    }
+}

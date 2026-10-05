@@ -65,6 +65,19 @@ final class FirmwareLoopTests: XCTestCase {
         XCTAssertGreaterThan(mags.filter { abs($0 - 1000) > 700 }.count, 3, "the shake reads as shaking")
     }
 
+    func testTheLockedWindupStillReadsAsAPickUpAndAShake() {
+        let total = DiePhysics.windupLiftTime + DiePhysics.windupShakeTime
+        let poses = stride(from: 0.0, through: total, by: 1.0 / ImuSynth.tickHz).map { t in
+            let (offset, rock) = DiePhysics.windup(at: t, lift: DiePhysics.lockedWindupLift)
+            return DiePose(position: offset, orientation: rock)
+        }
+        let mags = readings(poses).dropFirst(2).map(magnitude)
+        XCTAssertGreaterThan(mags.min()!, 350)
+        XCTAssertLessThan(mags.max()!, 2500)
+        XCTAssertTrue(mags.prefix(15).contains { abs($0 - 1000) > 80 }, "the lift reads as handled")
+        XCTAssertGreaterThan(mags.filter { abs($0 - 1000) > 700 }.count, 3, "the shake reads as shaking")
+    }
+
     // MARK: TickClock
 
     func testTicksAtSixtyHertzWhateverTheFrameRate() {
