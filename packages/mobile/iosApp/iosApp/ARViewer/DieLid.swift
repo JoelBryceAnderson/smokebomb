@@ -263,6 +263,57 @@ final class DieLid {
         }
     }
 
+    /// A screw's collision shapes, from its own vertices, in its own frame:
+    /// a hull round the head and one round the shank, so it lies on the
+    /// table as a screw does (tipped onto its head) and rolls like one.
+    /// The head is at least 0.3 mm thick (at 30 mm), down to where the
+    /// shank starts: the dice model only the head's top.
+    func collisionShapes(of screw: Entity) -> [ShapeResource] {
+        var points: [SIMD3<Float>] = []
+        func collect(_ entity: Entity) {
+            if let model = entity.components[ModelComponent.self] {
+                let toScrew = entity.transformMatrix(relativeTo: screw)
+                let contents = model.mesh.contents
+                for instance in contents.instances {
+                    guard let source = contents.models[instance.model] else { continue }
+                    let matrix = toScrew * instance.transform
+                    for part in source.parts {
+                        for p in part.positions.elements {
+                            let q = matrix * SIMD4(p, 1)
+                            points.append(SIMD3(q.x, q.y, q.z))
+                        }
+                    }
+                }
+            }
+            for child in entity.children { collect(child) }
+        }
+        collect(screw)
+        let parts = Self.headAndShank(points, minHeadThickness: 0.0003 * geometry.side / 0.030)
+        return [parts.head, parts.shank].filter { $0.count >= 4 }.map { ShapeResource.generateConvex(from: $0) }
+    }
+
+    /// Splits a screw's points (Y along it, into the die) into its head and
+    /// its shank: the head runs down to the last point near its full
+    /// radius; the shank is what's narrower below that. A head flatter than
+    /// `minHeadThickness` is given that depth. Points within 0.02 mm of one
+    /// another count once, so a threaded x-ray screw makes a light hull.
+    nonisolated static func headAndShank(_ points: [SIMD3<Float>], minHeadThickness: Float) -> (head: [SIMD3<Float>], shank: [SIMD3<Float>]) {
+        let grid: Float = 0.00002
+        var seen = Set<SIMD3<Int32>>()
+        let unique = points.filter { seen.insert(SIMD3<Int32>($0 / grid, rule: .toNearestOrAwayFromZero)).inserted }
+        let radius = { (p: SIMD3<Float>) -> Float in simd_length(SIMD2(p.x, p.z)) }
+        guard let widest = unique.map(radius).max(), widest > 0, let top = unique.map(\.y).min() else { return ([], []) }
+        let wide = widest * 0.75
+        var bottom = unique.filter { radius($0) > wide }.map(\.y).max() ?? top
+        var head = unique.filter { $0.y <= bottom + grid }
+        if bottom - top < minHeadThickness {
+            bottom = top + minHeadThickness
+            head += head.map { SIMD3($0.x, bottom, $0.z) }
+        }
+        let shank = unique.filter { $0.y > bottom - grid && radius($0) < wide }
+        return (head, shank)
+    }
+
     private static func firstMaterial(_ entity: Entity) -> (any Material)? {
         if let material = entity.components[ModelComponent.self]?.materials.first { return material }
         for child in entity.children {

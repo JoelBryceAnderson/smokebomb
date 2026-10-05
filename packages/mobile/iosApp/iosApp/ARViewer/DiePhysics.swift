@@ -92,6 +92,20 @@ enum DiePhysics {
     /// die's centre (toward you), this many die sides apart.
     static let screwRowDistance: Float = 0.95
     static let screwSpacing: Float = 0.22
+    /// Laid out, the screws are loose on the table: steel, a gram (heavier
+    /// than an M1 screw's few hundredths, which the solver keeps steadier),
+    /// damped so a knock sends them a few centimetres, not off the table.
+    static let screwMass: Float = 0.001
+    static let screwStaticFriction: Float = 0.4
+    static let screwDynamicFriction: Float = 0.3
+    static let screwRestitution: Float = 0.2
+    static let screwLinearDamping: Float = 0.6
+    static let screwAngularDamping: Float = 0.8
+    /// A flick on a loose screw: how near the finger has to start, in view
+    /// points, and how fast it's sent (m/s at true size, from a slow to a
+    /// full-speed flick).
+    static let screwTouchRadius: CGFloat = 36
+    static let screwFlickSpeed: ClosedRange<Float> = 0.05...0.35
 
     /// Space between the held die's edge and the glass turn pad, in metres.
     static let menuPanelGap: Float = 0.008
@@ -157,6 +171,12 @@ enum DiePhysics {
     static func throwSpeed(forFlick pointsPerSecond: CGFloat) -> Float {
         let t = Float(min(max(pointsPerSecond / flickForFullSpeed, 0), 1))
         return throwSpeed.lowerBound + (throwSpeed.upperBound - throwSpeed.lowerBound) * t
+    }
+
+    /// How fast a flick sends a loose screw, by the flick's speed in view points per second.
+    static func screwSpeed(forFlick pointsPerSecond: CGFloat) -> Float {
+        let t = Float(min(max(pointsPerSecond / flickForFullSpeed, 0), 1))
+        return screwFlickSpeed.lowerBound + (screwFlickSpeed.upperBound - screwFlickSpeed.lowerBound) * t
     }
 }
 

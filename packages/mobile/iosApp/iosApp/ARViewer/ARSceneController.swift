@@ -98,10 +98,16 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         var screwAxis: SIMD3<Float> = [0, 1, 0]
         /// When this step ends the lid is on and the die whole again.
         var finishesClosing = false
+        /// When this step ends the screws are on the table, loose.
+        var loosensScrews = false
     }
     /// What's left of the lid coming off or going on; the first is under way.
     private var lidSteps: [LidStep] = []
     private var lidStepStart: TimeInterval = 0
+    /// The screws are loose on the table (dynamic bodies), to be knocked about.
+    private var screwsLoose = false
+    /// Where the loose screws were laid, to go back to if one falls off the table.
+    private var screwHomes: [Transform] = []
     /// A die's x-ray, loaded for its insides: the die's own model has none,
     /// so the x-ray's are shown while the lid is off.
     private var borrowedInternals: (id: String, entity: Entity)?
@@ -130,6 +136,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var panOnDie = false
     /// The drag or twist started on the lid (with it off): it turns or moves the lid.
     private var panOnLid = false
+    /// The drag started on a loose screw: a flick sends it across the table.
+    private var panScrew: Entity?
     private var twistOnLid = false
     /// Where the finger took hold of the lid, from its origin, on the table (AR).
     private var lidGrab: SIMD2<Float>?
@@ -218,6 +226,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             beginLidOff()
         }
         stepLid()
+        if screwsLoose { recoverLostScrews() }
         stepDrag(dt: Float(dt))
         if firmware != nil { stepFirmware() }
     }
@@ -469,6 +478,13 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let point = g.location(in: arView)
         switch g.state {
         case .began:
+            panScrew = screw(near: point)
+            if panScrew != nil {
+                panOnLid = false
+                panOnDie = false
+                panMode = nil
+                return
+            }
             let ray = arView.ray(through: point)
             panOnLid = ray.map { lidIsNearest(origin: $0.origin, direction: $0.direction) } ?? false
             let onDie = !panOnLid && (ray.map { rig.contains(origin: $0.origin, direction: $0.direction) } ?? false)
@@ -481,6 +497,12 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
                 let local = placement.convert(position: world, from: nil)
                 lidGrab = SIMD2(lid.root.position.x - local.x, lid.root.position.z - local.z)
             }
+        case .changed where panScrew != nil:
+            break
+        case .ended where panScrew != nil:
+            let v = g.velocity(in: arView)
+            if let screw = panScrew { flick(screw, screenVelocity: CGVector(dx: v.x, dy: v.y)) }
+            panScrew = nil
         case .changed where panOnLid:
             if let grab = lidGrab, let lid, let world = tablePoint(at: point) {
                 // AR: slide the lid along the table.
@@ -520,6 +542,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         default:
             panMode = nil
             panOnLid = false
+            panScrew = nil
         }
     }
 
@@ -563,14 +586,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         if model.explode > 0 { model.explode = 0 }
         dragTarget = nil
 
-        // Camera right and forward, flattened onto the table, in the anchor's space.
-        let camera = cameraTransform.matrix
-        let right = flatten(placement.convert(direction: SIMD3(camera.columns.0.x, camera.columns.0.y, camera.columns.0.z), from: nil))
-        let forward = flatten(placement.convert(direction: -SIMD3(camera.columns.2.x, camera.columns.2.y, camera.columns.2.z), from: nil))
-        var direction = right * Float(screenDirection.dx) - forward * Float(screenDirection.dy)
-        if simd_length(direction) < 1e-4 { direction = forward }
-        direction = simd_normalize(direction)
-
+        let direction = tableDirection(screenDirection, in: placement)
         let speed = DiePhysics.throwSpeed(forFlick: flickSpeed)
         let rollAxis = simd_normalize(simd_cross([0, 1, 0], direction))
         let spin = Float.random(in: DiePhysics.throwSpin)
@@ -660,6 +676,17 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         guard var body = pivot.components[PhysicsBodyComponent.self] else { return }
         body.mode = mode
         pivot.components.set(body)
+    }
+
+    /// A direction on screen (right, down), as seen on the table from the
+    /// camera, in the anchor's space.
+    private func tableDirection(_ screen: CGVector, in placement: Entity) -> SIMD3<Float> {
+        // Camera right and forward, flattened onto the table.
+        let camera = cameraTransform.matrix
+        let right = flatten(placement.convert(direction: SIMD3(camera.columns.0.x, camera.columns.0.y, camera.columns.0.z), from: nil))
+        let forward = flatten(placement.convert(direction: -SIMD3(camera.columns.2.x, camera.columns.2.y, camera.columns.2.z), from: nil))
+        let direction = right * Float(screen.dx) - forward * Float(screen.dy)
+        return simd_length(direction) < 1e-4 ? forward : simd_normalize(direction)
     }
 
     private func flatten(_ v: SIMD3<Float>) -> SIMD3<Float> {
@@ -1001,7 +1028,9 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             glide(to: SIMD3(c.x, halfHeight, c.z), rotation: Self.lidUp(pivot.orientation),
                   duration: DiePhysics.heldMoveTime, easeOut: false)
         } else if let lid {
-            // The lid back on, then the screws back over their holes and in.
+            // The lid back on, then the screws back over their holes and in,
+            // from wherever they were knocked to.
+            pinScrews()
             let laid = lid.screws.map(\.transform)
             let seated = seatedScrews(lid)
             let out = pivot.orientation.act([0, -1, 0])
@@ -1094,7 +1123,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         lidSteps = [
             LidStep(duration: DiePhysics.screwTime, screws: zip(seated, backedOut).map { (from: $0, to: $1) },
                     turns: -DiePhysics.screwTurns, screwAxis: out),
-            LidStep(duration: DiePhysics.screwLayTime, screws: zip(backedOut, laid).map { (from: $0, to: $1) }),
+            LidStep(duration: DiePhysics.screwLayTime, screws: zip(backedOut, laid).map { (from: $0, to: $1) },
+                    loosensScrews: true),
             LidStep(duration: DiePhysics.lidMoveTime, lid: (from: from, to: to, swing: axis)),
         ]
         lidStepStart = time
@@ -1147,6 +1177,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         guard u >= 1 else { return }
         lidSteps.removeFirst()
         lidStepStart = time
+        if step.loosensScrews { loosenScrews() }
         if step.finishesClosing { finishLidOn() }
     }
 
@@ -1168,11 +1199,17 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         else { return false }
         placement.addChild(cut.root, preservingWorldTransform: true)
         for screw in cut.screws { placement.addChild(screw, preservingWorldTransform: true) }
+        // Kinematic, so sliding or turning it knocks the screws about.
+        let bounds = cut.root.visualBounds(relativeTo: cut.root)
+        let shape = ShapeResource.generateBox(size: bounds.extents).offsetBy(translation: bounds.center)
+        cut.root.components.set(CollisionComponent(shapes: [shape]))
+        cut.root.components.set(PhysicsBodyComponent(shapes: [shape], mass: 0, mode: .kinematic))
+        lid = cut
         if let pose {
             cut.root.transform = pose.lid
             for (screw, t) in zip(cut.screws, pose.screws) { screw.transform = t }
+            loosenScrews()
         }
-        lid = cut
         return true
     }
 
@@ -1203,6 +1240,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private func closeLidNow() {
         lidOpening = false
         lidSteps = []
+        screwsLoose = false
         lid?.restore()
         lid = nil
         if model.isLidOff { model.lidDidChange(off: false) }
@@ -1217,11 +1255,81 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         let at = lidSteps.isEmpty ? lidPose(lid) : nil
         lidSteps = []
+        screwsLoose = false
         self.lid?.restore()
         self.lid = nil
         body()
         if let at, detachLid(at: at) { return }
         closeLidNow()
+    }
+
+    // MARK: Loose screws
+
+    /// Lets the laid-out screws go: each a dynamic body shaped like itself,
+    /// lying on the table where it was put, for the die, the lid or a
+    /// finger to knock about.
+    private func loosenScrews() {
+        guard let lid else { return }
+        let material = PhysicsMaterialResource.generate(staticFriction: DiePhysics.screwStaticFriction,
+                                                        dynamicFriction: DiePhysics.screwDynamicFriction,
+                                                        restitution: DiePhysics.screwRestitution)
+        for screw in lid.screws {
+            let shapes = lid.collisionShapes(of: screw)
+            guard !shapes.isEmpty else { continue }
+            screw.components.set(CollisionComponent(shapes: shapes))
+            var body = PhysicsBodyComponent(shapes: shapes, mass: DiePhysics.screwMass, material: material, mode: .dynamic)
+            body.isContinuousCollisionDetectionEnabled = true
+            body.linearDamping = DiePhysics.screwLinearDamping
+            body.angularDamping = DiePhysics.screwAngularDamping
+            screw.components.set(body)
+            screw.components.set(PhysicsMotionComponent())
+        }
+        screwHomes = lid.screws.map(\.transform)
+        screwsLoose = true
+    }
+
+    /// Holds the screws still again, to be carried back to the die.
+    private func pinScrews() {
+        screwsLoose = false
+        for screw in lid?.screws ?? [] {
+            screw.components.remove(PhysicsMotionComponent.self)
+            screw.components.remove(PhysicsBodyComponent.self)
+            screw.components.remove(CollisionComponent.self)
+        }
+    }
+
+    /// A screw knocked off the table goes back where it was laid.
+    private func recoverLostScrews() {
+        guard let lid else { return }
+        for (screw, home) in zip(lid.screws, screwHomes) where screw.position.y < DiePhysics.lostBelow {
+            screw.transform = home
+            screw.components.set(PhysicsMotionComponent())
+        }
+    }
+
+    /// The loose screw nearest a point in the view, if one is close enough to touch.
+    private func screw(near point: CGPoint) -> Entity? {
+        guard screwsLoose, let lid else { return nil }
+        let near = lid.screws.compactMap { screw -> (Entity, CGFloat)? in
+            guard let p = arView.project(screw.visualBounds(relativeTo: nil).center) else { return nil }
+            return (screw, hypot(p.x - point.x, p.y - point.y))
+        }.min { $0.1 < $1.1 }
+        guard let near, near.1 <= DiePhysics.screwTouchRadius else { return nil }
+        return near.0
+    }
+
+    /// Sends a loose screw across the table the way the finger flicked,
+    /// tumbling about the axis it would roll on.
+    private func flick(_ screw: Entity, screenVelocity v: CGVector) {
+        guard screwsLoose, let placement else { return }
+        let flickSpeed = hypot(v.dx, v.dy)
+        guard flickSpeed > 1 else { return }
+        let direction = tableDirection(v, in: placement)
+        let speed = DiePhysics.screwSpeed(forFlick: flickSpeed) * pivot.scale.x
+        let roll = simd_normalize(simd_cross([0, 1, 0], direction))
+        screw.components.set(PhysicsMotionComponent(linearVelocity: direction * speed + [0, speed * 0.2, 0],
+                                                    angularVelocity: roll * speed * 100))
+        lightHaptic.impactOccurred()
     }
 
     /// Whether a world-space ray meets the lid before the cup.

@@ -132,6 +132,28 @@ final class ViewerLogicTests: XCTestCase {
 
     // MARK: Catalog
 
+    func testScrewSplitsIntoHeadAndShank() {
+        // A 1.7 mm head flush at the top, a 1 mm shank down 4.5 mm.
+        func ring(_ r: Float, y: Float) -> [SIMD3<Float>] {
+            (0..<12).map { i in
+                let a = Float(i) * .pi / 6
+                return [r * cos(a), y, r * sin(a)]
+            }
+        }
+        let head = ring(0.00085, y: 0) + ring(0.00085, y: 0.0003)
+        let shank = ring(0.0005, y: 0.0003) + ring(0.0005, y: 0.0045)
+        let split = DieLid.headAndShank(head + shank, minHeadThickness: 0.0003)
+        XCTAssertEqual(split.head.map(\.y).max() ?? 0, 0.0003, accuracy: 1e-6)
+        XCTAssertTrue(split.shank.allSatisfy { simd_length(SIMD2($0.x, $0.z)) < 0.0006 })
+        XCTAssertEqual(split.shank.map(\.y).max() ?? 0, 0.0045, accuracy: 1e-6)
+
+        // Only the head's top modelled: it's given its depth.
+        let flat = DieLid.headAndShank(ring(0.00085, y: 0) + shank, minHeadThickness: 0.0003)
+        XCTAssertEqual(flat.head.count, 24)
+        XCTAssertEqual(flat.head.map(\.y).max() ?? 0, 0.0003, accuracy: 1e-6)
+        XCTAssertEqual(flat.shank.count, 24)
+    }
+
     func testCaptions() {
         let rainbow = ModelCatalog.all.first { $0.id == "sugarcube_30_rainbow" }
         XCTAssertEqual(rainbow.map { "\($0.title) · \($0.sizeLabel)" }, "30 mm · Rainbow · 30.0 mm")

@@ -295,6 +295,13 @@ While it's off:
   toward you (studio); along the table (AR). A twist on it turns it either way.
   It always settles back onto the table.
 - Drag the cup to turn it, as before.
+- The screws are loose on the table: each is a dynamic body with a hull
+  round its head and one round its shank, taken from its own vertices
+  (`DieLid.collisionShapes(of:)`), so it lies tipped onto its head and rolls
+  like a screw. The cup and the lid are kinematic, so sliding or turning
+  either knocks them about, and a flick that starts on a screw sends it across
+  the table. Masses, friction and damping are the `screw*` constants in
+  `DiePhysics.swift`. **Lid on** picks them up from wherever they ended up.
 - The lid's screen still runs: touch it to touch −Y. The cup's open end has no
   screen.
 - Rolling, the menu's pick-up and explode wait until the lid is back on.

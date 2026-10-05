@@ -86,6 +86,9 @@ final class DieRigTests: XCTestCase {
         XCTAssertEqual(lid.screws.count, 4)
         XCTAssertTrue(lid.screws.allSatisfy { $0.children.count == 1 })
         XCTAssertNil(lid.root.findEntity(named: "Screw_0"), "the screws aren't the lid's")
+        // Each screw gets a shape to collide with, loose on the table (the
+        // fixture's are bare heads, so just the one).
+        XCTAssertTrue(lid.screws.allSatisfy { !lid.collisionShapes(of: $0).isEmpty })
         XCTAssertLessThan(simd_distance(screen.position(relativeTo: pivot), before), 1e-6, "nothing moves until the lid does")
 
         lid.root.position = [0.05, 0, 0]
