@@ -167,6 +167,29 @@ many of its die shells have an `Etching`. It warns about any that don't.
 - To check files that are already bundled without rewriting them, add `--check-only`.
 - The exit status is 1 if any file has errors.
 
+### The 30 mm screens: no pinwheel
+
+Since 4 Oct the 30 mm die's screens aren't pinwheeled
+(`sugarcube-assembly.html`, `FACES`): the four side screens' ribbons point
+down, toward the lid; the top screen's points to +X, down the harness
+channel; the lid screen's to −Z. The firmware turns each panel's picture to
+suit (`Rgb64::MOUNT` in `packages/firmware/hal/src/target.rs`), so what the
+glass shows is unchanged.
+
+`scripts/unpinwheel_30.py` brought the 30 mm x-rays (assembled and exploded)
+up to date without a re-export. It turns each face's module (panel glass,
+encapsulation, driver chip, ribbon) about its face's axis to its new ribbon
+direction, and rebuilds the screen harness (`Internal_w_spi_*`): from each
+ribbon's end in to the wall, round a ring just above the board to its
+connector on the +X side. A fresh export from the model generator replaces
+both.
+
+```sh
+python3 unpinwheel_30.py ../iosApp/Resources/Models/sugarcube_30_xray.usdz \
+    ../iosApp/Resources/Models/sugarcube_30_xray_exploded.usdz --out /tmp/unpinwheeled
+python3 convert_usdz.py --check-only /tmp/unpinwheeled/*.usdz
+```
+
 ## Adding a model
 
 1. Export it real-size, with 1 unit = 1 m, Y up, the origin at the bottom
