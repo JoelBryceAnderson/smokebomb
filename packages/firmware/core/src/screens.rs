@@ -6,7 +6,7 @@ use core::fmt::Write as _;
 
 use heapless::{String, Vec};
 use libm::{cosf, fabsf, floorf, powf, roundf, sinf, sqrtf};
-use smokebomb_hal::{AssetStore, Grey96, Target};
+use smokebomb_hal::{AssetStore, Color, Grey96, Target};
 use smokebomb_shared::types::MAX_POT_DICE;
 use smokebomb_shared::{DieKind, PotFace, RollRecord};
 
@@ -103,7 +103,37 @@ const PIP_GRID: f32 = ACTIVE * 0.46;
 const PIP_RADIUS: f32 = ACTIVE * 0.15;
 const PIP_GLOW: f32 = 10.0;
 
-fn draw_pips<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, from: u8, to: u8, t: f32, alpha: f32, scale: f32) {
+/// The boot's colours: all one grey on the 96×96 die; the 64×64 colour
+/// panel plays the same animation in its palette.
+#[derive(Clone, Copy)]
+pub struct BootInk {
+    /// The pips and the sugar cube.
+    pub pips: Color,
+    /// The crystals the cube dissolves into.
+    pub crystals: Color,
+    /// The wordmark.
+    pub word: Color,
+    /// The glint that rides the pen and twinkles on the last letter.
+    pub glint: Color,
+}
+
+const GREY_INK: BootInk = BootInk {
+    pips: Color::grey(FG),
+    crystals: Color::grey(FG),
+    word: Color::grey(FG),
+    glint: Color::grey(FG),
+};
+
+#[allow(clippy::too_many_arguments)]
+fn draw_pips<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    from: u8,
+    to: u8,
+    t: f32,
+    alpha: f32,
+    scale: f32,
+    ink: Color,
+) {
     let (a, b) = (pips(from), pips(to));
     let e = smoothstep(t);
     for i in 0..a.len().max(b.len()) {
@@ -117,7 +147,7 @@ fn draw_pips<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, from: u8, to: u8, t: f
         }
         let x = (pa.0 + (pb.0 - pa.0) * e) * PIP_GRID;
         let y = (pa.1 + (pb.1 - pa.1) * e) * PIP_GRID;
-        let style = Style::new(FG, alpha * (sc * 1.5).min(1.0), PIP_GLOW);
+        let style = Style::color(ink, alpha * (sc * 1.5).min(1.0), PIP_GLOW);
         c.painter.fill_circle(x, y, PIP_RADIUS * sc, style);
     }
 }
@@ -125,13 +155,24 @@ fn draw_pips<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, from: u8, to: u8, t: f
 /// One face of the boot animation. `t` is seconds since boot, `index` the
 /// face index, `top` whether this face was on top when boot started.
 pub fn draw_boot<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, index: usize, top: bool, t: f32) {
+    draw_boot_in(c, index, top, t, GREY_INK);
+}
+
+/// [`draw_boot`] in the colours of `ink`.
+pub fn draw_boot_in<A: AssetStore, T: Target>(
+    c: &mut Ctx<A, T>,
+    index: usize,
+    top: bool,
+    t: f32,
+    ink: BootInk,
+) {
     // A slight stagger around the cube.
     let t = t - if top { 0.0 } else { index as f32 * 0.05 };
     if t < 0.0 {
         return;
     }
     if top && t >= LOOP_END {
-        draw_boot_finale(c, t - LOOP_END);
+        draw_boot_finale(c, t - LOOP_END, ink);
         return;
     }
     // The top face starts on 6 so the loop lands it on 5.
@@ -141,7 +182,7 @@ pub fn draw_boot<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, index: usize, top:
     let steps_t = t - 0.25;
     let fade = ((steps_t - BOOT_STEP * BOOT_STEPS as f32) / BOOT_FADE).clamp(0.0, 1.0);
     if steps_t < 0.0 {
-        draw_pips(c, v0, v0, 0.0, appear, appear);
+        draw_pips(c, v0, v0, 0.0, appear, appear, ink.pips);
         return;
     }
     let k = (floorf(steps_t / BOOT_STEP) as u32).min(BOOT_STEPS);
@@ -153,27 +194,27 @@ pub fn draw_boot<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, index: usize, top:
     let from = val(k.min(BOOT_STEPS - 1));
     let to = val((k + 1).min(BOOT_STEPS));
     let from = if k >= BOOT_STEPS { to } else { from };
-    draw_pips(c, from, to, local, 1.0 - fade, 1.0 - 0.6 * fade);
+    draw_pips(c, from, to, local, 1.0 - fade, 1.0 - 0.6 * fade, ink.pips);
 }
 
 /// Top face after the loop: the corner pips shoot outward, the centre pip
 /// squares up into a sugar cube, wiggles and dissolves into glittering
 /// crystals, and the name writes itself on in script with a sparkle.
-fn draw_boot_finale<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, u: f32) {
+fn draw_boot_finale<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, u: f32, ink: BootInk) {
     if u < 0.35 {
         let e = powf(u / 0.35, 2.0);
         let d = PIP_GRID * (1.0 + 1.4 * e);
-        let style = Style::new(FG, 1.0 - e, PIP_GLOW);
+        let style = Style::color(ink.pips, 1.0 - e, PIP_GLOW);
         for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
             c.painter
                 .fill_circle(x * d, y * d, PIP_RADIUS * (1.0 - 0.4 * e), style);
         }
     }
     if u < DISSOLVE_AT + 0.2 {
-        draw_sugar_cube(c, u);
+        draw_sugar_cube(c, u, ink.pips);
     }
     if u > DISSOLVE_AT {
-        draw_crystals(c, u - DISSOLVE_AT);
+        draw_crystals(c, u - DISSOLVE_AT, ink.crystals);
     }
     let out = if u < 3.8 {
         1.0
@@ -182,12 +223,26 @@ fn draw_boot_finale<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, u: f32) {
     };
     let reveal = smoothstep(((u - 1.15) / 0.95).clamp(0.0, 1.0));
     if reveal > 0.0 && out > 0.0 {
-        c.script(WORDMARK, 0.0, 0.0, WORDMARK_PX, reveal, Style::new(FG, out, 14.0));
+        c.script(
+            WORDMARK,
+            0.0,
+            0.0,
+            WORDMARK_PX,
+            reveal,
+            Style::color(ink.word, out, 14.0),
+        );
         let width = c.fonts.measure_in(c.assets, SCRIPT, WORDMARK, WORDMARK_PX);
         // A glint rides the pen, then twinkles once on the last letter.
         let pen = -width / 2.0 + width * reveal;
         if reveal < 1.0 {
-            draw_sparkle(c, pen, -6.0, 5.0 * sinf(reveal * core::f32::consts::PI), out);
+            draw_sparkle(
+                c,
+                pen,
+                -6.0,
+                5.0 * sinf(reveal * core::f32::consts::PI),
+                out,
+                ink.glint,
+            );
         }
         let tw = (u - 2.25) / 0.5;
         if (0.0..1.0).contains(&tw) {
@@ -197,6 +252,7 @@ fn draw_boot_finale<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, u: f32) {
                 -24.0,
                 9.0 * sinf(tw * core::f32::consts::PI),
                 out,
+                ink.glint,
             );
         }
     }
@@ -204,7 +260,7 @@ fn draw_boot_finale<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, u: f32) {
 
 /// The centre pip becomes a sugar cube: a circle whose corners square up
 /// with a little bounce, a wiggle, then it shrinks away as it dissolves.
-fn draw_sugar_cube<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, u: f32) {
+fn draw_sugar_cube<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, u: f32, ink: Color) {
     let square = smoothstep((u / 0.4).min(1.0));
     let bounce = 1.0 + 0.18 * sinf((u / 0.4).min(1.0) * core::f32::consts::PI);
     let dissolve = ((u - DISSOLVE_AT) / 0.2).clamp(0.0, 1.0);
@@ -221,7 +277,7 @@ fn draw_sugar_cube<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, u: f32) {
     };
     let (sn, cs) = (sinf(wiggle), cosf(wiggle));
     let e = half * 1.5;
-    let style = Style::new(FG, 1.0 - dissolve, PIP_GLOW);
+    let style = Style::color(ink, 1.0 - dissolve, PIP_GLOW);
     c.painter.shape((-e, -e, e, e), style, |x, y| {
         let (rx, ry) = (x * cs + y * sn, -x * sn + y * cs);
         rounded_box(rx, ry, half, round)
@@ -238,7 +294,7 @@ fn rounded_box(x: f32, y: f32, half: f32, r: f32) -> f32 {
 /// Sugar crystals thrown out as the cube dissolves: little tumbling squares
 /// that drift outward, slow down, twinkle and fade. `v` is seconds since
 /// the dissolve.
-fn draw_crystals<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, v: f32) {
+fn draw_crystals<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, v: f32, ink: Color) {
     const N: usize = 14;
     const LIFE: f32 = 1.5;
     if v >= LIFE {
@@ -263,7 +319,7 @@ fn draw_crystals<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, v: f32) {
     let alpha = (1.0 - v / LIFE) * twinkle;
     let e = ACTIVE;
     c.painter
-        .shape((-e, -e, e, e), Style::new(FG, alpha, 4.0), |x, y| {
+        .shape((-e, -e, e, e), Style::color(ink, alpha, 4.0), |x, y| {
             let mut d = f32::MAX;
             for &(cx, cy, h, spin) in &crystals {
                 let (dx, dy) = (x - cx, y - cy);
@@ -283,14 +339,15 @@ fn frac(x: f32) -> f32 {
 }
 
 /// A four-point sparkle of arm length `r` centred on `(x, y)`.
-fn draw_sparkle<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, x: f32, y: f32, r: f32, alpha: f32) {
+fn draw_sparkle<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, x: f32, y: f32, r: f32, alpha: f32, ink: Color) {
     if r <= 0.3 || alpha <= 0.0 {
         return;
     }
     let long: [&[(f32, f32)]; 2] = [&[(x - r, y), (x + r, y)], &[(x, y - r), (x, y + r)]];
     c.painter
-        .stroke_paths(&long, (r * 0.28).max(1.2), Style::new(FG, alpha, 8.0));
-    c.painter.fill_circle(x, y, r * 0.3, Style::new(FG, alpha, 0.0));
+        .stroke_paths(&long, (r * 0.28).max(1.2), Style::color(ink, alpha, 8.0));
+    c.painter
+        .fill_circle(x, y, r * 0.3, Style::color(ink, alpha, 0.0));
 }
 
 // ---------- setup label (C2) ----------
