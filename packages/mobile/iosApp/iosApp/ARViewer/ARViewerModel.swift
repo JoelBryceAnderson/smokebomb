@@ -28,8 +28,9 @@ final class ARViewerModel {
     /// matter with AR off.
     var availability = Availability.checking
 
-    /// AR on: the camera and your table. Off: the die on a virtual table, like
-    /// the desktop simulator; it needs no camera and runs anywhere. Remembered.
+    /// AR on: the camera and your table. Off (the default): the die locked in
+    /// place on a virtual table, like the desktop simulator; it needs no camera
+    /// and runs anywhere. Remembered.
     var augmented: Bool {
         didSet { UserDefaults.standard.set(augmented, forKey: Self.augmentedKey) }
     }
@@ -84,7 +85,7 @@ final class ARViewerModel {
         let supported = ARWorldTrackingConfiguration.isSupported
         let saved = UserDefaults.standard.object(forKey: Self.augmentedKey) as? Bool
         arSupported = supported
-        augmented = supported && (saved ?? true)
+        augmented = supported && (saved ?? false)
     }
 
     // MARK: Availability

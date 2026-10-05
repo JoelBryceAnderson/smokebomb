@@ -20,24 +20,26 @@ It needs iOS 18 or later, and runs on iPhone and iPad.
 
 ## AR on or off
 
-The tab is labelled **Simulator**. Its **AR** toggle (in the iPhone controls,
-or the iPad side panel's View section) picks where the die is:
+The tab is labelled **Simulator**. A small **AR** pane on the left edge of
+the view switches where the die is. AR is **off** by default.
 
-- **On:** through the camera, on your real table. This needs camera access
-  and an AR-capable device.
-- **Off:** on a virtual table in a dark studio, seen from a fixed camera
-  framed like the desktop simulator's (32° field of view, looking from the
-  front right). The die is placed straight away, with no plane finding.
-  Everything else works the same: live firmware screens, throws, the menu
-  and its turn pad, x-ray, explode and tap-to-name. It needs no camera, so
-  it also runs where AR can't: without camera access, on devices without AR,
-  and in the iOS Simulator.
+- **Off:** the die is on a virtual table in a dark studio, seen from a fixed
+  camera close up (32° field of view, looking from the front right, as the
+  desktop simulator frames it). It's placed straight away and locked in place:
+  - Dragging turns the die rather than moving it.
+  - A flick on the die, or **Roll**, winds up, then tosses the die straight
+    up. It tumbles and lands where it was, inside a tight ring of walls
+    (`lockedTossLift`, `lockedCorralFactor`).
+  - Everything else works the same: live firmware screens, touch, the menu
+    and its turn pad, x-ray, explode and tap-to-name.
+  - It needs no camera, so it also runs without camera access, on devices
+    without AR, and in the iOS Simulator.
+- **On:** the die is on your real table through the camera, and moves and
+  rolls freely. This needs camera access and an AR-capable device. If camera
+  access is off, the tab offers **Use without AR**.
 
 Switching rebuilds the view, so the die is placed again and the firmware
-reboots. The choice is remembered. AR is on by default where it's
-available, and the toggle is hidden where it isn't. When AR is on but camera
-access is off, the tab offers **Use without AR**.
-
+reboots. The choice is remembered. The pane is hidden on devices without AR.
 The studio's framing is `studioFieldOfView` and `studioCameraDistance` in
 `DiePhysics.swift`; the studio itself is `buildStudio()` in
 `ARSceneController.swift`.

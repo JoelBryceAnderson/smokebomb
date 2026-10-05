@@ -49,9 +49,14 @@ enum DiePhysics {
     // The studio, with AR off: the desktop simulator's framing.
     /// The studio camera's vertical field of view, in degrees.
     static let studioFieldOfView: Float = 32
-    /// How far the studio camera is from the die, in metres: enough to see a
-    /// throw land inside the corral.
-    static let studioCameraDistance: Float = 0.32
+    /// How far the studio camera is from the die, in metres. The die stays
+    /// put with AR off, so this frames it closely.
+    static let studioCameraDistance: Float = 0.2
+    /// Locked in place (AR off), a roll goes straight up this fast, in m/s.
+    static let lockedTossLift: Float = 0.45
+    /// …and lands inside walls this many die sides from its centre: room to
+    /// tumble over an edge, not to wander off.
+    static let lockedCorralFactor: Float = 1.4
 
     /// Space between the held die's edge and the glass turn pad, in metres.
     static let menuPanelGap: Float = 0.008

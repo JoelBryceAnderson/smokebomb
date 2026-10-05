@@ -30,6 +30,10 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private unowned let model: ARViewerModel
     /// The studio's camera, with AR off.
     private var studioCamera: PerspectiveCamera?
+    /// With AR off the die stays in the middle of the table: dragging turns
+    /// it rather than moving it, and a roll is tossed straight up so it lands
+    /// where it was.
+    private var lockedInPlace: Bool { !augmented }
 
     private let coaching = ARCoachingOverlayView()
     private var placement: AnchorEntity?
@@ -91,6 +95,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     // Gestures.
     private enum PanMode { case move, turn }
     private var panMode: PanMode?
+    /// The drag started on the die (a flick from there throws it).
+    private var panOnDie = false
     private var lastPanX: CGFloat = 0
     private var pinchStartScale: Float = 1
 
@@ -376,7 +382,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         switch g.state {
         case .began:
             let onDie = arView.ray(through: point).map { rig.contains(origin: $0.origin, direction: $0.direction) } ?? false
-            panMode = onDie ? .move : .turn
+            panOnDie = onDie
+            panMode = onDie && !lockedInPlace ? .move : .turn
             lastPanX = g.translation(in: arView).x
         case .changed:
             if panMode == .move {
@@ -393,7 +400,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         case .ended:
             let v = g.velocity(in: arView)
             let speed = hypot(v.x, v.y)
-            if panMode == .move, speed > DiePhysics.flickThreshold, rig.model.isThrowable {
+            if panOnDie, speed > DiePhysics.flickThreshold, rig.model.isThrowable {
                 dragTarget = nil
                 throwDie(screenDirection: CGVector(dx: v.x, dy: v.y), flickSpeed: speed)
             } else {
@@ -448,10 +455,11 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let wobble = SIMD3<Float>(Float.random(in: -0.3...0.3), Float.random(in: -0.5...0.5), Float.random(in: -0.3...0.3))
 
         restTransform = pivot.transform
-        windup = Windup(
-            start: time, base: pivot.transform,
-            velocity: direction * speed + [0, DiePhysics.throwLift, 0],
-            spin: (rollAxis + wobble) * spin)
+        // Locked in place: straight up, tumbling, to land where it was.
+        let velocity = lockedInPlace
+            ? SIMD3<Float>(0, DiePhysics.lockedTossLift, 0)
+            : direction * speed + [0, DiePhysics.throwLift, 0]
+        windup = Windup(start: time, base: pivot.transform, velocity: velocity, spin: (rollAxis + wobble) * spin)
         rig.highlight(nil)
         model.selectedPart = nil
         touchMask = 0
@@ -473,7 +481,13 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     private func release(_ w: Windup) {
         windup = nil
-        buildCorral(around: w.base.translation)
+        if lockedInPlace, let rig {
+            // A tight ring: room to tumble, not to wander.
+            let side = max(rig.model.bounds.x, rig.model.bounds.z) * pivot.scale.x
+            buildCorral(around: w.base.translation, radius: side * DiePhysics.lockedCorralFactor)
+        } else if let radius = DiePhysics.corralRadius {
+            buildCorral(around: w.base.translation, radius: radius)
+        }
         setBodyMode(.dynamic)
         pivot.components.set(PhysicsMotionComponent(linearVelocity: w.velocity, angularVelocity: w.spin))
         settle.reset()
@@ -726,9 +740,9 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     // MARK: Corral
 
-    private func buildCorral(around spot: SIMD3<Float>) {
+    private func buildCorral(around spot: SIMD3<Float>, radius: Float) {
         removeCorral()
-        guard let radius = DiePhysics.corralRadius, let placement else { return }
+        guard let placement else { return }
         let walls = Entity()
         walls.name = "Corral"
         let sides = 8

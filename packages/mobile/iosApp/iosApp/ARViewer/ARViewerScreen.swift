@@ -71,6 +71,12 @@ struct ARViewerScreen: View {
             StatusOverlay(model: model)
                 .padding(.top, 8)
         }
+        .overlay(alignment: .leading) {
+            if model.arSupported {
+                ARPane(model: model)
+                    .padding(.leading, 12)
+            }
+        }
     }
 }
 
@@ -243,9 +249,6 @@ private struct SidePanel: View {
                 }
             }
             Section("View") {
-                if model.arSupported {
-                    Toggle("AR", isOn: $model.augmented)
-                }
                 if model.canRunFirmware {
                     Toggle("Live screens", isOn: $model.liveScreens)
                 }
@@ -321,20 +324,37 @@ private struct ControlPad: View {
     }
 }
 
+// MARK: - AR pane
+
+/// A small pane on the left edge: AR on (the camera and your table) or off
+/// (the die locked in place on a virtual table).
+private struct ARPane: View {
+    @Bindable var model: ARViewerModel
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: model.augmented ? "arkit" : "cube")
+                .font(.title3)
+                .foregroundStyle(model.augmented ? Color.accentColor : Color.secondary)
+            Text("AR").font(.caption.weight(.semibold))
+            Toggle("AR", isOn: $model.augmented)
+                .labelsHidden()
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("AR")
+        .accessibilityValue(model.augmented ? "On" : "Off")
+    }
+}
+
 // MARK: - Shared controls
 
 private struct ViewButtons: View {
     @Bindable var model: ARViewerModel
 
     var body: some View {
-        if model.arSupported {
-            Toggle(isOn: $model.augmented) {
-                Label("AR", systemImage: model.augmented ? "arkit" : "cube")
-            }
-            .toggleStyle(.button)
-            .buttonStyle(.bordered)
-            .tint(.primary)
-        }
         if model.canRunFirmware {
             Toggle(isOn: $model.liveScreens) {
                 Label("Live", systemImage: model.liveScreens ? "play.display" : "display")
