@@ -272,9 +272,12 @@ private struct SidePanel: View {
             Section("Roll") {
                 ControlPad(model: model)
                     .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                // Icons only: the side panel is too narrow for their titles,
+                // which wrapped. VoiceOver still reads them.
                 HStack {
                     RollButtons(model: model)
                 }
+                .labelStyle(.iconOnly)
                 if let face = model.faceUp {
                     LabeledContent("Face up", value: face.label)
                 }
