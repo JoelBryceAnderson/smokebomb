@@ -31,6 +31,10 @@ final class DieRig {
     private let reference: Entity
 
     private(set) var shell: Entity?
+    /// The laser etching on the lid (`Etching`), if this model shows one.
+    private(set) var etching: Entity?
+    /// The model's visual bounds as loaded, before the etching or explode.
+    private let loadedSize: SIMD3<Float>
     private var windows: [(entity: Entity, face: DieFace, base: SIMD3<Float>)] = []
     private var modules: [(entity: Entity, face: DieFace, base: SIMD3<Float>)] = []
     /// Each mesh entity, mapped to the outermost labelled part that contains it.
@@ -47,6 +51,7 @@ final class DieRig {
         self.model = model
         self.root = root
         self.reference = reference
+        loadedSize = root.visualBounds(relativeTo: reference).extents
 
         shell = root.findEntity(named: "Shell")
         for face in DieFace.allCases {
@@ -58,6 +63,8 @@ final class DieRig {
             }
         }
         collectPickable(labels: labels)
+        // Added after picking is collected: a tap on the lid names the lid.
+        etching = Etching.attach(to: root, reference: reference, model: model)
     }
 
     // MARK: Explode and x-ray
@@ -74,6 +81,8 @@ final class DieRig {
     }
 
     func setShellFaded(_ faded: Bool) {
+        // X-ray looks through the shell, so its markings go too.
+        etching?.isEnabled = !faded
         guard let shell else { return }
         if faded {
             shell.components.set(OpacityComponent(opacity: Self.xrayShellOpacity))
@@ -82,9 +91,10 @@ final class DieRig {
         }
     }
 
-    /// The model's visual bounds in its own metres (ignores the user's scale).
+    /// The model's visual bounds in its own metres (ignores the user's scale),
+    /// as loaded: the etching's decal and explode don't count.
     func measuredSize() -> SIMD3<Float> {
-        root.visualBounds(relativeTo: reference).extents
+        loadedSize
     }
 
     // MARK: Picking
