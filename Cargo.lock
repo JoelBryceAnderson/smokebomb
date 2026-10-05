@@ -1717,9 +1717,11 @@ dependencies = [
 name = "smokebomb-ffi"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "smokebomb-core",
  "smokebomb-hal",
  "smokebomb-hal-simulator",
+ "smokebomb-shared",
 ]
 
 [[package]]

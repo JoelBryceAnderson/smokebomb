@@ -373,6 +373,21 @@ where
         self.apply_settings();
     }
 
+    /// The phone sets the dice (`PhoneToDie::SetDie`): Pass the Pot, or
+    /// `count` dice of `kind`, each count kept in range.
+    pub fn set_die(&mut self, kind: DieKind, count: u8) {
+        let mut s = self.settings;
+        if kind == DieKind::PassThePot {
+            s.play = PlayMode::PassThePot;
+            s.pot_count = count.clamp(1, MAX_POT_DICE as u8);
+        } else {
+            s.play = PlayMode::Dice;
+            s.die = kind;
+            s.count = count.clamp(1, kind.max_count() as u8);
+        }
+        self.set_settings(s);
+    }
+
     /// Unlock a mode on this die. The caller has checked the store's
     /// license; verifying it here is still to do (docs/STORE.md).
     pub fn unlock_mode(&mut self, mode: ModeId) {

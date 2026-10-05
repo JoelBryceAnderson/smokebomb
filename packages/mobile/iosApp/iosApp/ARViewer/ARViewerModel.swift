@@ -21,6 +21,9 @@ final class ARViewerModel {
     /// Makes the firmware for live screens. The app sets it (it needs the Rust
     /// library); nil means baked screens only, as in the tests.
     @ObservationIgnored var makeFirmware: DieFirmwareFactory?
+    /// Connects the running die to the app. The app sets it; nil leaves the
+    /// die on its own.
+    @ObservationIgnored var phoneLink: DiePhoneLink?
 
     /// AR's own availability (camera access, device support). It doesn't
     /// matter with AR off.

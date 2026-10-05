@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import com.smokebomb.app.ar.ArViewer
 import com.smokebomb.app.ble.BleManager
 import com.smokebomb.app.ble.DieLinks
+import com.smokebomb.app.ble.DiePort
 import com.smokebomb.app.history.RollHistory
 import com.smokebomb.app.navigation.AppShell
 import com.smokebomb.app.network.ApiClient
@@ -24,10 +25,11 @@ fun App(
     settings: AppSettings,
     api: ApiClient = remember { StubApiClient() },
     arViewer: ArViewer? = null,
+    arDie: DiePort? = null,
 ) {
     val scope = rememberCoroutineScope()
-    // Bluetooth, or the desktop simulator when the Die tab picks it.
-    val links = remember(ble) { DieLinks(ble, scope) }
+    // Bluetooth, or a simulator (the desktop's, or the Simulator tab's die) when the Die tab picks one.
+    val links = remember(ble, arDie) { DieLinks(ble, scope, arDie) }
     val history = remember(links) { RollHistory(links, scope) }
     SmokebombTheme {
         // TODO: persist onboarding completion (DataStore / NSUserDefaults).

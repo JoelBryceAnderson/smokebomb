@@ -39,12 +39,13 @@ import com.smokebomb.shared.ModeId
 import com.smokebomb.shared.SignedRoll
 import kotlinx.coroutines.launch
 
-/** Find, connect to, and set up the user's die, or the desktop simulator. */
+/** Find, connect to, and set up the user's die, or a simulator: the Simulator tab's die or the desktop's. */
 @Composable
 fun DieScreen(links: DieLinks, modifier: Modifier = Modifier) {
     val state by links.state.collectAsState()
     val inventory by links.inventory.collectAsState()
     val simulator by links.simulator.collectAsState()
+    val usingArDie by links.usingArDie.collectAsState()
     val scope = rememberCoroutineScope()
     var lastRoll by remember { mutableStateOf<SignedRoll?>(null) }
     LaunchedEffect(links) { links.rolls.collect { lastRoll = it } }
@@ -90,7 +91,10 @@ fun DieScreen(links: DieLinks, modifier: Modifier = Modifier) {
             }
 
             HorizontalDivider()
-            if (simulator == null) {
+            if (simulator == null && !usingArDie) {
+                if (links.hasArDie) {
+                    ArDieSection { scope.launch { links.useArDie() } }
+                }
                 SimulatorSection { address -> scope.launch { links.useSimulator(address) } }
             } else {
                 TextButton(onClick = { scope.launch { links.useBluetooth() } }) {
@@ -176,6 +180,19 @@ private fun ModesSection(inventory: Inventory, onChange: (Set<ModeId>) -> Unit) 
                 },
             )
         }
+    }
+}
+
+/**
+ * Connect to the die in the Simulator tab, on this phone: the real firmware,
+ * set up and rolled from here like a real die.
+ */
+@Composable
+private fun ArDieSection(onConnect: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("No die? Use the Simulator tab", style = MaterialTheme.typography.titleMedium)
+        Text("It runs the real firmware on this phone. Keep its Live screens on.")
+        OutlinedButton(onClick = onConnect) { Text("Connect to the Simulator tab's die") }
     }
 }
 

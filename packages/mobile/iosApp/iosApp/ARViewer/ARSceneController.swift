@@ -690,6 +690,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
                 lightHaptic.prepare()
             }
         }
+        // The app's link follows whichever die is running.
+        model.phoneLink?.attach(firmware)
         screens?.remove()
         screens = nil
         if let firmware, let rig {
@@ -705,6 +707,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         screens?.remove()
         screens = nil
         firmware = nil
+        model.phoneLink?.attach(nil)
         firmwarePanel = nil
         frameSeq = 0
         touchMask = 0
@@ -728,6 +731,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             redraw()
         }
         while let effect = firmware.nextHaptic() { play(haptic: effect) }
+        model.phoneLink?.pump()
         let mode = firmware.mode
         if model.firmwareMode != mode { model.firmwareMode = mode }
 

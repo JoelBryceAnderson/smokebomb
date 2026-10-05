@@ -18,14 +18,12 @@ use std::sync::Arc;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
-use smokebomb_firmware::smokebomb_core::menu::PlayMode;
 use smokebomb_firmware::smokebomb_core::target::DisplayTarget;
 use smokebomb_firmware::smokebomb_core::Firmware;
 use smokebomb_hal::SecureElement;
 use smokebomb_hal_simulator::{SimPlatform, SimSecureElement};
 use smokebomb_shared::protocol::{DieToPhone, PhoneToDie};
-use smokebomb_shared::types::MAX_POT_DICE;
-use smokebomb_shared::{DieKind, LicensedItem, SignedRoll};
+use smokebomb_shared::{LicensedItem, SignedRoll};
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::AppState;
@@ -134,18 +132,7 @@ pub fn handle<T: DisplayTarget>(
             LicensedItem::Mode(mode) => fw.unlock_mode(mode),
             LicensedItem::Theme(_) => tracing::warn!("themes can't be installed on the simulator yet"),
         },
-        PhoneToDie::SetDie { kind, count } => {
-            let mut s = *fw.settings();
-            if kind == DieKind::PassThePot {
-                s.play = PlayMode::PassThePot;
-                s.pot_count = count.clamp(1, MAX_POT_DICE as u8);
-            } else {
-                s.play = PlayMode::Dice;
-                s.die = kind;
-                s.count = count.clamp(1, kind.max_count() as u8);
-            }
-            fw.set_settings(s);
-        }
+        PhoneToDie::SetDie { kind, count } => fw.set_die(kind, count),
         PhoneToDie::GetPublicKey => {
             if let Ok(key) = SimSecureElement::new().public_key() {
                 send(state, &DieToPhone::PublicKey(key));
@@ -183,7 +170,7 @@ fn hello(state: &AppState) -> DieToPhone {
 
 #[cfg(test)]
 mod tests {
-    use smokebomb_shared::{ModeId, ModeSet};
+    use smokebomb_shared::{DieKind, ModeId, ModeSet};
     use tokio::sync::{broadcast, mpsc};
 
     use smokebomb_firmware::board;

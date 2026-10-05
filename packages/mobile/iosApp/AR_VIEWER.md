@@ -89,6 +89,7 @@ The studio's framing is `studioFieldOfView` and `studioCameraDistance` in
 | `iosApp/ARViewer/ImuSynth.swift` | Die motion → IMU readings at exact 60 Hz ticks |
 | `iosApp/ARViewer/LiveScreens.swift` | The firmware's panels on the die's faces |
 | `iosApp/Firmware/RustDieFirmware.swift` | The firmware over the Rust C ABI (app target only) |
+| `iosApp/ARDiePort.swift` | The running die's phone link, for the app's die links (app target only) |
 | `scripts/build_firmware.sh` | Builds `packages/firmware/ffi` for the SDK Xcode is building for |
 | `iosApp/Resources/Models/` | Bundled `.usdz` files (a folder reference; Git LFS) |
 | `iosAppTests/` | `ARViewerTests`: true-size check, explode, the lid, face-up |
@@ -443,6 +444,34 @@ RealityKit pose ──► ImuSynth ──► sb_die_tick(imu, touch) ──► s
 
 Switching between models with the same panels keeps the firmware running.
 Switching panels boots it again, and so does placing the die.
+
+## The app's link to the die
+
+The die in the Simulator tab can be the app's die: on the **Die** tab, under
+the connection, **Connect to the Simulator tab's die**. The app then talks to
+it as to a real die over BLE: it's greeted with the die's battery and modes,
+the Die tab's dice and modes settings go to it, its rolls show up and land in
+the history, and a history sync reads the rolls it has kept (its last 500).
+Modes picked on the die's own menu come back to the app too.
+
+```
+Die tab ── DieLinks ── ArDieLink ──► DiePort ──► ARDiePort ──► RustDieFirmware ──► sb_die_phone_*
+(Kotlin)                (Kotlin)     (Kotlin      (Swift,        (Swift)              packages/firmware/ffi
+                                      interface)   app target)                         src/phone.rs
+```
+
+- **The messages** are the die's BLE messages (`smokebomb_shared::protocol`)
+  as JSON, exactly as the desktop simulator's `/phone` WebSocket carries them,
+  so `ArDieLink` and `SimulatorLink` share everything but the transport
+  (`JsonDieLink`). The firmware answers them as the desktop simulator does;
+  the die-setup part is the core's `Firmware::set_die`, shared by both.
+- **The die comes and goes** with the tab: it runs while a die is placed with
+  live screens on. Without one the Die tab says so; the link stays open and
+  the next die to start greets it (switching AR on or off, placing the die
+  again, a model with other panels all start a new die, which boots with
+  its own settings: send them again from the Die tab).
+- Each tick, `ARSceneController` hands the app what the die said
+  (`DiePhoneLink.pump`).
 
 ## Gestures
 
