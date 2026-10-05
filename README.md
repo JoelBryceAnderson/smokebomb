@@ -1,5 +1,9 @@
 # Sugarcube
 
+<p align="center">
+  <img src="packages/mobile/iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="The Sugarcube app icon: a cartoon sugar cube jumping with a fist in the air above a pink ribbon reading Sugarcube" width="200">
+</p>
+
 Sugarcube is a smart die with six 96×96 OLED faces. Throw it and a storm of sugar
 crystals plays across the screens, then the result shows on every face. Each roll
 is signed by a secure element inside the die, so a phone app and backend can
@@ -73,6 +77,11 @@ code runs on the die and in the simulator. Zephyr is only the RTOS shell.
 | [`packages/server`](packages/server) | Device registry, roll verification, accounts, theme store | Rust/Axum + PostgreSQL |
 | [`packages/mobile`](packages/mobile) | Phone app | Compose Multiplatform (iOS first) |
 | [`packages/shared`](packages/shared) | Roll record, wire types, asset pack format | Rust (`no_std`) |
+
+The app icon (above) is drawn by
+[`packages/mobile/scripts/app_icon.cjs`](packages/mobile/scripts/app_icon.cjs),
+which writes every iOS and Android size. It's placeholder art until a
+designer takes it on.
 
 ## Try it
 
