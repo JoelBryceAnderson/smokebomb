@@ -107,10 +107,11 @@ impl Transform {
     }
 
     /// The same orientation and offset, with one unit a whole panel pixel
-    /// instead of a canvas unit: for layouts drawn pixel by pixel (the
-    /// 64×64 screens). Origin stays at the panel centre.
+    /// (times any [`Self::scaled`] so far) instead of a canvas unit: for
+    /// layouts drawn pixel by pixel (the 64×64 screens). Origin stays at
+    /// the panel centre; offsets made before stay in canvas units.
     pub fn in_pixels(mut self) -> Self {
-        self.scale = 1.0 / self.k;
+        self.scale /= self.k;
         self
     }
 
@@ -365,26 +366,18 @@ impl<'a, T: Target> Painter<'a, T> {
         composite(self.fb, self.layer.cov.as_ref(), d, style);
     }
 
-    /// Blit a 1-bit bitmap (rows of `w` bits, MSB first, `stride` bytes a
-    /// row) with its top-left at `(x, y)`, each bit `scale` units square.
-    /// Sampled nearest, so in pixel units ([`Transform::in_pixels`]) at
-    /// whole-pixel positions and quarter turns it lands exactly on the
-    /// panel grid, with no smoothing.
-    #[allow(clippy::too_many_arguments)]
-    pub fn blit_bits(
-        &mut self,
-        bits: &[u8],
-        stride: usize,
-        w: usize,
-        h: usize,
-        x: f32,
-        y: f32,
-        scale: f32,
-        style: Style,
-    ) {
-        self.begin();
-        let (x1, y1) = (x + w as f32 * scale, y + h as f32 * scale);
-        let r = self.xf.bounds(x, y, x1, y1, 0.0);
+    /// Add the lit pixels of a 1-bit bitmap to this draw call's coverage:
+    /// `rows[y]` holds row `y` with bit 31 the left column, `w` columns
+    /// wide, top-left at `(x, y)`, each bit `scale` units square. Sampled
+    /// nearest, so in pixel units ([`Transform::in_pixels`]) at whole-pixel
+    /// positions and quarter turns every bit lands exactly on one panel
+    /// pixel, with no smoothing. Call between [`Self::begin`] and
+    /// [`Self::finish`].
+    pub fn cover_rows(&mut self, rows: &[u32], w: usize, x: f32, y: f32, scale: f32) {
+        let h = rows.len();
+        let r = self
+            .xf
+            .bounds(x, y, x + w as f32 * scale, y + h as f32 * scale, 0.0);
         for py in r.y0..r.y1 {
             for px in r.x0..r.x1 {
                 let (cx, cy) = self.xf.inverse(px as f32 + 0.5, py as f32 + 0.5);
@@ -392,14 +385,12 @@ impl<'a, T: Target> Painter<'a, T> {
                 if bx < 0.0 || by < 0.0 || bx >= w as f32 || by >= h as f32 {
                     continue;
                 }
-                let (bx, by) = (bx as usize, by as usize);
-                if bits[by * stride + bx / 8] & (0x80 >> (bx % 8)) != 0 {
+                if rows[by as usize] & (0x8000_0000 >> bx as u32) != 0 {
                     self.cover(px, py, 1.0);
                 }
             }
         }
         self.mark(r);
-        self.finish(style);
     }
 
     /// Rasterize coverage from a signed distance function over canvas-space

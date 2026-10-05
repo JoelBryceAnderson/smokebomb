@@ -85,10 +85,10 @@ fn pips(value: u8) -> &'static [(f32, f32)] {
 }
 
 /// Start value per face index (opposite faces sum to 7).
-const FACE_START: [u8; 6] = [3, 4, 1, 6, 2, 5];
-const BOOT_STEP: f32 = 0.34;
-const BOOT_STEPS: u32 = 5;
-const BOOT_FADE: f32 = 0.4;
+pub(crate) const FACE_START: [u8; 6] = [3, 4, 1, 6, 2, 5];
+pub(crate) const BOOT_STEP: f32 = 0.34;
+pub(crate) const BOOT_STEPS: u32 = 5;
+pub(crate) const BOOT_FADE: f32 = 0.4;
 pub const LOOP_END: f32 = 0.25 + BOOT_STEP * BOOT_STEPS as f32;
 /// Whole boot sequence, seconds.
 pub const BOOT_DURATION: f32 = LOOP_END + 4.25;

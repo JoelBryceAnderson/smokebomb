@@ -22,6 +22,7 @@ use crate::menu::{Draft, Setup};
 use crate::nest::NestFace;
 use crate::panel::Layout;
 use crate::screens::{self, Ctx};
+use crate::screens64;
 use crate::smoke::Special;
 
 /// How a target's frames reach its panels.
@@ -156,6 +157,66 @@ impl DisplayTarget for Rgb64 {
 
     fn pack(fb: &Framebuffer<Self>, out: &mut Self::Panel) {
         fb.pack565(out);
+    }
+
+    fn smoke_tint(kind: SpriteKind, money: bool) -> Color {
+        use crate::palette64 as pal;
+        match kind {
+            SpriteKind::Smoke if money => pal::GOLD,
+            SpriteKind::Smoke => pal::SUGAR,
+            SpriteKind::Ember => pal::EMBER,
+            SpriteKind::Gold => pal::GOLD,
+            SpriteKind::Fizzle => pal::RED,
+        }
+    }
+
+    fn draw_boot<A: AssetStore>(c: &mut Ctx<A, Self>, index: usize, top: bool, t: f32) {
+        screens64::draw_boot(c, index, top, t);
+    }
+
+    fn draw_wake_label<A: AssetStore>(
+        c: &mut Ctx<A, Self>,
+        setup: Setup,
+        label: &str,
+        alpha: f32,
+        face: usize,
+    ) {
+        screens64::draw_idle(c, setup, label, alpha, face);
+    }
+
+    fn draw_result<A: AssetStore>(
+        c: &mut Ctx<A, Self>,
+        record: &RollRecord,
+        special: Option<Special>,
+        alpha: f32,
+    ) {
+        screens64::draw_result(c, record, special, alpha);
+    }
+
+    fn draw_success<A: AssetStore>(c: &mut Ctx<A, Self>, label: &str, nudge: &str, t: f32) {
+        screens64::draw_success(c, label, nudge, t);
+    }
+
+    fn draw_menu<A: AssetStore>(
+        c: &mut Ctx<A, Self>,
+        m: &Draft,
+        battery: f32,
+        ox: f32,
+        oy: f32,
+        alpha: f32,
+        scale: f32,
+    ) {
+        screens64::draw_menu(c, m, battery, ox, oy, alpha, scale);
+    }
+
+    fn draw_nest<A: AssetStore>(c: &mut Ctx<A, Self>, face: &NestFace) {
+        if !screens64::draw_nest(c, face) {
+            screens::draw_nest(c, face);
+        }
+    }
+
+    fn draw_bolt<A: AssetStore>(c: &mut Ctx<A, Self>, alpha: f32) {
+        screens64::draw_low_battery(c, alpha);
     }
 }
 
