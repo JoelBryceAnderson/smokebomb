@@ -7,8 +7,10 @@ import UIKit
 /// turned to that face's screen axes (`DieFace.screenAxes`, the firmware's
 /// `orientation::BASES`), so frames land the way the hardware shows them,
 /// whatever the model's own UVs. The model's baked screens are hidden while
-/// these are up. The quads are rounded like the glass's mask; their corners
-/// are filled black, so the square the baked screen covered stays covered.
+/// these are up. The quads are rounded like the glass's mask. The sapphire
+/// window round each screen has a square hole for it, so the corners the
+/// rounding cuts off are filled with the window's own material: bezel, not
+/// a view into the die.
 @MainActor
 final class LiveScreens {
     /// Flip if the frames show upside down on device (RealityKit texture
@@ -46,6 +48,7 @@ final class LiveScreens {
         self.side = side
         let blank = [UInt8](repeating: 0, count: side * side * 4)
         guard let blankImage = Self.image(blank, side: side) else { return }
+        let sapphire = Self.sapphire(in: rig.root)
         for face in DieFace.allCases {
             guard let screen = rig.root.findEntity(named: "Screen_\(face.rawValue)"),
                   let parent = screen.parent,
@@ -65,7 +68,8 @@ final class LiveScreens {
             quad.name = "LiveScreen_\(face.rawValue)"
             parent.addChild(quad)
             if let mesh = Self.corners(width: width, height: height, radius: radius) {
-                quad.addChild(ModelEntity(mesh: mesh, materials: [UnlitMaterial(color: .black)]))
+                let window = rig.root.findEntity(named: "Window_\(face.rawValue)").flatMap(Self.firstMaterial)
+                quad.addChild(ModelEntity(mesh: mesh, materials: [window ?? sapphire]))
             }
             // Face the screen's way, on its outer surface, in the die's frame.
             let rotation = simd_quatf(simd_float3x3(columns: (right, up, normal)))
@@ -141,6 +145,31 @@ final class LiveScreens {
         // A fallback that can't fail: a plain plane, if the custom mesh is refused.
         return (try? MeshResource.generate(from: [mesh]))
             ?? .generatePlane(width: width, height: height, cornerRadius: r)
+    }
+
+    /// The windows' material, to fill the corners with: the model's own
+    /// `SapphireWindows`, else glossy near-black sapphire as the models have it
+    /// (diffuse 0.004, roughness 0.05, clearcoat 1).
+    private static func sapphire(in root: Entity) -> RealityKit.Material {
+        if let windows = root.findEntity(named: "SapphireWindows"), let material = firstMaterial(windows) {
+            return material
+        }
+        var material = PhysicallyBasedMaterial()
+        material.baseColor = .init(tint: UIColor(red: 0.004, green: 0.004, blue: 0.005, alpha: 1))
+        material.roughness = 0.05
+        material.metallic = 0.0
+        material.clearcoat = 1.0
+        material.clearcoatRoughness = 0.02
+        return material
+    }
+
+    /// The first material on an entity or anything under it.
+    private static func firstMaterial(_ entity: Entity) -> RealityKit.Material? {
+        if let material = entity.components[ModelComponent.self]?.materials.first { return material }
+        for child in entity.children {
+            if let material = firstMaterial(child) { return material }
+        }
+        return nil
     }
 
     /// The four corners the rounding cuts off the quad, in the quad's plane:
