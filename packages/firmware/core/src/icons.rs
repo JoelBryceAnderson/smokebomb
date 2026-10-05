@@ -47,6 +47,28 @@ pub fn draw_setup_icon<A: AssetStore, T: Target>(
     }
 }
 
+/// Settings: a gear in the setup icons' line art, eight teeth round a hole.
+pub fn draw_gear<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, cx: f32, cy: f32, r: f32, alpha: f32) {
+    let style = Style::new(FG, alpha, GLOW);
+    let body = r * 0.62;
+    c.painter
+        .fill_circle(cx, cy, body, Style::new(FG, alpha * 0.22, 0.0));
+    c.painter.stroke_arc(cx, cy, body, 0.0, TAU, LINE, style);
+    c.painter.stroke_arc(cx, cy, r * 0.26, 0.0, TAU, LINE, style);
+    for k in 0..8 {
+        let a = k as f32 * TAU / 8.0;
+        let (s, co) = (libm::sinf(a), libm::cosf(a));
+        c.painter.stroke_polyline(
+            &[
+                (cx + co * body, cy + s * body),
+                (cx + co * r * 0.92, cy + s * r * 0.92),
+            ],
+            LINE * 2.6,
+            style,
+        );
+    }
+}
+
 /// A banknote on its own, as the setup icon draws it (Pass the Pot's bills
 /// in hand).
 pub fn draw_banknote<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, cx: f32, cy: f32, r: f32, alpha: f32) {

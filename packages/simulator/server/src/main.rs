@@ -937,9 +937,9 @@ mod tests {
         let mut rig = Rig::new();
         rig.run(7.0);
         rig.hold(Face::PosZ);
-        // Two faces left: two pages on (How many dice → Settings).
+        // Two faces left: two pages on (How many dice → Apps).
         rig.spin(SpinAxis::Yaw, -2.2);
-        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Settings);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Apps);
         // Back one and a bit: settles one face back (Which die).
         rig.spin(SpinAxis::Yaw, 1.3);
         assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Die);
@@ -997,11 +997,11 @@ mod tests {
         rig.hold(Face::PosZ);
         assert_eq!(rig.fw.settings().active(), (DieKind::D12, 2));
 
-        // Mode is one tip right of the count.
+        // Apps is one tip right of the count.
         rig.hold(Face::PosZ);
         assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Count);
         rig.tip(TipDir::Right);
-        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Mode);
+        assert_eq!(rig.fw.menu_draft().unwrap().page, Page::Apps);
         rig.tip(TipDir::Up);
         assert_eq!(rig.fw.menu_draft().unwrap().play, PlayMode::PassThePot);
         rig.hold(Face::PosZ);
@@ -1021,7 +1021,7 @@ mod tests {
     }
 
     #[test]
-    fn hot_potato_lights_on_a_shake_goes_off_and_resets_without_rolling() {
+    fn hot_potato_lights_on_a_shake_goes_off_and_goes_again_without_rolling() {
         use smokebomb_firmware::smokebomb_core::menu::PlayMode;
         use smokebomb_firmware::smokebomb_core::potato::{PotatoState, BOOM_MS};
         use smokebomb_firmware::smokebomb_core::state::Mode;
@@ -1073,17 +1073,19 @@ mod tests {
         assert!(haptics.contains(&HapticEffect::Buzz));
         assert!(rig.fw.last_roll().is_none());
 
-        // A tap resets it once BOOM has had its moment.
+        // A tap leaves it be: taps never change the game.
         rig.run(1.0);
         rig.sim.lock().touch_mask = 1 << Face::PosZ.index();
         rig.run(0.1);
         rig.sim.lock().touch_mask = 0;
         rig.run(0.1);
-        assert!(rig.fw.potato().is_idle());
+        assert!(matches!(rig.fw.potato().state(), PotatoState::Boom { .. }));
 
-        // Or BOOM times out by itself.
+        // A shake once BOOM has had its moment starts the next round.
+        rig.run(0.5);
         rig.world.start_shake();
         rig.run(1.0);
+        assert!(rig.fw.potato().is_lit(), "{:?}", rig.fw.potato().state());
         rig.world.end_shake(false);
         for _ in 0..(25.0 / 0.1) as usize {
             if matches!(rig.fw.potato().state(), PotatoState::Boom { .. }) {
@@ -1096,20 +1098,32 @@ mod tests {
         assert!(rig.fw.potato().is_idle());
     }
 
+    impl Rig {
+        /// From the Apps page with the game in use chosen, `ups` tips up to
+        /// Settings and a hold: the Settings app's first page, Battery.
+        fn open_settings(&mut self, ups: usize) {
+            use smokebomb_firmware::smokebomb_core::menu::Page;
+            for _ in 0..ups {
+                self.tip(TipDir::Up);
+            }
+            self.hold(Face::PosZ);
+            assert_eq!(self.fw.menu_draft().unwrap().page, Page::Battery);
+        }
+    }
+
     #[test]
-    fn tapping_power_off_darkens_the_die_and_a_tap_boots_it() {
+    fn holding_power_darkens_the_die_and_a_tap_boots_it() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
         let mut rig = Rig::new();
         rig.run(7.0);
         rig.hold(Face::PosZ);
         rig.tip(TipDir::Up); // 2 dice, not saved
-        rig.tip(TipDir::Left); // Die
-        rig.tip(TipDir::Left); // Settings
-        rig.tip(TipDir::Down); // Regulatory
-        rig.tip(TipDir::Down); // About
-        rig.tip(TipDir::Down); // Power off
-        rig.tap(Face::PosZ);
+        rig.tip(TipDir::Right); // Apps, on Dice
+        rig.tip(TipDir::Down); // Settings
+        rig.open_settings(0);
+        rig.tip(TipDir::Right); // Power
+        rig.hold(Face::PosZ);
         assert_eq!(*rig.fw.mode(), Mode::Off);
         assert!(!rig.sim.lock().display_on);
         assert_eq!(rig.fw.settings().count, 1, "not saved");
@@ -1125,17 +1139,20 @@ mod tests {
     }
 
     #[test]
-    fn tap_changes_a_setting_and_a_hold_saves_and_returns_to_the_roll() {
+    fn a_tip_changes_a_setting_a_tap_does_not_and_a_hold_saves() {
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
         let mut rig = Rig::new();
         rig.run(7.0);
         rig.hold(Face::PosZ);
-        rig.tip(TipDir::Left); // Die
-        rig.tip(TipDir::Left); // Settings, on Brightness (70%)
+        rig.tip(TipDir::Right); // Apps, on Dice
+        rig.open_settings(4); // past Pot, Potato and Pigs
+        rig.tip(TipDir::Left); // Brightness (70%)
         rig.tap(Face::PosZ);
         assert_eq!(*rig.fw.mode(), Mode::Menu, "a tap doesn't leave the menu");
-        assert_eq!(rig.fw.menu_draft().unwrap().setting().1, "100%");
+        assert_eq!(rig.fw.menu_draft().unwrap().setting(0), "70%", "or change it");
+        rig.tip(TipDir::Up);
+        assert_eq!(rig.fw.menu_draft().unwrap().setting(0), "100%");
         assert_eq!(rig.fw.settings().brightness_pct(), 70, "not saved yet");
         rig.hold(Face::PosZ);
         assert_eq!(*rig.fw.mode(), Mode::Idle);
@@ -1156,13 +1173,12 @@ mod tests {
         rig.tip(TipDir::Up);
         rig.hold(Face::PosZ);
         assert_eq!(rig.fw.settings().play(), PlayMode::HotPotato);
-        // Fuse length ▶ Settings ▶ Power off (past Regulatory and About), and tap.
+        // Fuse ▶ Apps ▶ Settings (past Pigs) ▶ Power, and hold.
         rig.hold(Face::PosZ);
-        rig.tip(TipDir::Left);
-        rig.tip(TipDir::Down);
-        rig.tip(TipDir::Down);
-        rig.tip(TipDir::Down);
-        rig.tap(Face::PosZ);
+        rig.tip(TipDir::Right);
+        rig.open_settings(2);
+        rig.tip(TipDir::Right);
+        rig.hold(Face::PosZ);
         assert_eq!(*rig.fw.mode(), Mode::Off);
 
         // A shake doesn't light the fuse, and a tap wakes the die instead of
@@ -1179,7 +1195,7 @@ mod tests {
     }
 
     /// The default settings with some items chosen (by index into
-    /// `SETTINGS`: 2 is Smoke, 3 is Sleep after).
+    /// `SETTINGS`: 2 is Sugar, 3 is Sleep).
     fn settings_with(choices: &[(usize, u8)]) -> smokebomb_firmware::smokebomb_core::menu::Settings {
         let mut s = smokebomb_firmware::smokebomb_core::menu::Settings::default();
         for &(item, option) in choices {
@@ -1193,7 +1209,7 @@ mod tests {
     }
 
     #[test]
-    fn about_shows_the_dies_own_id_and_keeps_it_when_settings_are_replaced() {
+    fn the_die_keeps_its_own_id_when_settings_are_replaced() {
         use smokebomb_firmware::smokebomb_core::menu::short_id;
 
         let mut rig = Rig::new();
@@ -1202,15 +1218,6 @@ mod tests {
         assert_eq!(rig.fw.settings().device_id, id);
         rig.fw.set_settings(settings_with(&[(2, 1)]));
         assert_eq!(rig.fw.settings().device_id, id, "loading settings keeps the id");
-        rig.run(7.0);
-        rig.hold(Face::PosZ);
-        rig.tip(TipDir::Left); // Die
-        rig.tip(TipDir::Left); // Settings, on Brightness
-        rig.tip(TipDir::Down); // Regulatory
-        rig.tip(TipDir::Down); // About
-        let draft = rig.fw.menu_draft().unwrap();
-        assert_eq!(draft.setting().0, "About");
-        assert!(draft.setting_value().ends_with(&format!("SC-{id:04X}")));
     }
 
     #[test]
@@ -1304,12 +1311,13 @@ mod tests {
         let mut rig = Rig::new();
         rig.run(7.0);
         rig.hold(Face::PosZ);
-        rig.tip(TipDir::Left); // Die
-        rig.tip(TipDir::Left); // Settings, on Brightness
-        rig.tip(TipDir::Up); // Haptics
-        rig.tip(TipDir::Up); // Smoke
-        rig.tap(Face::PosZ); // Full -> Off
-        assert_eq!(rig.fw.menu_draft().unwrap().setting(), ("Sugar", "Off"));
+        rig.tip(TipDir::Right); // Apps, on Dice
+        rig.open_settings(4);
+        rig.tip(TipDir::Left); // Brightness
+        rig.tip(TipDir::Left); // Haptics
+        rig.tip(TipDir::Left); // Sugar
+        rig.tip(TipDir::Up); // Full -> Off
+        assert_eq!(rig.fw.menu_draft().unwrap().setting(2), "Off");
         rig.hold(Face::PosZ);
         rig.world.start_shake();
         rig.run(1.5);
@@ -1321,22 +1329,23 @@ mod tests {
     }
 
     #[test]
-    fn a_hold_on_power_off_saves_and_returns_like_anywhere_else() {
+    fn a_hold_in_settings_saves_what_was_changed_on_the_way() {
+        use smokebomb_firmware::smokebomb_core::menu::PlayMode;
         use smokebomb_firmware::smokebomb_core::state::Mode;
 
         let mut rig = Rig::new();
         rig.run(7.0);
         rig.hold(Face::PosZ);
         rig.tip(TipDir::Up); // 2 dice
-        rig.tip(TipDir::Left); // Die
-        rig.tip(TipDir::Left); // Settings
-        rig.tip(TipDir::Down); // Regulatory
-        rig.tip(TipDir::Down); // About
-        rig.tip(TipDir::Down); // Power off
+        rig.tip(TipDir::Right); // Apps, on Dice
+        rig.tip(TipDir::Down); // Settings
+        rig.open_settings(0);
+        rig.tip(TipDir::Left); // Brightness
         rig.hold(Face::PosZ);
         assert_eq!(*rig.fw.mode(), Mode::Idle);
         assert!(!rig.fw.booting(), "still on");
         assert_eq!(rig.fw.settings().count, 2, "saved");
+        assert_eq!(rig.fw.settings().play(), PlayMode::Dice, "still Dice");
     }
 
     // ---------- the Nest (DOCK_BRIEF) ----------
@@ -1672,16 +1681,18 @@ mod tests {
         rig.run(1.0);
         rig.tap(Face::PosX);
         rig.run(0.5);
-        let bolt = ink(&rig, Face::NegY);
+        let (bolt, label) = (ink(&rig, Face::NegY), ink(&rig, Face::PosX));
+        let differs = |a: u32, b: u32| a.abs_diff(b) > b / 10;
         assert!(
-            bolt > 0 && bolt < ink(&rig, Face::PosX) / 2,
-            "a small glyph, not the label: {bolt}"
+            bolt > 0 && differs(bolt, label),
+            "the bolt, not the label: {bolt} vs {label}"
         );
         // At 50% every face shows the label.
         rig.sim.lock().set_battery(50);
         rig.tap(Face::PosX);
         rig.run(0.5);
-        assert!(ink(&rig, Face::NegY) > bolt * 2);
+        let (side, label) = (ink(&rig, Face::NegY), ink(&rig, Face::PosX));
+        assert!(!differs(side, label), "the label: {side} vs {label}");
     }
 
     #[test]

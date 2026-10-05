@@ -118,7 +118,7 @@ A text block holds 6 lines of about 10 characters (the demo sentence, "Hold a fa
 - The firmware's static state measures 100,200 B on the 30 mm image against 116,584 B on the 34 mm one.
 - The app core has 188 KB; the 34 mm image used 87% of it.
 
-**The panel is small for text.** At 0.168 mm a pixel, a 5×7 capital is about 1.2 mm tall. Results, the die picker and short labels read well. Anything sentence-like needs two to six lines, and the 96×96 die's anti-aliased type doesn't survive being scaled down, which is why the 64×64 screens use bitmap fonts.
+**The panel is small for text.** At 0.168 mm a pixel, a 5×7 capital is about 1.2 mm tall. Results, the die picker and short labels read well. Anything sentence-like needs two to six lines, and the 96×96 die's anti-aliased type doesn't survive being scaled down, which is why the 64×64 screens use bitmap fonts. Since brief 3 (4 Oct AR playtest) every screen follows text tiers set in mm of cap height (SIM_SPEC X4): table screens show one T1 answer (30 px numerals, 21 px letters) and at most one 15 px word, held screens 18 px values and 7 px labels, from one-bit cuts generated per tier (`core/src/tier64.rs`).
 
 ## Building and running
 

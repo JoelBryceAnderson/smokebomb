@@ -59,7 +59,8 @@ fn scenarios() -> Vec<common::Scenario> {
             &[15.5, 15.75, 16.0, 16.3, 16.7, 17.3, 18.3, 20.0],
             [
                 (THROW_AT, |r| r.throw_pigs([Nose, Back], false)),
-                (15.6, |r| r.tap())
+                (14.8, |r| r.press()),
+                (15.8, |r| r.release())
             ]
         ),
         scenario!(
@@ -68,9 +69,11 @@ fn scenarios() -> Vec<common::Scenario> {
             &[30.9, 31.8, 32.3, 32.5, 32.8, 33.3, 34.5],
             [
                 (THROW_AT, |r| r.throw_pigs([Ear, Ear], false)),
-                (15.6, |r| r.tap()),
+                (14.8, |r| r.press()),
+                (15.8, |r| r.release()),
                 (19.0, |r| r.throw_pigs([Back, Feet], false)),
-                (24.6, |r| r.tap()),
+                (23.8, |r| r.press()),
+                (24.8, |r| r.release()),
                 (28.0, |r| r.throw_pigs([Nose, Nose], false)),
             ]
         ),

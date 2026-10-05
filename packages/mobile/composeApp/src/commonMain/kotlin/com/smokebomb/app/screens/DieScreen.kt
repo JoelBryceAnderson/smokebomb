@@ -139,7 +139,7 @@ private fun DiceSection(onChange: (DieKind, Int) -> Unit) {
 }
 
 /**
- * Which modes the die's Mode page offers. Licensed modes have a switch;
+ * Which modes the die's Apps page offers. Licensed modes have a switch;
  * the rest are locked until bought in the store. Dice is always on.
  */
 @Composable

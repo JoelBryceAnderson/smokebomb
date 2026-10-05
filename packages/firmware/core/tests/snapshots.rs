@@ -78,7 +78,7 @@ impl Run {
         Self::start(Some(World::with_seed(WORLD_SEED)), false)
     }
 
-    /// The world model with the default menu, which has a Mode page.
+    /// The world model with every game on the Apps page.
     fn with_world_and_modes() -> Self {
         Self::start(Some(World::with_seed(WORLD_SEED)), true)
     }
@@ -571,8 +571,8 @@ fn pigs_smooch() {
     pigs_scenario("pigs-smooch", |r| r.throw_pigs_touching([Feet, Back], true));
 }
 
-/// A tap on the top screen banks the turn: the padlock snaps shut and the
-/// score counts up.
+/// A hold banks the turn: while the ring fills the face shows `bank` and the
+/// total it comes to, then the padlock snaps shut and the score counts up.
 #[test]
 fn pigs_lock_in() {
     use smokebomb_core::pigs::Pose::*;
@@ -584,7 +584,11 @@ fn pigs_lock_in() {
         "pigs-lock-in",
         run,
         &[15.5, 15.75, 16.0, 16.3, 16.7, 17.3, 18.3, 20.0],
-        vec![(THROW_AT, |r| r.throw_pigs([Nose, Back])), (15.6, Run::tap)],
+        vec![
+            (THROW_AT, |r| r.throw_pigs([Nose, Back])),
+            (14.8, Run::press),
+            (15.8, Run::release),
+        ],
     );
 }
 
@@ -603,9 +607,11 @@ fn pigs_smooch_wipes_the_score() {
         vec![
             // Player 1 banks 20, player 2 banks 10, then player 1 smooches.
             (THROW_AT, |r| r.throw_pigs([Back, Back])),
-            (15.6, Run::tap),
+            (14.8, Run::press),
+            (15.8, Run::release),
             (19.0, |r| r.throw_pigs([Back, Feet])),
-            (24.6, Run::tap),
+            (23.8, Run::press),
+            (24.8, Run::release),
             (28.0, |r| r.throw_pigs_touching([Feet, Feet], true)),
         ],
     );
@@ -627,9 +633,11 @@ fn pigs_win() {
         vec![
             // Player 1 banks 60, player 2 banks 10, then player 1 throws 40.
             (THROW_AT, |r| r.throw_pigs([Ear, Ear])),
-            (15.6, Run::tap),
+            (14.8, Run::press),
+            (15.8, Run::release),
             (19.0, |r| r.throw_pigs([Back, Feet])),
-            (24.6, Run::tap),
+            (23.8, Run::press),
+            (24.8, Run::release),
             (28.0, |r| r.throw_pigs([Nose, Nose])),
         ],
     );
@@ -697,8 +705,9 @@ fn throw_smoke() {
 /// The Smoke setting is the third Settings item: Off, Light, Full.
 const SMOKE_ITEM: usize = 2;
 
-/// Pass the Pot between rolls: a tap shows the bills in hand, and each tap
-/// while they're up takes one away, wrapping from 1 back to 3.
+/// Pass the Pot between rolls: a tap shows the bills in hand and what a hold
+/// does; a hold while they're up shows `bills` as the ring fills, then opens
+/// Bills alone to change them.
 #[test]
 fn pot_bills() {
     let run = Run::new().with_settings(|s| {
@@ -708,13 +717,8 @@ fn pot_bills() {
     run_timeline(
         "pot-bills",
         run,
-        &[9.5, 10.3, 11.1, 11.9],
-        vec![
-            (9.0, Run::tap),
-            (9.8, Run::tap),
-            (10.6, Run::tap),
-            (11.4, Run::tap),
-        ],
+        &[9.5, 10.0, 10.6, 11.9],
+        vec![(9.0, Run::tap), (9.6, Run::press), (10.7, Run::release)],
     );
 }
 
@@ -780,12 +784,14 @@ fn menu() {
 
 #[test]
 fn menu_settings() {
-    // Open the menu, tip to the Settings page, then tip up through the items.
-    const ITEMS: usize = 7;
-    let names: Vec<String> = (1..=ITEMS).map(|i| format!("item{i}")).collect();
-    let mut times: Vec<(f64, &str)> = vec![(10.0, "10.00")];
+    // Open the menu, tip right to Apps and up to Settings, and hold: the
+    // Settings app's first page (Battery). Then tip left through its pages:
+    // a page per setting, Legal and Power.
+    const PAGES: usize = 7;
+    let names: Vec<String> = (1..=PAGES).map(|i| format!("page{i}")).collect();
+    let mut times: Vec<(f64, &str)> = vec![(10.4, "apps"), (12.2, "battery")];
     for (i, name) in names.iter().enumerate() {
-        times.push((10.1 + 0.5 * i as f64 + 0.45, name));
+        times.push((12.3 + 0.5 * i as f64 + 0.45, name));
     }
     let mut inputs: Vec<(f64, Input)> = vec![
         // Open by 8.97 s, so the die has turned to the viewer and held still
@@ -793,9 +799,12 @@ fn menu_settings() {
         (8.1, Run::press),
         (9.3, Run::release),
         (9.5, |r| r.tip(TipDir::Right)),
+        (10.0, |r| r.tip(TipDir::Up)),
+        (10.6, Run::press),
+        (11.55, Run::release),
     ];
-    for i in 0..ITEMS {
-        inputs.push((10.1 + 0.5 * i as f64, |r| r.tip(TipDir::Up)));
+    for i in 0..PAGES {
+        inputs.push((12.3 + 0.5 * i as f64, |r| r.tip(TipDir::Left)));
     }
     run_scenario("menu-settings", Run::with_world(), &times, inputs);
 }
@@ -902,41 +911,50 @@ fn a_pig_toss_game_survives_other_modes_until_it_is_ended() {
     // Throw 20 and bank it.
     play(
         &mut run,
-        vec![(9.0, Run::shake), (10.0, Run::throw_release), (15.6, Run::tap)],
+        vec![
+            (9.0, Run::shake),
+            (10.0, Run::throw_release),
+            (14.8, Run::press),
+            (15.8, Run::release),
+        ],
         16.0,
     );
     assert_eq!(run.fw.pigs().scores(), &[20, 0]);
-    // Off to Dice: the menu opens on Mode, one tip up is Dice, hold saves.
+    // Off to Dice: the menu opens on Apps; up past Settings is Dice, and a
+    // hold saves.
     play(
         &mut run,
         vec![
             (16.1, Run::press),
             (17.3, Run::release),
             (17.6, |r| r.tip(TipDir::Up)),
-            (18.2, Run::press),
-            (19.15, Run::release),
+            (18.1, |r| r.tip(TipDir::Up)),
+            (18.7, Run::press),
+            (19.65, Run::release),
         ],
         20.0,
     );
     assert_eq!(run.fw.settings().play, PlayMode::Dice);
     assert_eq!(run.fw.pigs().scores(), &[20, 0], "kept while away");
-    // Back to Pig Toss: Dice opens on its count, Mode is one tip right, and
-    // Pig Toss one down. With the game in play a hold just saves.
+    // Back to Pig Toss: Dice opens on its count, Apps is one tip right, and
+    // Pig Toss two down (past Settings). With the game in play a hold just
+    // saves.
     play(
         &mut run,
         vec![
             (21.0, Run::press),
             (22.2, Run::release),
             (22.5, |r| r.tip(TipDir::Right)),
-            (23.1, |r| r.tip(TipDir::Down)),
-            (23.8, Run::press),
-            (24.75, Run::release),
+            (23.0, |r| r.tip(TipDir::Down)),
+            (23.5, |r| r.tip(TipDir::Down)),
+            (24.1, Run::press),
+            (25.05, Run::release),
         ],
         25.5,
     );
     assert_eq!(run.fw.settings().play, PlayMode::PigToss);
     assert_eq!(run.fw.pigs().scores(), &[20, 0], "picked up where it was");
-    // End it: Mode, one tip left to End game, hold, then set up two players.
+    // End it: Apps, one tip left to End game, hold, then set up two players.
     play(
         &mut run,
         vec![
@@ -1006,23 +1024,28 @@ fn menu_bills_in_hand() {
 
 #[test]
 fn menu_settings_tap_and_power_off() {
-    // On the Settings page a tap changes the item (Brightness 70% → 100%).
-    // Tip down past Regulatory and About to Power off and tap: every screen
-    // goes dark and stays dark until a tap boots the die.
+    // In the Settings app a tap changes nothing: Brightness stays at 70%
+    // until tipped up to 100%. One tip right of Battery is Power: a hold
+    // there darkens every screen until a tap boots the die.
     run_timeline(
         "menu-settings-tap",
         Run::with_world(),
-        &[10.0, 10.6, 11.1, 12.3, 13.0, 20.0, 20.6, 27.5],
+        &[12.3, 13.0, 13.6, 14.4, 15.5, 22.0, 22.6, 29.5],
         vec![
             (8.1, Run::press),
             (9.3, Run::release),
             (9.5, |r| r.tip(TipDir::Right)),
-            (10.2, Run::tap),
-            (10.7, |r| r.tip(TipDir::Down)),
-            (11.2, |r| r.tip(TipDir::Down)),
-            (11.7, |r| r.tip(TipDir::Down)),
-            (12.6, Run::tap),
-            (20.2, Run::tap),
+            (10.0, |r| r.tip(TipDir::Up)),
+            (10.6, Run::press),
+            (11.55, Run::release),
+            (11.8, |r| r.tip(TipDir::Left)),
+            (12.4, Run::tap),
+            (12.6, |r| r.tip(TipDir::Up)),
+            (13.1, |r| r.tip(TipDir::Right)),
+            (13.7, |r| r.tip(TipDir::Right)),
+            (14.3, Run::press),
+            (15.3, Run::release),
+            (22.2, Run::tap),
         ],
     );
 }

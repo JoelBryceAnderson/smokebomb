@@ -8,7 +8,7 @@
 //!    └──────────────── timeout / Handled ── Reveal ◀──────────── roll ◀────────────┘
 //!
 //!   Idle/Reveal ── LongPress ──▶ Menu ── LongPress (save) / MenuTimeout ──▶ Idle
-//!                                 ├──── Tap: change the setting / Power off ──▶ Menu / Off
+//!                                 ├──── PowerOff: a hold on Power ──▶ Off
 //!                                 ├──── MenuNext: a hold that goes on to the next step ──▶ Menu
 //!   Off ── Tap ──▶ Idle (boot)
 //!                                 └──── Shaking / FreeFall (discard) ──▶ Shaking / Airborne
@@ -54,9 +54,9 @@ pub enum Event {
     Motion(Motion),
     /// Short touch on any face (grip-rejected).
     Tap,
-    /// Touch held for [`crate::MENU_HOLD_MS`].
+    /// Touch held for [`crate::gesture::HOLD_MS`].
     LongPress,
-    /// A tap in the menu while Power off is selected.
+    /// A hold in the menu on the Power page.
     PowerOff,
     /// A hold in the menu that goes on to the next step instead of saving
     /// (setting up Pig Toss, or asking before ending a game).
@@ -79,8 +79,6 @@ pub enum Command {
     MenuClose {
         save: bool,
     },
-    /// A tap in the menu: change the selected setting.
-    MenuTap,
     /// A hold in the menu that goes on to the draft's next step.
     MenuNext,
     /// Leave the menu without saving and power the die off.
@@ -178,10 +176,6 @@ impl StateMachine {
                 emit(MenuClose { save: true });
                 emit(Haptic(HapticEffect::MenuSave));
                 Some(self.resting())
-            }
-            (Menu, Event::Tap) => {
-                emit(MenuTap);
-                None
             }
             (Menu, Event::MenuNext) => {
                 emit(MenuNext);
@@ -332,13 +326,12 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_in_the_menu_changes_a_setting_and_stays() {
+    fn a_tap_in_the_menu_does_nothing() {
         let mut sm = StateMachine::new();
         feed(&mut sm, &[Event::LongPress]);
         let cmds = feed(&mut sm, &[Event::Tap]);
         assert_eq!(*sm.mode(), Mode::Menu);
-        assert!(cmds.contains(&Command::MenuTap));
-        assert!(!cmds.contains(&Command::MenuClose { save: true }));
+        assert!(cmds.is_empty());
     }
 
     #[test]

@@ -4,12 +4,13 @@
 //! fuse the die picked at random, so nobody can count it down: the ticks
 //! and the glow speed up with the time spent against the longest fuse the
 //! setting allows, and whoever holds it when the fuse runs out is out.
-//! Tapping a spent die, or leaving it for [`BOOM_MS`], resets it.
+//! Shaking a spent die starts the next round (its app,
+//! [`crate::apps::potato`]); left for [`BOOM_MS`], it resets by itself.
 //!
 //! ```text
-//!   Idle ── shake ──▶ Lit ── fuse runs out ──▶ Boom ── tap / BOOM_MS ──▶ Idle
+//!   Idle ── shake ──▶ Lit ── fuse runs out ──▶ Boom ── reset / BOOM_MS ──▶ Idle
 //!    ▲                 │                          │
-//!    └──── reset (menu, docking) ◀────────────────┘
+//!    └──── reset (menu, docking, shake) ◀─────────┘
 //! ```
 //!
 //! Like [`crate::state::StateMachine`] the machine is pure: the firmware
@@ -37,9 +38,6 @@ pub type PotatoCommands = Vec<PotatoCommand, 2>;
 
 /// How long the spent die shows BOOM before it resets by itself.
 pub const BOOM_MS: u64 = 6_000;
-/// A tap dismisses BOOM only after this long, so the shake that ends a
-/// round doesn't.
-pub const BOOM_TAP_GUARD_MS: u64 = 800;
 /// Gap between ticks when the fuse is lit, and when it's about to go.
 /// How long the glow takes to fade after a tick.
 const PULSE_MS: f32 = 260.0;
@@ -106,14 +104,6 @@ impl Potato {
             };
         }
         out
-    }
-
-    /// A tap on a spent die resets it.
-    pub fn tap(&mut self, now_ms: u64) -> PotatoCommands {
-        match self.state {
-            PotatoState::Boom { since_ms } if now_ms - since_ms >= BOOM_TAP_GUARD_MS => self.reset(),
-            _ => PotatoCommands::new(),
-        }
     }
 
     /// Back to idle, from wherever it was.
@@ -272,17 +262,6 @@ mod tests {
         assert!(p.tick(1_000 + BOOM_MS - 1).is_empty());
         let cmds = p.tick(1_000 + BOOM_MS);
         assert!(has(&cmds, PotatoCommand::Clear));
-        assert!(p.is_idle());
-    }
-
-    #[test]
-    fn a_tap_resets_a_spent_die_but_not_at_once() {
-        let mut p = Potato::new();
-        p.light(0, 1_000, 1_000);
-        assert!(p.tap(500).is_empty(), "lit dice ignore taps");
-        p.tick(1_000);
-        assert!(p.tap(1_000 + BOOM_TAP_GUARD_MS - 1).is_empty(), "too soon");
-        assert!(has(&p.tap(1_000 + BOOM_TAP_GUARD_MS), PotatoCommand::Clear));
         assert!(p.is_idle());
     }
 

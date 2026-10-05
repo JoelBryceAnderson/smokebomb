@@ -50,6 +50,16 @@ impl<T: DisplayTarget> Run<T> {
         self.frame += 1;
     }
 
+    /// Seconds since the run began.
+    pub fn now(&self) -> f64 {
+        self.frame as f64 / FPS
+    }
+
+    /// Run on for `s` seconds.
+    pub fn wait(&mut self, s: f64) {
+        self.advance_to(self.now() + s);
+    }
+
     pub fn advance_to(&mut self, t: f64) {
         let target = (t * FPS).round() as u64;
         while self.frame <= target {

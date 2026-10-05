@@ -215,7 +215,7 @@ The boot is interrupted by a throw or by opening the menu.
   - Fades in over 0.35 s and out over 0.6 s, at 85% alpha.
   - Font 700, size `fitPx(label, 28)` at y = +44: at most 28 canvas, shrinking so the label fits 150 canvas (87 px) wide.
   - An **icon** sits above the name, centred at y = −21 with radius 36 canvas, in line art (2.6 canvas stroke, same glow and alpha as the text): a wireframe of the die's solid (tetrahedron d4, cube d6, octahedron d8, d10 kite, dodecahedron d12, icosahedron d20, a d10 kite with a % on its front for d100), a banknote for Pass the Pot, a bomb for Hot Potato. The count (`3d6`, `×2`) is only in the name. Drawn in `icons.rs`; the `setup-icons` snapshot shows all of them.
-- **Pass the Pot's bills screen.** In Pass the Pot the wake label is the bills in hand instead of the icon and name: three banknotes in a row (radius 18, 46 canvas apart, centred at y −18) with the ones rolled lit and the rest at 20% alpha, `3 bills` (26) at y +34, and `tap to change` (14, 60% alpha) at y +60. A deliberate tap (short, on a resting die, as Pig Toss banks) between rolls puts the last result away and shows this screen; a deliberate tap while it's up takes a bill away, wrapping from 1 back to 3, with a tick haptic. The count is the same `pot_count` the Bills in hand menu page sets. Picking the die up doesn't change it.
+- **Pass the Pot's bills screen.** In Pass the Pot the wake label is the bills in hand instead of the icon and name: three banknotes in a row (radius 18, 46 canvas apart, centred at y −18) with the ones rolled lit and the rest at 20% alpha, and `3 bills` (26) at y +34. A deliberate tap (short, on a resting die) between rolls puts the last result away and shows this screen, with the hint `hold: edit` on the tapped face. A hold while a tap has it up shows `bills` / `3` as the ring fills, then opens **Bills in hand alone** (its ring is that one page): tip up or down, hold to save; a shake or 25 s leaves the count as it was. The label after a save or a boot doesn't count, so a hold then opens the menu. The count is the same `pot_count` the Bills in hand menu page sets (X3).
 - **Setup changes, the end of boot, and closing the menu** (saved *or* discarded): the wake label shows for **2.2 s**.
 - **Default setup** at power-on: a single d20 (`d20`).
 - **Label formats:**
@@ -229,6 +229,7 @@ The boot is interrupted by a throw or by opening the menu.
 **Entering**
 - **Press and hold** a screen, with the finger moving less than 8 px, for **0.8 s**.
 - **Hold ring:** appears after **0.22 s** and fills over the remaining 0.58 s.
+- **Deliberate holds only** (brief 3, 2.2): exactly one face touched, on a steady die. Touching two or more faces is a grip and never taps or holds; a die that moves under the finger cancels the touch. Either way the touch is ignored until every finger is off. Letting go after the ring appears and before 0.8 s cancels: nothing happens. A tap is a touch let go before the ring appears.
   - Shape: a rounded square inset **3 canvas** from the lit edge (square ±80 canvas, i.e. 1.7–94.3 px), corner radius **21 canvas (12.1 px)**, stroke **4 canvas (2.3 px)**.
   - It starts at **12 o'clock** and draws **clockwise**, as a dash of length progress × perimeter.
 - **On open:**
@@ -239,49 +240,47 @@ The boot is interrupted by a throw or by opening the menu.
   - All particles and any shown result are cleared.
 - **Menu grows in** (0.35 s): the filled ring flashes outward (alpha 1 → 0, inset shrinking by 3 units per unit of progress), and the menu scales from 0.86 to 1 (ease-out cubic) while fading in over 0.3 s.
 
-**Menu layout** (front face only; canvas units from the lit-area center → panel px)
+**Menu layout** (front face only). Every page is drawn from one model, `menu::PageView`, on both panels: the status line (the setup in use: `3d6`, `Pot ×2`, `Pigs ×2`) and the page title in H2, then the value in H1 between ▲ and ▼, or with a caption (H2) under the value instead of ▼, then the page dots. The battery left the status bar for a page of its own in Settings (brief 3, 1.3.3). Sizes follow brief 3's held tiers (H1, H2); on the 64×64 panel the page dots are 3 px squares.
 
-| Element | Position (canvas) | Panel px | Style |
-|---|---|---|---|
-| Status: setup short label | left-aligned at (−66, −66) | x 9.8, y 9.8 | 700, 14 → 8.1 px, 85% |
-| Status: battery | rect at (44, −71), 20×10, 1.5 stroke; nub 2×4 at (64, −68); fill inset 2, width 16 × level | x 73.4, y 6.9, 11.6×5.8 | 85% |
-| Page title | centered at y −40 | y 24.9 | 600, 15 → 8.7 px, 75% |
-| ▲ | y −22 | y 35.3 | 700, 13 → 7.5 px, 55% |
-| Value | y +12 | y 54.9 | 700, `fitPx(val, 52)` → ≤30 px, full alpha |
-| ▼ | y +46 | y 74.6 | 700, 13 → 7.5 px, 55% |
-| Page dots (3) | y +66, spacing 14, radius 3.5 | y 86.2, spacing 8.1, r 2.0 | current 100%, others 35% |
-| Settings page: item name | y +2 | y 49.2 | 700, `fitPx(name, 26)` → ≤15 px |
-| Settings page: item value | y +27 | y 63.6 | 600, `fitPx(value, 18)` → ≤10.4 px, 72% |
+**Pages** (tip left or right to change page, wrapping; tip up = next value, down = previous, wrapping). A tap does nothing in the menu.
 
-`fitPx(str, max, width = 150)` = `min(max, floor(width / (len * 0.58)))` in canvas units (× 0.5783 for px).
+The menu is the current game's pages with **Apps** one tip right of them, so the dice flow is unchanged: hold, tip up or down for the count, one tip left for the die, hold to save.
 
-**Pages** (tip left or right to change page, wrapping; tip up = next value, down = previous, wrapping)
-
-The mockup has three pages: How many dice, Which die, Settings. The firmware adds a Mode page (extension X1, below), so what the ring holds depends on the mode.
-
-| Mode | Ring (tip left goes to the next page) | Opens on |
+| Game | Ring (tip left goes to the next page) | Opens on |
 |---|---|---|
-| Dice | Mode, How many dice, Which die, Settings | How many dice |
-| Pass the Pot | Mode, Bills in hand, Settings | Bills in hand |
-| Hot Potato | Mode, Fuse length, Settings | Fuse length |
+| Dice | Apps, How many, Which die | How many |
+| Pass the Pot | Apps, Bills | Bills |
+| Hot Potato | Apps, Fuse | Fuse |
+| Pig Toss | Apps, Players (Apps, End game with a game in play) | Players (Apps with a game in play) |
+| Settings | Battery, Brightness, Haptics, Sugar, Sleep, Bluetooth, Legal, Power | Battery |
 
-| Page | Title | Values |
+| Page | Title | Values (short names: each fits a line on the 64×64 panel) |
 |---|---|---|
-| Mode | Mode | Dice, Pass the Pot, Hot Potato |
-| Count | How many dice | 1–10 |
+| Apps | Apps | The game's picture with its name under it: Dice (the die in use), Pot (a bill), Potato, Pigs, then Settings (a gear). Only licensed games that are turned on (STORE.md); Settings always. |
+| Count | How many | 1–10 |
 | Die | Which die | d4, d6, d8, d10, d12, d20, d100 |
-| Pot | Bills in hand | 1–3 (starts at 3) |
-| Fuse | Fuse length | Short (10–20 s), Medium (20–40 s), Long (40–90 s) |
-| Settings | Settings | Brightness 70%; Haptics On; Sugar Full; Sleep after 2 min; Bluetooth On; Owner "Joel"; Power off "Tap to power off"; About (the firmware version and the die's id, `v0.1.0 · SC-A1B2`); Regulatory (`FCC ID: TBD` over `IC: TBD · CE · SC-1`, placeholders until certified, H14). **Decided (H11, H13):** a tap steps the selected item to its next value; Owner, Power off, About and Regulatory aren't editable. |
+| Pot | Bills | 1–3 (starts at 3) |
+| Fuse | Fuse | Fast (10–20 s), Mid (20–40 s), Slow (40–90 s) |
+| Players | Players | 2–6 |
+| Token | Player 1–6 | A–Z, then six symbols |
+| End game | End game | `End`, captioned `Clears all` |
+| Next game | Next game | `Redo` (captioned `Rematch`) or `New` (`Players`) |
+| Battery | Battery | the charge, `78%`, to read |
+| Brightness | Brightness | 30%, 50%, 70%, 100% (starts at 70%) |
+| Haptics | Haptics | Off, On |
+| Sugar | Sugar | Off, Lite, Full |
+| Sleep | Sleep | 30s, 1m, 2m, 5m, Off (starts at 2m) |
+| Bluetooth | Bluetooth | Off, On |
+| Legal | Legal | Tip through label-over-number pairs: FCC ID, IC, Model, Marks (placeholders until certified). E-labelling needs them on the die's own screen. |
+| Power | Power | `Off`, captioned `Hold: off` |
 
-- **X1, Mode page.** Mode sits one tip *right* of How many dice, so the dice flow is unchanged: hold, tip up or down for the count, one tip left for the die, hold to save.
+- **Settings is an app.** On Apps, Settings comes after the games; while it is chosen the ring is Apps alone. A hold goes into its pages, and a hold there saves (with anything changed on the way) and goes back to the game in use. Owner and About moved to the phone.
 - **Setups are kept apart.** The dice setup (die, count) and each game's options are saved separately, so leaving Dice for Pass the Pot and coming back leaves `3d6` as it was.
 - **Pass the Pot is a mode, not a die.** It no longer appears under Which die, and the count no longer clamps. It is still rolled and signed as `pass_the_pot` (H6).
-- **Page dots** show the ring: four in Dice mode, three in a game mode.
-- **Game sessions.** A game in play is a *session* (`session.rs`): it outlives the menu and switching modes (go to Dice for a roll and back, and the game is where it was), and it ends only on purpose. Pig Toss is the only mode with one so far. While Pig Toss has a game in play, its ring is Mode, **End game**, Settings: the menu opens on Mode, a tip away from both, and a hold on End game (`Hold to end`, `Scores won't be kept`) ends the game and brings Players back in its place. Nothing ends or starts until the menu saves: a timeout, a throw or docking leaves the game as it was.
-- **Setting up Pig Toss.** Without a game in play, Pig Toss can't be saved until one is set up. Choosing it and holding goes to Players; a hold on Players goes to Player 1, and each Player page's hold goes to the next player, the last one saving and starting the game. On a Player page, tip up or down through the initials A–Z and then six symbols (top hat, car, boot, boat, crown, star; no captions), wrapping. While setting up, the ring (and the page dots) is Players and the Player pages. The faces name players by their token (`J to roll`, `Pass to ★`) instead of P1, P2. A die that arrives in Pig Toss with no game (a fresh die, settings from the phone) starts one for the table as set. `menu-pig-setup`, `menu-pig-symbols` and `menu-pig-end-game` show it.
+- **Game sessions.** A game in play is a *session* (kept in the app's state, `apps/`): it outlives the menu and switching modes (go to Dice for a roll and back, and the game is where it was), and it ends only on purpose. Pig Toss is the only mode with one so far. While Pig Toss has a game in play, its ring is Apps, **End game**: the menu opens on Apps, a tip away, and a hold on End game ends the game and brings Players back in its place. Nothing ends or starts until the menu saves: a timeout, a throw or docking leaves the game as it was.
+- **Setting up Pig Toss.** Without a game in play, Pig Toss can't be saved until one is set up. Choosing it and holding goes to Players; a hold on Players goes to Player 1, and each Player page's hold goes to the next player, the last one saving and starting the game. On a Player page, tip up or down through the initials A–Z and then six symbols (top hat, car, boot, boat, crown, star; no captions), wrapping. While setting up, the ring (and the page dots) is Players and the Player pages. A die that arrives in Pig Toss with no game (a fresh die, settings from the phone) starts one for the table as set. `menu-pig-setup`, `menu-pig-symbols` and `menu-pig-end-game` show it.
 - **Hot Potato is not a roll.** See X2. The dice setup, Pass the Pot's count and the fuse length are all kept when switching.
-- **`Settings.modes` off** removes the Mode page and the die is always in Dice mode: the mockup's three-page menu. Most snapshot scenarios run this way; `menu-modes` runs the default menu.
+- **A die with only Dice** still has Apps, with Dice and Settings on it. Most snapshot scenarios run this way; `menu-modes` runs the default menu.
 
 **X2, Hot Potato** (extension; not in the mockup)
 
@@ -289,10 +288,51 @@ Shake the die to light the fuse, then pass it around. Whoever holds it when it g
 
 - **Fuse.** On a shake from idle the die draws a fuse from the TRNG, uniform in the chosen range (Short 10–20 s, Medium 20–40 s, Long 40–90 s). Only a shake lights it; throws, taps and being set down don't change it.
 - **Lit.** Every face except the one facing down shows a glowing core (radius 16 → 40 canvas as it heats) with "PASS IT" beneath. Each tick flashes the glow (260 ms fade) and plays the 10 ms tick haptic. The gap between ticks falls from 900 ms to 110 ms as the *heat* rises. Heat is time lit ÷ the longest fuse the setting allows, so it never gives the real fuse away. The smoke builds as if the die were being shaken.
-- **Boom.** When the fuse runs out: buzz haptic, a full cloud of smoke that drains over the faces with embers (the throw and landing smoke), a shockwave (0.7 s) and BOOM on every face except the one facing down, with "Tap to reset" from 1.2 s. A tap resets it after 0.8 s; otherwise it resets by itself after 6 s and fades out from 4.6 s.
+- **Boom.** When the fuse runs out: buzz haptic, a full cloud of smoke that drains over the faces with embers (the throw and landing smoke), a shockwave (0.7 s) and BOOM on every face except the one facing down, with "Shake to go again" from 1.2 s (96×96 only). A shake from 1.5 s after it went off starts the next round at once (a shake that began sooner doesn't count); otherwise it resets by itself after 6 s and fades out from 4.6 s. Taps don't reset it (X3).
 - **No menu mid-round.** A hold does nothing while the fuse is lit (and no hold ring shows). It opens the menu as usual once the die has gone off. Opening the menu, docking or changing mode resets the round.
 - **Shakes in the menu.** A shake or throw with the menu open closes it without saving and leaves the die idle; in a game that doesn't roll it doesn't start a round.
 - **Label.** The wake label and menu status read "Hot Potato" and "Potato". The success screen says "Shake to light" instead of "Ready to roll".
+
+**X4, Text tiers** (SMOKEBOMB_SIM_UPDATE_BRIEF_3, part 1; where the layouts in C2, C6 and X2 disagree, this wins)
+
+Cap height ≥ viewing distance ÷ 200. Table screens (read by the table) have T1, the answer, and at most one T2 word; held screens (menu, success, a hold's preview) have H1 values and H2 labels. Nothing smaller, no wrapped lines, no chrome or hints on table screens (a tap shows the hint, X3).
+
+| Tier | 64×64 (30 mm) | 96×96 (34 mm) | Holds |
+|---|---|---|---|
+| T1 | 30 px numerals; 21 px letters or glyphs (the floor) | 70 canvas px (28 px caps), 50 for 3 characters (20 px) | 1–3 characters, or one glyph |
+| T2 | 15 px | 35 canvas px (14 px) | one word, ≤5 characters |
+| H1 | 18 px | 42 canvas px (17 px) | a value that fits a line |
+| H2 | 7 px (the 5×7 `TEXT`) | 18 canvas px (7.3 px) | ≤10 characters |
+
+The 64×64 cuts are one-bit Space Grotesk 700, generated at the size whose H is exactly the tier's cap height, ascenders snapped to the cap line (`tier64.rs`, from `assets-build/src/tier_fonts.rs`); T1 numbers stay the hand-drawn numerals.
+
+| Table screen | T1 | T2 |
+|---|---|---|
+| Dice result | the total, white (gold for a max, red for a dud); `1k` for 1000 | `d20`, `3d6`, `10d%`, or `MAX` / `DUD` |
+| Dice label | the die's solid | the dice |
+| Pass the Pot result | the dice as glyphs (← → pot •) | `keep`, or `−2`: bills leaving the hand |
+| Pass the Pot bills | the count, mint | `bills` |
+| Hot Potato | the potato (lit: heating, a heat bar under it; spent: charred) | `ready`, `PASS`, `BOOM` |
+| Pig Toss label | whose go it is (their token, pink; gold once they've won) | `turn` / `wins` |
+| Pig Toss throw | `+15` (gold from 20); an oops `−20` or `0` in red; a smooch a red heart | what scored (`Strut`, `Twin`, `Nap`); `OOPS`; `−40` or `kiss` |
+| Pig Toss after the throw | the player's token | the turn so far, `+35` (or, after an oops or smooch, the next player's token over `turn`) |
+| Pig Toss lock-in | the points, then the new total counting up (mint) | a padlock snapping shut |
+| Low battery | the bolt | `low` |
+
+On the 64×64 panel a tap's hint sits along the top edge and the face's content moves down 4 px while it shows. `tests/text_sizes.rs` checks every screen in every game on both panels against this table (brief test 1): the painter notes every text drawn with its cap height and width.
+
+**X3, Holds and taps** (SMOKEBOMB_SIM_UPDATE_BRIEF_3, part 2)
+
+No tap changes game state. A tap wakes the die, brings back a dimmed result, shows the setup label, puts a Pass the Pot result away, and shows the screen's action hint (`hold: bank`, `hold: edit`, `hold: next`) on the tapped face for 3 s. A deliberate hold (see C3, Entering) does what the held screen shows:
+
+| Screen | While the ring fills | A hold |
+|---|---|---|
+| Pig Toss, a turn with points | `bank` over the total it comes to | Banks and passes the die: haptic 28 ms and the save flash, then the lock-in |
+| Pig Toss, the win screen | `next` | Opens **Next game** alone: `Rematch` (same players, scores to 0) or, one tip up or down, `Players` (setting up again, then each player's token). Hold to save. |
+| Pass the Pot, bills screen from a tap | `bills` over the count | Opens Bills in hand alone |
+| Anything else (idle, a result with nothing pending, Dice, Hot Potato after BOOM) | the ring alone | Opens the menu |
+
+The choice lives in one place (`Firmware::pending` and the hold in `Firmware::tick`), so it can be switched if Joel picks another rule. To reach the menu mid-game, resolve the action or roll first.
 
 **Tips**
 
@@ -335,7 +375,7 @@ Mockup input: a swipe of more than 36 px (by dominant direction), or the arrow k
   - a throw or shake,
   - changing view or docking,
   - **25 s** with no input.
-- **Power off** (a *tap* while "Power off" is selected; a hold there saves like anywhere else): the screens go black and stay black. Motion and holds are ignored; a **tap** on any screen boots the die at once (C1). Docking shows the nest as usual. Any count or die change made in the same menu session is **not** saved. There is no power switch, so this is as off as the die gets. (Replaces the mockup's "Restart", which blacked out for 0.8 s and rebooted on its own; see H11.)
+- **Power off** (a *hold* on Settings' Power page; its ring preview is the page's own `Hold: off`): the screens go black and stay black. Motion and holds are ignored; a **tap** on any screen boots the die at once (C1), though letting go of the hold that powered it off doesn't. Docking shows the nest as usual. Nothing changed in the same menu session is saved. There is no power switch, so this is as off as the die gets. (Replaces the mockup's "Restart", which blacked out for 0.8 s and rebooted on its own; see H11.)
 
 ### C4. Success screen (after saving)
 - **Duration:** about **1.25 s** on the menu face.

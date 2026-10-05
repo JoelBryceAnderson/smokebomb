@@ -296,7 +296,38 @@ pub struct Painter<'a, T: Target = Grey96> {
     fb: &'a mut Framebuffer<T>,
     layer: &'a mut Layer<T>,
     pub xf: Transform,
+    /// Every text (and text-sized icon) drawn, for the size audit.
+    pub marks: Marks,
+    /// What the next marks are ([`MarkKind::Text`] unless a screen says).
+    pub mark_kind: MarkKind,
 }
+
+/// What a mark is, for the size audit (brief 3, 1.2–1.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarkKind {
+    /// Text: its cap height and length count.
+    Text,
+    /// A picture standing in for text (a T1 glyph, a T2 icon).
+    Icon,
+    /// A tap's hint, which may be held-sized on a table screen (2.1).
+    Hint,
+}
+
+/// One text drawn on a face: its cap height in panel px, how many
+/// characters, and its alpha.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mark {
+    pub cap_px: f32,
+    /// How wide the text is, panel px (0 for an icon).
+    pub width_px: f32,
+    pub chars: u8,
+    pub alpha: f32,
+    pub kind: MarkKind,
+}
+
+/// A face's marks. Past the capacity, marks are dropped (the audit fails
+/// any face that fills it: no screen should come near).
+pub type Marks = heapless::Vec<Mark, 12>;
 
 impl<'a, T: Target> Painter<'a, T> {
     /// `xf` should be made for `T` ([`Transform::quarter_on`]).
@@ -306,7 +337,38 @@ impl<'a, T: Target> Painter<'a, T> {
             (T::WIDTH, T::HEIGHT),
             "transform made for another target"
         );
-        Self { fb, layer, xf }
+        Self {
+            fb,
+            layer,
+            xf,
+            marks: Marks::new(),
+            mark_kind: MarkKind::Text,
+        }
+    }
+
+    /// Note text `cap` drawing units tall (cap height × scale), `width`
+    /// units wide and `chars` long, for the size audit.
+    pub fn note_text(&mut self, cap: f32, width: f32, chars: usize, alpha: f32) {
+        let kind = self.mark_kind;
+        self.note(kind, cap, width, chars, alpha);
+    }
+
+    /// Note a picture `height` drawing units tall standing in for text.
+    pub fn note_icon(&mut self, height: f32, alpha: f32) {
+        self.note(MarkKind::Icon, height, 0.0, 1, alpha);
+    }
+
+    fn note(&mut self, kind: MarkKind, cap: f32, width: f32, chars: usize, alpha: f32) {
+        if alpha <= 0.0 || chars == 0 {
+            return;
+        }
+        let _ = self.marks.push(Mark {
+            cap_px: cap * self.xf.px_per_unit(),
+            width_px: width * self.xf.px_per_unit(),
+            chars: chars.min(255) as u8,
+            alpha,
+            kind,
+        });
     }
 
     /// The framebuffer, for code that still draws directly (placeholders).

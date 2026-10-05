@@ -3,7 +3,7 @@
 //! Two pigs are thrown every time. Each lands in one of six poses, drawn at
 //! the odds a tossed pig-shaped token really lands in, so a pose is worth
 //! more the rarer it is. Throw as often as you like to build up the turn's
-//! score, then tap to bank it and pass the die; an oops loses the turn's
+//! score, then hold to bank it and pass the die; an oops loses the turn's
 //! score.
 //!
 //! | Pose | Odds | Points |

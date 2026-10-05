@@ -419,6 +419,15 @@ pub static POT_RIM: Glyph<8> = layer(' ', POT, b'#');
 pub static POT_INSIDE: Glyph<8> = layer(' ', POT, b'o');
 pub static KEEP: Glyph<5> = glyph(' ', ".###. ##### ##### ##### .###.");
 
+/// Settings: a gear, 15×15, eight teeth round a hole.
+pub static GEAR: Glyph<15> = glyph(
+    ' ',
+    "......###...... ......###...... ..##..###..##.. ..###########.. \
+     ...#########... ...###...###... #####.....##### #####.....##### \
+     #####.....##### ...###...###... ...#########... ..###########.. \
+     ..##..###..##.. ......###...... ......###......",
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
