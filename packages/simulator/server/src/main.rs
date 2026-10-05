@@ -1021,7 +1021,7 @@ mod tests {
     }
 
     #[test]
-    fn hot_potato_lights_on_a_shake_goes_off_and_resets_without_rolling() {
+    fn hot_potato_lights_on_a_shake_goes_off_and_goes_again_without_rolling() {
         use smokebomb_firmware::smokebomb_core::menu::PlayMode;
         use smokebomb_firmware::smokebomb_core::potato::{PotatoState, BOOM_MS};
         use smokebomb_firmware::smokebomb_core::state::Mode;
@@ -1073,17 +1073,19 @@ mod tests {
         assert!(haptics.contains(&HapticEffect::Buzz));
         assert!(rig.fw.last_roll().is_none());
 
-        // A tap resets it once BOOM has had its moment.
+        // A tap leaves it be: taps never change the game.
         rig.run(1.0);
         rig.sim.lock().touch_mask = 1 << Face::PosZ.index();
         rig.run(0.1);
         rig.sim.lock().touch_mask = 0;
         rig.run(0.1);
-        assert!(rig.fw.potato().is_idle());
+        assert!(matches!(rig.fw.potato().state(), PotatoState::Boom { .. }));
 
-        // Or BOOM times out by itself.
+        // A shake once BOOM has had its moment starts the next round.
+        rig.run(0.5);
         rig.world.start_shake();
         rig.run(1.0);
+        assert!(rig.fw.potato().is_lit(), "{:?}", rig.fw.potato().state());
         rig.world.end_shake(false);
         for _ in 0..(25.0 / 0.1) as usize {
             if matches!(rig.fw.potato().state(), PotatoState::Boom { .. }) {

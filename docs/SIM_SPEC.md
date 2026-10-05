@@ -215,7 +215,7 @@ The boot is interrupted by a throw or by opening the menu.
   - Fades in over 0.35 s and out over 0.6 s, at 85% alpha.
   - Font 700, size `fitPx(label, 28)` at y = +44: at most 28 canvas, shrinking so the label fits 150 canvas (87 px) wide.
   - An **icon** sits above the name, centred at y = −21 with radius 36 canvas, in line art (2.6 canvas stroke, same glow and alpha as the text): a wireframe of the die's solid (tetrahedron d4, cube d6, octahedron d8, d10 kite, dodecahedron d12, icosahedron d20, a d10 kite with a % on its front for d100), a banknote for Pass the Pot, a bomb for Hot Potato. The count (`3d6`, `×2`) is only in the name. Drawn in `icons.rs`; the `setup-icons` snapshot shows all of them.
-- **Pass the Pot's bills screen.** In Pass the Pot the wake label is the bills in hand instead of the icon and name: three banknotes in a row (radius 18, 46 canvas apart, centred at y −18) with the ones rolled lit and the rest at 20% alpha, `3 bills` (26) at y +34, and `tap to change` (14, 60% alpha) at y +60. A deliberate tap (short, on a resting die, as Pig Toss banks) between rolls puts the last result away and shows this screen; a deliberate tap while it's up takes a bill away, wrapping from 1 back to 3, with a tick haptic. The count is the same `pot_count` the Bills in hand menu page sets. Picking the die up doesn't change it.
+- **Pass the Pot's bills screen.** In Pass the Pot the wake label is the bills in hand instead of the icon and name: three banknotes in a row (radius 18, 46 canvas apart, centred at y −18) with the ones rolled lit and the rest at 20% alpha, and `3 bills` (26) at y +34. A deliberate tap (short, on a resting die) between rolls puts the last result away and shows this screen, with the hint `hold: edit` on the tapped face. A hold while a tap has it up shows `bills` / `3` as the ring fills, then opens **Bills in hand alone** (its ring is that one page): tip up or down, hold to save; a shake or 25 s leaves the count as it was. The label after a save or a boot doesn't count, so a hold then opens the menu. The count is the same `pot_count` the Bills in hand menu page sets (X3).
 - **Setup changes, the end of boot, and closing the menu** (saved *or* discarded): the wake label shows for **2.2 s**.
 - **Default setup** at power-on: a single d20 (`d20`).
 - **Label formats:**
@@ -290,10 +290,23 @@ Shake the die to light the fuse, then pass it around. Whoever holds it when it g
 
 - **Fuse.** On a shake from idle the die draws a fuse from the TRNG, uniform in the chosen range (Short 10–20 s, Medium 20–40 s, Long 40–90 s). Only a shake lights it; throws, taps and being set down don't change it.
 - **Lit.** Every face except the one facing down shows a glowing core (radius 16 → 40 canvas as it heats) with "PASS IT" beneath. Each tick flashes the glow (260 ms fade) and plays the 10 ms tick haptic. The gap between ticks falls from 900 ms to 110 ms as the *heat* rises. Heat is time lit ÷ the longest fuse the setting allows, so it never gives the real fuse away. The smoke builds as if the die were being shaken.
-- **Boom.** When the fuse runs out: buzz haptic, a full cloud of smoke that drains over the faces with embers (the throw and landing smoke), a shockwave (0.7 s) and BOOM on every face except the one facing down, with "Tap to reset" from 1.2 s. A tap resets it after 0.8 s; otherwise it resets by itself after 6 s and fades out from 4.6 s.
+- **Boom.** When the fuse runs out: buzz haptic, a full cloud of smoke that drains over the faces with embers (the throw and landing smoke), a shockwave (0.7 s) and BOOM on every face except the one facing down, with "Shake to go again" from 1.2 s (96×96 only). A shake from 1.5 s after it went off starts the next round at once (a shake that began sooner doesn't count); otherwise it resets by itself after 6 s and fades out from 4.6 s. Taps don't reset it (X3).
 - **No menu mid-round.** A hold does nothing while the fuse is lit (and no hold ring shows). It opens the menu as usual once the die has gone off. Opening the menu, docking or changing mode resets the round.
 - **Shakes in the menu.** A shake or throw with the menu open closes it without saving and leaves the die idle; in a game that doesn't roll it doesn't start a round.
 - **Label.** The wake label and menu status read "Hot Potato" and "Potato". The success screen says "Shake to light" instead of "Ready to roll".
+
+**X3, Holds and taps** (SMOKEBOMB_SIM_UPDATE_BRIEF_3, part 2)
+
+No tap changes game state. A tap wakes the die, brings back a dimmed result, shows the setup label, puts a Pass the Pot result away, and shows the screen's action hint (`hold: bank`, `hold: edit`, `hold: next`) on the tapped face for 3 s. A deliberate hold (see C3, Entering) does what the held screen shows:
+
+| Screen | While the ring fills | A hold |
+|---|---|---|
+| Pig Toss, a turn with points | `bank` over the total it comes to | Banks and passes the die: haptic 28 ms and the save flash, then the lock-in |
+| Pig Toss, the win screen | `next` | Opens **Next game** alone: `Rematch` (same players, scores to 0) or, one tip up or down, `Players` (setting up again, then each player's token). Hold to save. |
+| Pass the Pot, bills screen from a tap | `bills` over the count | Opens Bills in hand alone |
+| Anything else (idle, a result with nothing pending, Dice, Hot Potato after BOOM) | the ring alone | Opens the menu |
+
+The choice lives in one place (`Firmware::pending` and the hold in `Firmware::tick`), so it can be switched if Joel picks another rule. To reach the menu mid-game, resolve the action or roll first.
 
 **Tips**
 

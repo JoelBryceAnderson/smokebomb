@@ -1,11 +1,16 @@
 //! Hot Potato as an app: the game is [`crate::potato`]; this lights it on a
-//! shake, resets it on a tap, and turns its commands into effects.
+//! shake and turns its commands into effects. Once it has gone off, a shake
+//! starts the next round (after [`RESTART_GUARD_MS`], so passing the die as
+//! it goes off doesn't), or it resets by itself. A hold opens the menu,
+//! except while the fuse is lit.
 
 use smokebomb_hal::{HalResult, HapticEffect};
 
-use super::{Action, App, Ctx, Effect, Effects, Kind, MotionUse, SmokeOp, Tap};
+use super::{App, Ctx, Effect, Effects, Kind, MotionUse, SmokeOp};
 use crate::potato::{self as game, Potato, PotatoCommand, PotatoCommands};
-use crate::state::Mode;
+
+/// After it goes off, shakes are ignored this long.
+pub const RESTART_GUARD_MS: u64 = 1_500;
 
 /// How much of a full cloud a lit fuse's smoke may reach, at the start and
 /// at full heat: enough to build, little enough to read "PASS IT" through.
@@ -48,10 +53,15 @@ impl App for Potato {
         }
     }
 
-    /// A shake lights an idle die: the fuse is drawn at random within the
-    /// setting.
+    /// A shake lights an idle die, or a spent one once the guard is past:
+    /// the fuse is drawn at random within the setting.
     fn shaken(&mut self, cx: &mut Ctx) -> HalResult<Effects> {
         let mut out = Effects::new();
+        if self.boomed_for(cx.now).is_some_and(|t| t >= RESTART_GUARD_MS) {
+            for cmd in self.reset() {
+                push_command(&mut out, cmd);
+            }
+        }
         if !self.is_idle() {
             return Ok(out);
         }
@@ -62,17 +72,6 @@ impl App for Potato {
             push_command(&mut out, cmd);
         }
         Ok(out)
-    }
-
-    fn tapped(&self, _tap: Tap, cx: &Ctx) -> Option<Action> {
-        (!matches!(cx.mode, Mode::Menu | Mode::Nest | Mode::Off)).then_some(Action::Reset)
-    }
-
-    fn commit(&mut self, action: Action, cx: &mut Ctx) -> Effects {
-        match action {
-            Action::Reset => commands(self.tap(cx.now)),
-            _ => Effects::new(),
-        }
     }
 
     /// Tick the fuse, and keep the smoke building with the heat.
@@ -94,5 +93,52 @@ impl App for Potato {
     /// No opening the menu mid-round.
     fn blocks_hold(&self) -> bool {
         self.is_lit()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::menu::Settings;
+    use crate::state::Mode;
+    use smokebomb_hal::Rng;
+
+    struct Words(u32);
+    impl Rng for Words {
+        fn fill_bytes(&mut self, buf: &mut [u8]) -> HalResult<()> {
+            buf.copy_from_slice(&self.0.to_le_bytes()[..buf.len()]);
+            Ok(())
+        }
+    }
+
+    fn shake(p: &mut Potato, now: u64) -> Effects {
+        let mut settings = Settings::default();
+        let mut rng = Words(0);
+        let mut cx = Ctx {
+            now,
+            mode: Mode::Idle,
+            label_up: false,
+            settings: &mut settings,
+            rng: &mut rng,
+        };
+        p.shaken(&mut cx).unwrap()
+    }
+
+    #[test]
+    fn a_shake_restarts_a_spent_die_only_after_the_guard() {
+        let mut p = Potato::new();
+        assert!(shake(&mut p, 0).contains(&Effect::GameStarted));
+        let fuse = match p.state() {
+            game::PotatoState::Lit { fuse_ms, .. } => *fuse_ms as u64,
+            s => panic!("{s:?}"),
+        };
+        assert!(shake(&mut p, 10).is_empty(), "already lit");
+        Potato::tick(&mut p, fuse);
+        assert!(p.boomed_for(fuse).is_some());
+        assert!(shake(&mut p, fuse + RESTART_GUARD_MS - 1).is_empty(), "too soon");
+        let fx = shake(&mut p, fuse + RESTART_GUARD_MS);
+        assert_eq!(fx[0], Effect::Smoke(SmokeOp::Clear));
+        assert!(fx.contains(&Effect::GameStarted));
+        assert!(p.is_lit());
     }
 }

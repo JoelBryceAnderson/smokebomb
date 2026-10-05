@@ -1,15 +1,19 @@
 //! Pig Toss as an app: the game is [`crate::pigs`]; this keeps it in play
 //! across the menu and other apps, throws the pigs when the die lands, banks
-//! on a tap, and keeps the clocks the faces animate by.
+//! on a hold, and keeps the clocks the faces animate by. Once someone has
+//! won, a hold opens Next: a rematch, or back to setting up Players.
 //!
 //! A game in play is kept until someone ends it on purpose, from the End game
 //! page in the menu. Pig Toss needs one to play, so arriving without one (a
 //! fresh die, settings from the phone) starts one for the table as set.
 
+use core::fmt::Write;
+
+use heapless::String;
 use smokebomb_hal::{HalResult, HapticEffect};
 
-use super::{Action, App, Ctx, Effect, Effects, Kind, MotionUse, Tap, Throw};
-use crate::menu::{PlayMode, Settings};
+use super::{Action, App, Ctx, Effect, Effects, Kind, MotionUse, Pending, Throw, View};
+use crate::menu::{Page, PlayMode, Settings};
 use crate::pigs::{self as game, Banked, Locked, Outcome, Pigs};
 use crate::screens::pig_win;
 use crate::state::Mode;
@@ -125,23 +129,38 @@ impl App for PigToss {
         Ok(out)
     }
 
-    /// Only a deliberate tap on the top screen banks: short, on a die that
-    /// was resting and stays put. Picking the die up to throw it puts a
-    /// finger on that screen too, and mustn't pass the turn. A winning throw
-    /// still counting up isn't wiped before the win screen has had its
-    /// moment.
-    fn tapped(&self, tap: Tap, cx: &Ctx) -> Option<Action> {
-        let ok = tap.deliberate
-            && tap.face == tap.up
-            && matches!(cx.mode, Mode::Idle | Mode::Reveal { .. })
-            && !(self.game.last().is_some_and(|t| t.won) && self.win_t(cx.now, &cx.mode).is_none());
-        ok.then_some(Action::Bank)
+    /// Bank while the turn has points, or once the win screen is up, choose
+    /// what comes next. A winning throw still counting up has nothing
+    /// pending: its moment isn't cut short.
+    fn pending(&self, v: &View) -> Option<Pending> {
+        if !self.live {
+            return None;
+        }
+        if self.game.winner().is_some() {
+            return self.win_t(v.now, &v.mode).map(|_| Pending {
+                action: Action::Open(Page::Next),
+                word: "next",
+                value: String::new(),
+                hint: "hold: next",
+            });
+        }
+        if self.game.turn() == 0 {
+            return None;
+        }
+        let total = self.game.scores()[self.game.current() as usize] + self.game.turn();
+        let mut value = String::new();
+        let _ = write!(value, "{total}");
+        Some(Pending {
+            action: Action::Bank,
+            word: "bank",
+            value,
+            hint: "hold: bank",
+        })
     }
 
-    /// Bank the turn and pass the die, or start a new game once the win
-    /// screen is up.
+    /// Bank the turn and pass the die.
     fn commit(&mut self, action: Action, cx: &mut Ctx) -> Effects {
-        let mut out = Effects::new();
+        let out = Effects::new();
         if action != Action::Bank {
             return out;
         }
@@ -161,10 +180,6 @@ impl App for PigToss {
             Banked::Nothing | Banked::NewGame => None,
         };
         self.locked = locked.map(|l| (l, cx.now));
-        if locked.is_some() {
-            // A thunk as it locks.
-            let _ = out.push(Effect::Haptic(HapticEffect::LandingThud));
-        }
         out
     }
 }
@@ -203,5 +218,49 @@ mod tests {
         p.game.bank();
         p.settings_applied(&settings);
         assert_eq!(p.game.scores()[0], 20, "the game in play is kept");
+    }
+}
+
+#[cfg(test)]
+mod pending_tests {
+    use super::*;
+    use crate::pigs::Pose::*;
+
+    fn view(settings: &Settings, now: u64) -> View<'_> {
+        View {
+            now,
+            mode: Mode::Idle,
+            label_up: false,
+            settings,
+        }
+    }
+
+    #[test]
+    fn a_hold_banks_once_the_turn_has_points() {
+        let s = Settings::default();
+        let mut p = PigToss::default();
+        p.start(2);
+        assert_eq!(p.pending(&view(&s, 0)), None);
+        p.game.throw([Back, Back], false);
+        let pending = p.pending(&view(&s, 0)).unwrap();
+        assert_eq!(pending.action, Action::Bank);
+        assert_eq!(pending.value.as_str(), "20");
+    }
+
+    #[test]
+    fn after_a_win_a_hold_chooses_what_is_next_once_the_win_screen_is_up() {
+        let s = Settings::default();
+        let mut p = PigToss::default();
+        p.start(2);
+        while p.game.winner().is_none() {
+            p.game.throw([Ear, Ear], false);
+        }
+        p.landed_ms = 1_000;
+        assert_eq!(p.pending(&view(&s, 1_000)), None, "still counting up");
+        let later = 1_000 + (pig_win::AT * 1000.0) as u64 + 100;
+        assert_eq!(
+            p.pending(&view(&s, later)).unwrap().action,
+            Action::Open(Page::Next)
+        );
     }
 }

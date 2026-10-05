@@ -59,16 +59,13 @@ fn scenarios() -> Vec<common::Scenario> {
                 r.shake()
             })]
         ),
+        // A tap shows the bills and what a hold does; the hold shows its
+        // action as the ring fills, then opens Bills alone to change them.
         scenario!(
-            "pot: bills, tap to change",
+            "pot: bills, hold to change",
             || pot(3),
-            &[7.0, 7.8, 8.6, 9.4],
-            [
-                (6.6, |r| r.tap()),
-                (7.4, |r| r.tap()),
-                (8.2, |r| r.tap()),
-                (9.0, |r| r.tap()),
-            ]
+            &[7.0, 7.4, 7.8, 8.2, 8.6, 9.0],
+            [(6.6, |r| r.tap()), (7.3, |r| r.press()), (8.4, |r| r.release()),]
         ),
         // Raw d6 values are word % 6 + 1: 1 ←, 2 pot, 3 →, 4–6 keep.
         scenario!(

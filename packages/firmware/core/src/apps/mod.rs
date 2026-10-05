@@ -4,8 +4,14 @@
 //! owns everything the apps share: boot, the Nest, power and sleep, the roll
 //! flow (shake, air, settle), gestures, the menu and rendering. An app owns
 //! its rules. It says what motion means to it ([`Kind`]), what a throw draws
-//! ([`Throw`]), and what to do when it lands, is shaken, is touched or ticks;
-//! it answers with [`Effect`]s for the platform to carry out.
+//! ([`Throw`]), what a hold would do now ([`App::pending`]), and what to do
+//! when it lands, is shaken, is touched or ticks; it answers with [`Effect`]s
+//! for the platform to carry out.
+//!
+//! No tap changes game state (brief 3, part 2): [`App::tapped`] sees the app
+//! only through `&self` and the platform through a read-only [`View`]. A
+//! deliberate hold does what the held screen shows: the pending action, or
+//! the menu when nothing is pending.
 //!
 //! Every app's state lives in [`Apps`], whichever is active, so a game in
 //! play (Pig Toss's scores) outlives the menu and switching apps: go to Dice
@@ -19,11 +25,11 @@ pub mod pigs;
 pub mod pot;
 pub mod potato;
 
-use heapless::Vec;
+use heapless::{String, Vec};
 use smokebomb_hal::{Face, HapticEffect, Rng};
 use smokebomb_shared::{DieKind, ModeId};
 
-use crate::menu::Settings;
+use crate::menu::{Page, Settings};
 use crate::potato::Potato;
 use crate::state::Mode;
 
@@ -67,17 +73,27 @@ pub struct Tap {
     pub deliberate: bool,
 }
 
-/// A change to an app's state, asked for by a gesture.
+/// A change to an app's state that a hold makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
-    /// Pig Toss: bank the turn and pass the die, or start again after a win.
+    /// Pig Toss: bank the turn and pass the die.
     Bank,
-    /// Pass the Pot: one bill fewer, wrapping from 1 back to 3.
-    Bills,
-    /// Pass the Pot: put the last result away for the next player.
-    DismissResult,
-    /// Hot Potato: reset a spent die.
-    Reset,
+    /// Open the menu on this page alone, to adjust one thing (brief 3,
+    /// 2.2.4): tip to change it, hold to save, shake or wait to leave it.
+    Open(Page),
+}
+
+/// What a hold would do now, and how the held face says so while the ring
+/// fills (brief 3, 2.2.1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pending {
+    pub action: Action,
+    /// The action, in a word: `bank`.
+    pub word: &'static str,
+    /// What it comes to: `12`. May be empty.
+    pub value: String<5>,
+    /// What a tap shows: `hold: bank`.
+    pub hint: &'static str,
 }
 
 /// What the smoke should do.
@@ -98,21 +114,45 @@ pub enum Effect {
     Smoke(SmokeOp),
     /// A round started: clear the labels and any result.
     GameStarted,
-    /// Put the shown result away.
+    /// Put the shown result away. Display only: the game is unchanged.
     DismissResult,
 }
 
 pub type Effects = Vec<Effect, 4>;
 
-/// What an app may see of the platform while it handles something.
+/// What an app may read of the platform.
+#[derive(Clone, Copy)]
+pub struct View<'a> {
+    pub now: u64,
+    /// The roll state machine's mode.
+    pub mode: Mode,
+    /// A deliberate tap has the setup label up, with nothing over it
+    /// ([`crate::ui::Ui::label_up`]).
+    pub label_up: bool,
+    pub settings: &'a Settings,
+}
+
+/// What an app may use of the platform while it changes.
 pub struct Ctx<'a> {
     pub now: u64,
     /// The roll state machine's mode.
     pub mode: Mode,
-    /// The setup label is up with nothing over it ([`crate::ui::Ui::label_up`]).
+    /// A deliberate tap has the setup label up, with nothing over it
+    /// ([`crate::ui::Ui::label_up`]).
     pub label_up: bool,
     pub settings: &'a mut Settings,
     pub rng: &'a mut dyn Rng,
+}
+
+impl Ctx<'_> {
+    pub fn view(&self) -> View<'_> {
+        View {
+            now: self.now,
+            mode: self.mode,
+            label_up: self.label_up,
+            settings: self.settings,
+        }
+    }
 }
 
 pub trait App {
@@ -134,13 +174,19 @@ pub trait App {
         Ok(Effects::new())
     }
 
-    /// What a tap does. Taps still change game state for now; brief 3 moves
-    /// these to holds (docs/APP_FRAMEWORK.md, step 3).
-    fn tapped(&self, _tap: Tap, _cx: &Ctx) -> Option<Action> {
+    /// What a hold would do now, between throws. `None` and the hold opens
+    /// the menu.
+    fn pending(&self, _v: &View) -> Option<Pending> {
         None
     }
 
-    /// Carry out an action.
+    /// A tap: read-only, so it may only change what the screens show.
+    fn tapped(&self, _tap: Tap, _v: &View) -> Effects {
+        Effects::new()
+    }
+
+    /// Carry out an action from [`App::pending`] ([`Action::Open`] is the
+    /// platform's).
     fn commit(&mut self, _action: Action, _cx: &mut Ctx) -> Effects {
         Effects::new()
     }

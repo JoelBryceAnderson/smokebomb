@@ -129,7 +129,7 @@ fn an_ordinary_roll_has_no_effect() {
 /// Pig Toss: a throw draws two poses (always two), a tap banks the
 /// turn and passes the die (on the top screen only), and the signed roll chain isn't touched.
 #[test]
-fn pig_toss_throws_two_pigs_and_a_tap_banks() {
+fn pig_toss_throws_two_pigs_and_a_hold_banks() {
     use smokebomb_core::menu::{PlayMode, Settings};
     use smokebomb_core::pigs::{Outcome, Pose};
 
@@ -173,17 +173,18 @@ fn pig_toss_throws_two_pigs_and_a_tap_banks() {
     assert_eq!(fw.pigs().turn(), 40);
     assert!(fw.last_roll().is_none(), "a pig throw isn't a signed roll");
 
-    // A tap on a side screen does nothing: only the top one banks.
-    sim.lock().touch_mask = 1 << Face::PosX.index();
+    // A tap does nothing: taps never change the game.
+    sim.lock().touch_mask = 1 << Face::PosY.index();
     run(&mut fw, 2);
     sim.lock().touch_mask = 0;
     run(&mut fw, 2);
-    assert_eq!(fw.pigs().turn(), 40, "not banked by a tap on the side");
+    assert_eq!(fw.pigs().turn(), 40, "not banked by a tap");
     assert_eq!(fw.pigs().current(), 0);
 
-    // A tap on the top screen banks it and passes to player 2.
-    sim.lock().touch_mask = 1 << Face::PosY.index();
-    run(&mut fw, 2);
+    // A hold banks it and passes to player 2, on any face: they all show
+    // the result.
+    sim.lock().touch_mask = 1 << Face::PosX.index();
+    run(&mut fw, 30);
     sim.lock().touch_mask = 0;
     run(&mut fw, 2);
     assert_eq!(fw.pigs().scores(), &[40, 0, 0]);
@@ -259,10 +260,10 @@ fn picking_the_die_up_does_not_bank() {
 }
 
 #[test]
-fn a_long_press_does_not_bank_either() {
+fn letting_go_of_a_hold_early_does_not_bank() {
     let (sim, mut fw) = pig_toss_after_a_throw();
     let mut t = 150;
-    // 0.7 s on the screen: more than a tap, less than the menu's hold.
+    // 0.7 s on the screen: the ring shows, but letting go cancels.
     sim.lock().touch_mask = 1 << Face::PosY.index();
     run_ticks(&sim, &mut fw, &mut t, 21);
     sim.lock().touch_mask = 0;
@@ -272,19 +273,36 @@ fn a_long_press_does_not_bank_either() {
 }
 
 #[test]
-fn a_quick_tap_on_a_resting_die_banks_and_locks_it_in() {
+fn a_tap_does_not_bank_but_a_hold_does_once() {
+    use smokebomb_hal::HapticEffect;
+
     let (sim, mut fw) = pig_toss_after_a_throw();
     let mut t = 150;
     sim.lock().touch_mask = 1 << Face::PosY.index();
     run_ticks(&sim, &mut fw, &mut t, 3);
     sim.lock().touch_mask = 0;
     run_ticks(&sim, &mut fw, &mut t, 3);
+    assert_eq!(fw.pigs().turn(), 20, "a tap is read-only");
+
+    sim.lock().haptics.clear();
+    sim.lock().touch_mask = 1 << Face::PosY.index();
+    run_ticks(&sim, &mut fw, &mut t, 60);
+    sim.lock().touch_mask = 0;
+    run_ticks(&sim, &mut fw, &mut t, 3);
     assert_eq!(fw.pigs().scores()[0], 20);
     assert_eq!(fw.pigs().current(), 1);
-    assert!(sim
+    assert_ne!(
+        *fw.mode(),
+        Mode::Menu,
+        "the hold banked instead of opening the menu"
+    );
+    let saves = sim
         .lock()
         .haptics
-        .contains(&smokebomb_hal::HapticEffect::LandingThud));
+        .iter()
+        .filter(|h| **h == HapticEffect::MenuSave)
+        .count();
+    assert_eq!(saves, 1, "the commit haptic, once");
 }
 
 /// Pig Toss takes the smoke's memory for the pigs; going back to dice brings

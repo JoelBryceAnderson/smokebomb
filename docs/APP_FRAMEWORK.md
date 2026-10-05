@@ -1,6 +1,6 @@
 # App framework (planned)
 
-Status: agreed with Joel, 5 Oct 2026. Steps 1 and 2 are built; the rest is
+Status: agreed with Joel, 5 Oct 2026. Steps 1 to 3 are built; the rest is
 the plan. It applies `SMOKEBOMB_SIM_UPDATE_BRIEF_3` (text sizes and
 deliberate gestures).
 
@@ -88,7 +88,7 @@ die with only Dice.
 
 | Today | New |
 |---|---|
-| Pot: a tap puts the result away, then cycles bills | A tap shows the bills screen (read-only). A hold while it's up opens adjust (tip ±, hold to save). A hold on a roll result opens the menu. |
+| Pot: a tap puts the result away, then cycles bills | A tap puts the result away and shows the bills screen. A hold while a tap has it up opens Bills alone (tip ±, hold to save). A hold on a roll result, or on the label after a save, opens the menu. |
 | Pig Toss: a tap banks | A hold banks, preview `bank` / `+N`. |
 | Pig Toss: a tap on the win screen starts a new game | A hold opens Choose: **Rematch** (same players) or **Players** (setup). |
 | Potato: a tap resets BOOM | A shake (classified `Shaking`, ignored for ~1.5 s after the boom) starts the next round; the 6 s auto-reset stays; a hold opens the menu. |
@@ -104,7 +104,11 @@ die with only Dice.
    Toss behind `App`, their branches gone from the main loop, `session.rs`
    folded into `Apps`. Taps still commit through `App::tapped` until step 3.
    Rendering still reads app state directly until step 5. Done.
-3. Holds, actions, previews and tap hints; convert the table above.
+3. **Holds, actions, previews and tap hints**: the table above, with Choose
+   built as the menu opened on one page alone (`Draft::alone`: Bills in
+   hand, Next game). A hold on Pass the Pot's bills screen counts only when
+   a deliberate tap brought it up, so the label after a save still lets a
+   hold open the menu. Done.
 4. Apps page and Settings app, with short names.
 5. Typed screens, bitmap tier fonts (7/15/18/21/30 px cap) and the size audit.
 6. Docs and the 1 m AR screenshots.

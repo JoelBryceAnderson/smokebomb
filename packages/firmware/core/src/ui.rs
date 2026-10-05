@@ -40,6 +40,10 @@ const MENU_FADE_OUT_MS: f32 = 300.0;
 const FLASH_MS: f32 = 250.0;
 /// The success screen on the face the menu was on (C4).
 pub const SUCCESS_MS: u64 = 1_300;
+/// A tap's action hint ("hold: bank"), and its fade at the end (brief 3,
+/// 2.1).
+pub const HINT_MS: u64 = 3_000;
+const HINT_FADE_MS: f32 = 300.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Boot {
@@ -67,6 +71,10 @@ pub struct Ui {
     blackout_until: Option<u64>,
     /// The battery is at or below the low mark and the die is off the Nest.
     low_battery: bool,
+    /// A tap's action hint: when, on which face, and what it says.
+    hint: Option<(u64, Face, &'static str)>,
+    /// Until when a deliberate tap keeps the setup label up.
+    tapped_until: Option<u64>,
 }
 
 /// How the menu enters (C3): its alpha and scale, and the hold ring that
@@ -164,6 +172,8 @@ impl Ui {
     pub fn menu_opened(&mut self, now: u64) {
         self.menu_open_at = Some(now);
         self.menu_fade = None;
+        self.hint = None;
+        self.tapped_until = None;
     }
 
     /// The menu closed on `face` showing `draft`. Saving shows the success
@@ -312,10 +322,41 @@ impl Ui {
         self.wake(now, WAKE_AFTER_TAP_MS);
     }
 
-    /// The setup label is up with nothing over it: Pass the Pot's bills
-    /// screen, where a tap changes the count.
+    /// A deliberate tap brought the setup label up: it stays "tapped" for as
+    /// long as that tap keeps it up.
+    pub fn label_tapped(&mut self, now: u64) {
+        self.tapped_until = self.wake.map(|(_, until)| until).filter(|&u| u > now);
+    }
+
+    /// The setup label is up (or just coming up) with nothing over it, because
+    /// someone tapped for it: Pass the Pot's bills screen, where a hold
+    /// changes the count. The label after a save or a boot doesn't count, so
+    /// a hold there still opens the menu.
     pub fn label_up(&self, now: u64) -> bool {
-        self.boot.is_none() && !self.blackout() && self.result_alpha(now) == 0.0 && self.wake_alpha(now) > 0.0
+        self.boot.is_none()
+            && !self.blackout()
+            && self.result_alpha(now) == 0.0
+            && self.tapped_until.is_some_and(|until| now < until)
+            && self.wake.is_some_and(|(_, until)| now < until)
+    }
+
+    /// Show what a hold would do, on the tapped face.
+    pub fn hint(&mut self, now: u64, face: Face, text: &'static str) {
+        self.hint = Some((now, face, text));
+    }
+
+    /// The hint on `face`, if one is up, and its alpha.
+    pub fn hint_on(&self, now: u64, face: Face) -> Option<(&'static str, f32)> {
+        let (at, f, text) = self.hint?;
+        let left = (at + HINT_MS).checked_sub(now)? as f32;
+        (f == face && left > 0.0).then(|| (text, (left / HINT_FADE_MS).min(1.0)))
+    }
+
+    /// A hold committed a game action: the landing-style flash, as when the
+    /// menu saves (brief 3, 2.2.3).
+    pub fn committed(&mut self, now: u64) {
+        self.flash = Some(now);
+        self.hint = None;
     }
 
     /// Put the result away: in Pass the Pot the next player has the die.

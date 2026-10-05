@@ -53,12 +53,12 @@ use smokebomb_hal::{
 use smokebomb_shared::protocol::Inventory;
 use smokebomb_shared::{DieKind, ModeId, ModeSet, SignedRoll};
 
-use apps::{App, Apps, Effect, Effects, MotionUse, SmokeOp, Tap, Throw};
+use apps::{Action, App, Apps, Effect, Effects, MotionUse, Pending, SmokeOp, Tap, Throw};
 use display::Framebuffer;
 use font::Fonts;
 use gesture::{Gesture, Gestures};
 use gfx::{Layer, Painter, Transform};
-use menu::{Draft, Held, PlayMode, Settings};
+use menu::{Draft, Held, Page, PlayMode, Settings};
 use motion::{Motion, MotionDetector};
 use nest::{Nest, NestFace};
 use orientation::TextOrientation;
@@ -154,6 +154,11 @@ where
     tap_deliberate: bool,
     /// The face the last tap or hold was on.
     touch_face: Face,
+    /// What the hold under way will do, fixed when its ring appears (brief
+    /// 3, 2.2.1): the held face shows it, and the hold does it.
+    hold_pending: Option<Option<Pending>>,
+    /// The menu is to open on this page alone (a game's adjust).
+    open_on: Option<Page>,
     menu: Option<MenuSession>,
     up_face: Face,
     /// The screens' orientation, frozen while a result is up.
@@ -236,6 +241,8 @@ where
             addr_of_mut!((*p).still_since).write(None);
             addr_of_mut!((*p).tap_deliberate).write(false);
             addr_of_mut!((*p).touch_face).write(Face::PosZ);
+            addr_of_mut!((*p).hold_pending).write(None);
+            addr_of_mut!((*p).open_on).write(None);
             addr_of_mut!((*p).menu).write(None);
             addr_of_mut!((*p).up_face).write(Face::PosY);
             addr_of_mut!((*p).frozen).write(None);
@@ -274,6 +281,8 @@ where
                 still_since,
                 tap_deliberate,
                 touch_face,
+                hold_pending,
+                open_on,
                 menu,
                 up_face,
                 frozen,
@@ -385,6 +394,34 @@ where
         };
         let effects = f(self.apps.get_mut(id), &mut cx)?;
         self.run_effects(effects)
+    }
+
+    /// What an app may read of the platform.
+    fn view(&self, now: u64) -> apps::View<'_> {
+        apps::View {
+            now,
+            mode: *self.sm.mode(),
+            label_up: self.ui.label_up(now),
+            settings: &self.settings,
+        }
+    }
+
+    /// What a hold would do now: the app's pending action between throws.
+    fn pending(&self, now: u64) -> Option<Pending> {
+        if self.menu.is_some() || !matches!(self.sm.mode(), Mode::Idle | Mode::Reveal { .. }) {
+            return None;
+        }
+        self.app().pending(&self.view(now))
+    }
+
+    /// Fix what the hold under way will do once its ring shows; forget it
+    /// once the finger is off.
+    fn latch_hold(&mut self, now: u64) {
+        if !self.gestures.touching() {
+            self.hold_pending = None;
+        } else if self.hold_pending.is_none() && self.hold_progress(now).is_some() {
+            self.hold_pending = Some(self.pending(now));
+        }
     }
 
     /// Carry out what an app asked for.
@@ -503,6 +540,7 @@ where
         } else {
             self.still_since = None;
         }
+        self.latch_hold(now);
         if self.poll_touch(now, &mut events)? {
             self.ui.touch(now);
         }
@@ -528,19 +566,43 @@ where
                 }
                 // No opening the menu mid-round.
                 Event::LongPress if outside && self.app().blocks_hold() => continue,
+                // A hold does what the held screen shows: the game's pending
+                // action, or the menu (brief 3, 2.4).
+                Event::LongPress => {
+                    let pending = match self.hold_pending.take() {
+                        Some(latched) => latched,
+                        None => self.pending(now),
+                    };
+                    match pending.map(|p| p.action) {
+                        Some(Action::Open(page)) => self.open_on = Some(page),
+                        Some(action) => {
+                            self.with_app(now, |app, cx| Ok(app.commit(action, cx)))?;
+                            if self.settings.haptics_on() {
+                                self.hw.haptics.play(smokebomb_hal::HapticEffect::MenuSave)?;
+                            }
+                            self.ui.committed(now);
+                            continue;
+                        }
+                        None => {}
+                    }
+                }
+                // Taps are read-only: the app may change what the screens
+                // show, and the face says what a hold would do.
                 Event::Tap => {
                     let tap = Tap {
                         face: self.touch_face,
                         up: self.up_face,
                         deliberate: self.tap_deliberate,
                     };
-                    self.with_app(now, |app, cx| {
-                        Ok(match app.tapped(tap, cx) {
-                            Some(action) => app.commit(action, cx),
-                            None => Effects::new(),
-                        })
-                    })?;
+                    let effects = self.app().tapped(tap, &self.view(now));
+                    self.run_effects(effects)?;
                     self.ui.tap(now, self.sm.mode());
+                    if self.tap_deliberate {
+                        self.ui.label_tapped(now);
+                    }
+                    if let Some(p) = self.pending(now) {
+                        self.ui.hint(now, self.touch_face, p.hint);
+                    }
                 }
                 Event::Docked(true) => {
                     let effects = self.apps.docked();
@@ -885,8 +947,12 @@ where
                 self.apps.menu_opened();
                 let up = self.up.unwrap_or([0.0, 1.0, 0.0]);
                 let live = self.apps.pigs.live;
+                let draft = match self.open_on.take() {
+                    Some(page) => Draft::alone(&self.settings, page),
+                    None => Draft::new(&self.settings),
+                };
                 self.menu = Some(MenuSession {
-                    draft: Draft::new(&self.settings).with_session(live),
+                    draft: draft.with_session(live),
                     frame: Frame::new(
                         self.touch_face,
                         up,
@@ -943,7 +1009,7 @@ where
                         if m.draft.ended {
                             self.apps.pigs.end();
                         }
-                        if m.draft.set_up() {
+                        if m.draft.set_up() || m.draft.restart() {
                             self.apps.pigs.start(m.draft.players);
                         }
                         m.draft.commit(&mut self.settings);
@@ -1091,6 +1157,8 @@ where
             .filter(|(_, at)| now.saturating_sub(*at) < LOCKED_MS)
             .map(|(l, at)| (l, now.saturating_sub(at) as f32 / 1000.0));
         let hold = self.hold_progress(now);
+        // While the ring fills, the held face shows what the hold will do.
+        let preview = hold.and_then(|(f, _)| Some((f, self.hold_pending.clone()??)));
         let asleep = self.asleep;
         let nest_faces = self.nest_faces(now, &mode, battery);
         let Self {
@@ -1139,7 +1207,8 @@ where
             // A round of Hot Potato takes the faces, except the one facing
             // down (H2).
             let potato_face = potato_view.filter(|_| face != up.opposite());
-            let content = if potato_face.is_some() || locked.is_some() || win_up {
+            let previewing = preview.as_ref().filter(|(f, _)| *f == face && menu.is_none());
+            let content = if potato_face.is_some() || locked.is_some() || win_up || previewing.is_some() {
                 FaceContent::Blank
             } else {
                 content
@@ -1251,6 +1320,11 @@ where
                 Some(PotatoView::Fuse(heat, pulse, t)) => TargetOf::<P>::draw_fuse(&mut c, heat, pulse, t),
                 Some(PotatoView::Boom(t)) => TargetOf::<P>::draw_boom(&mut c, t),
                 None => {}
+            }
+            if let Some((_, p)) = previewing {
+                TargetOf::<P>::draw_hold_preview(&mut c, p.word, &p.value);
+            } else if let Some((text, alpha)) = ui.hint_on(now, face) {
+                TargetOf::<P>::draw_tap_hint(&mut c, text, alpha);
             }
         }
 

@@ -178,6 +178,14 @@ pub trait DisplayTarget: Target {
     fn draw_bolt<A: AssetStore>(c: &mut Ctx<A, Self>, alpha: f32) {
         screens::draw_bolt(c, alpha);
     }
+
+    fn draw_hold_preview<A: AssetStore>(c: &mut Ctx<A, Self>, word: &str, value: &str) {
+        screens::draw_hold_preview(c, word, value);
+    }
+
+    fn draw_tap_hint<A: AssetStore>(c: &mut Ctx<A, Self>, text: &str, alpha: f32) {
+        screens::draw_tap_hint(c, text, alpha);
+    }
 }
 
 impl DisplayTarget for Grey96 {
@@ -354,6 +362,14 @@ impl DisplayTarget for Rgb64 {
 
     fn draw_boom<A: AssetStore>(c: &mut Ctx<A, Self>, t: f32) {
         screens64::draw_boom(c, t);
+    }
+
+    fn draw_hold_preview<A: AssetStore>(c: &mut Ctx<A, Self>, word: &str, value: &str) {
+        screens64::draw_hold_preview(c, word, value);
+    }
+
+    fn draw_tap_hint<A: AssetStore>(c: &mut Ctx<A, Self>, text: &str, alpha: f32) {
+        screens64::draw_tap_hint(c, text, alpha);
     }
 }
 

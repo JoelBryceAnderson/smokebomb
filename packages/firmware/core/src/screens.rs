@@ -325,7 +325,7 @@ pub fn draw_wake_label<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, setup: Setup
 }
 
 /// Pass the Pot between rolls: three bills with the ones you roll lit, how
-/// many that is, and that a tap changes it (C2).
+/// and how many that is (C2). A tap says a hold changes it.
 fn draw_bills_in_hand<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, n: u8, alpha: f32) {
     for i in 0..MAX_POT_DICE {
         let x = (i as f32 - (MAX_POT_DICE as f32 - 1.0) / 2.0) * 46.0;
@@ -335,7 +335,6 @@ fn draw_bills_in_hand<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, n: u8, alpha:
     let mut label: String<16> = String::new();
     let _ = write!(label, "{n} bill{}", if n == 1 { "" } else { "s" });
     c.text(&label, 0.0, 34.0, 26, Style::new(FG, alpha, 8.0));
-    c.text("tap to change", 0.0, 60.0, 14, Style::new(FG, alpha * 0.6, 0.0));
 }
 
 /// Pig Toss between throws: the pig, and whose go it is (or who won).
@@ -844,7 +843,7 @@ pub fn draw_pig_score<A: AssetStore, T: Target>(
             c.text("Shake to roll again", 0.0, 56.0, 14, style(prompt * 0.7, 0.0));
             // The action that matters breathes a little.
             let breathe = 0.85 + 0.15 * sinf((t - PROMPT_AT) * 4.0);
-            let line = "Tap top to bank & pass";
+            let line = "Hold to bank & pass";
             c.text(
                 line,
                 0.0,
@@ -1022,7 +1021,7 @@ pub fn draw_pig_win<A: AssetStore, T: Target>(
     }
     let prompt = ramp(t, 1.6, 0.3);
     if prompt > 0.0 {
-        c.text("Tap top: new game", 0.0, 72.0, 12, style(prompt * 0.7, 0.0));
+        c.text("Hold for next game", 0.0, 72.0, 12, style(prompt * 0.7, 0.0));
     }
 }
 
@@ -1124,7 +1123,7 @@ pub fn draw_boom<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
     );
     if t > 1.2 {
         let a = ((t - 1.2) / 0.4).min(1.0) * fade;
-        c.text("Tap to reset", 0.0, 52.0, 13, Style::new(FG, 0.7 * a, 0.0));
+        c.text("Shake to go again", 0.0, 52.0, 13, Style::new(FG, 0.7 * a, 0.0));
     }
 }
 
@@ -1611,6 +1610,22 @@ fn draw_fault<A: AssetStore, T: Target>(c: &mut Ctx<A, T>) {
 }
 
 /// The low-battery glyph: a small lightning bolt at the centre.
+/// What a hold will do, on the held face while the ring fills (brief 3,
+/// 2.2.1): the action in a word over what it comes to.
+pub fn draw_hold_preview<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, word: &str, value: &str) {
+    if value.is_empty() {
+        c.text(word, 0.0, 10.0, 40, Style::new(FG, 1.0, 8.0));
+    } else {
+        c.text(word, 0.0, -30.0, 22, Style::new(FG, 0.8, 0.0));
+        c.text(value, 0.0, 16.0, 52, Style::new(FG, 1.0, 8.0));
+    }
+}
+
+/// A tap's hint along the bottom of the face: `hold: bank`.
+pub fn draw_tap_hint<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, text: &str, alpha: f32) {
+    c.text(text, 0.0, 74.0, 14, Style::new(FG, alpha * 0.8, 0.0));
+}
+
 pub fn draw_bolt<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, alpha: f32) {
     c.painter.stroke_polyline(
         &[(4.0, -12.0), (-5.0, 1.0), (5.0, -1.0), (-4.0, 12.0)],

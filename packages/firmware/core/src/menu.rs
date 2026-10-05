@@ -14,6 +14,10 @@
 //! holding on Players walks through setting one up: how many players, then
 //! each player's initial or symbol, one hold per step. Nothing ends or
 //! starts until the menu saves.
+//!
+//! A game can also open the menu on one page alone ([`Draft::alone`]) to
+//! adjust one thing (brief 3, 2.2.4): Pass the Pot's Bills in hand, or after
+//! a Pig Toss win, Next game (a rematch, or setting up Players again).
 
 use core::fmt::Write as _;
 
@@ -179,6 +183,9 @@ pub enum Page {
     /// Pig Toss while a game is in play: hold to end it. Players takes its
     /// place once it's ended.
     EndGame,
+    /// Pig Toss once someone has won: a rematch for the same players, or
+    /// back to setting up Players. Opened alone by a hold on the win screen.
+    Next,
     Settings,
 }
 
@@ -196,6 +203,10 @@ static NAMING: [Page; 1 + crate::pigs::MAX_PLAYERS as usize] = [
 
 /// Pig Toss' pages while a game is in play: End game where Players was.
 const PIGS_LIVE: &[Page] = &[Page::Mode, Page::EndGame, Page::Settings];
+
+/// The pages a game opens alone, to adjust one thing (brief 3, 2.2.4).
+const POT_ALONE: &[Page] = &[Page::Pot];
+const NEXT_ALONE: &[Page] = &[Page::Next];
 
 impl Page {
     pub const fn title(self) -> &'static str {
@@ -215,6 +226,7 @@ impl Page {
                 _ => "Player 6",
             },
             Page::EndGame => "End game",
+            Page::Next => "Next game",
             Page::Settings => "Settings",
         }
     }
@@ -464,6 +476,11 @@ pub struct Draft {
     pub live: bool,
     /// The game in play was ended: saving ends it.
     pub ended: bool,
+    /// Opened by a game on one page, to adjust one thing: the ring is that
+    /// page alone.
+    pub alone: bool,
+    /// On [`Page::Next`]: a rematch, rather than setting up Players again.
+    pub rematch: bool,
 }
 
 /// What a hold in the menu does.
@@ -494,7 +511,24 @@ impl Draft {
             naming: false,
             live: false,
             ended: false,
+            alone: false,
+            rematch: true,
         }
+    }
+
+    /// A draft opened by a game on `page` alone (Pass the Pot's bills, or
+    /// what to play after a win).
+    pub fn alone(s: &Settings, page: Page) -> Self {
+        Self {
+            page,
+            alone: true,
+            ..Self::new(s)
+        }
+    }
+
+    /// Saving this draft starts the same Pig Toss game again from 0.
+    pub fn restart(&self) -> bool {
+        self.page == Page::Next && self.rematch && !self.naming
     }
 
     /// The same draft, knowing whether a Pig Toss game is in play. With
@@ -518,6 +552,11 @@ impl Draft {
     pub fn ring(&self) -> &'static [Page] {
         if self.naming {
             &NAMING[..1 + self.players as usize]
+        } else if self.alone {
+            match self.page {
+                Page::Pot => POT_ALONE,
+                _ => NEXT_ALONE,
+            }
         } else if self.play == PlayMode::PigToss && self.live && self.modes.len() > 1 {
             PIGS_LIVE
         } else {
@@ -532,11 +571,15 @@ impl Draft {
     /// the last saves.
     pub fn held(self) -> Held {
         use crate::menu::Page::*;
+        if self.page == Next && self.rematch {
+            return Held::Save;
+        }
         if self.play != PlayMode::PigToss {
             return Held::Save;
         }
         let mut next = self;
         next.page = match self.page {
+            Next => Players,
             EndGame => {
                 next.live = false;
                 next.ended = true;
@@ -603,6 +646,7 @@ impl Draft {
                         *t = t.stepped(by as i32);
                     }
                     Page::EndGame => {}
+                    Page::Next => next.rematch = !self.rematch,
                     Page::Settings => {
                         next.setting = step(self.setting as usize, by, SETTINGS.len()) as u8;
                     }
@@ -715,6 +759,7 @@ impl Draft {
                 }
             }
             Page::EndGame => Ok(()),
+            Page::Next => write!(s, "{}", if self.rematch { "Rematch" } else { "Players" }),
             Page::Settings => write!(s, "{}", self.setting().0),
         };
         s
@@ -1223,5 +1268,47 @@ mod tests {
         d.commit(&mut s);
         assert_eq!(s.brightness_pct(), 100);
         assert!(!s.haptics_on());
+    }
+
+    fn pigs_won() -> Settings {
+        Settings {
+            play: PlayMode::PigToss,
+            players: 3,
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn a_game_opens_one_page_alone() {
+        let s = Settings {
+            play: PlayMode::PassThePot,
+            ..Settings::default()
+        };
+        let d = Draft::alone(&s, Page::Pot);
+        assert_eq!(d.ring(), &[Page::Pot]);
+        assert_eq!(d.tipped(TipDir::Left).page, Page::Pot, "nowhere else to go");
+        assert_eq!(d.tipped(TipDir::Down).pot_count, 2);
+        assert_eq!(d.held(), Held::Save);
+    }
+
+    #[test]
+    fn after_a_win_a_hold_rematches_or_sets_up_players_again() {
+        let d = Draft::alone(&pigs_won(), Page::Next).with_session(true);
+        assert_eq!(d.ring(), &[Page::Next]);
+        assert_eq!(d.value().as_str(), "Rematch");
+        assert_eq!(d.held(), Held::Save);
+        assert!(d.restart());
+        assert!(!d.set_up());
+
+        let players = d.tipped(TipDir::Up);
+        assert_eq!(players.value().as_str(), "Players");
+        assert_eq!(players.tipped(TipDir::Down).value().as_str(), "Rematch");
+        let Held::Next(setup) = players.held() else {
+            panic!("Players goes on to setting up");
+        };
+        assert_eq!(setup.page, Page::Players);
+        assert_eq!(setup.ring().len(), 1 + 3, "Players and each player's token");
+        assert!(!setup.restart());
+        assert!(setup.set_up(), "saving at the end starts the new game");
     }
 }

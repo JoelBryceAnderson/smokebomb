@@ -160,10 +160,17 @@ gestures, the menu, rendering); an app implements `App`:
   the app (`MotionUse::Shake`), and whether it keeps score.
 - `throw()`: dice for the platform to roll and sign, or `Throw::Own` and
   `landed()` draws what the app needs (Pig Toss's poses).
-- `shaken()`, `tapped()` → `commit()`, `tick()`: the app's rules. They see
-  the platform through `apps::Ctx` (time, mode, settings, RNG) and return
-  `Effect`s (haptics, smoke, clearing the result) for the platform to carry
-  out. Haptics follow the Haptics setting for every app.
+- `pending()`: what a hold would do now, with the word and value the held
+  face shows while the ring fills and the hint a tap shows. A hold commits
+  it (`commit()`, or for `Action::Open(page)` the menu on that page alone);
+  with nothing pending a hold opens the menu. The pending action is fixed
+  when the ring appears.
+- `tapped()`: read-only (`&self` and a read-only `apps::View`), so a tap can
+  only change what the screens show.
+- `shaken()`, `landed()`, `tick()`: the app's rules. They see the platform
+  through `apps::Ctx` (time, mode, settings, RNG) and return `Effect`s
+  (haptics, smoke, clearing the result) for the platform to carry out.
+  Haptics follow the Haptics setting for every app.
 - `busy()` keeps the screens awake; `blocks_hold()` stops a hold opening the
   menu (a lit fuse).
 
@@ -231,7 +238,8 @@ Hold a screen for more than 0.8 s to open the menu there (SIM_SPEC C3).
   its app (`apps/potato.rs`) turns into effects. Its app is triggered by a
   shake, so `StateMachine::set_rolls(false)` stops the roll flow reacting to motion;
   the state machine still owns the menu and the Nest. Shakes light the fuse,
-  taps reset a spent die, and holds are ignored mid-round. Nothing is signed.
+  a shake 1.5 s after it goes off starts the next round, and holds are
+  ignored mid-round. Nothing is signed.
 - **Draft.** The menu works on a `Draft` (`menu.rs`): page, mode, die, count,
   pot count and the Settings item, plus each Settings item's chosen option.
   On the Settings page a tap steps the selected item to its next value. Only a

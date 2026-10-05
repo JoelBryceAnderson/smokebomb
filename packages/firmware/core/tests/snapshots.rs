@@ -571,8 +571,8 @@ fn pigs_smooch() {
     pigs_scenario("pigs-smooch", |r| r.throw_pigs_touching([Feet, Back], true));
 }
 
-/// A tap on the top screen banks the turn: the padlock snaps shut and the
-/// score counts up.
+/// A hold banks the turn: while the ring fills the face shows `bank` and the
+/// total it comes to, then the padlock snaps shut and the score counts up.
 #[test]
 fn pigs_lock_in() {
     use smokebomb_core::pigs::Pose::*;
@@ -584,7 +584,11 @@ fn pigs_lock_in() {
         "pigs-lock-in",
         run,
         &[15.5, 15.75, 16.0, 16.3, 16.7, 17.3, 18.3, 20.0],
-        vec![(THROW_AT, |r| r.throw_pigs([Nose, Back])), (15.6, Run::tap)],
+        vec![
+            (THROW_AT, |r| r.throw_pigs([Nose, Back])),
+            (14.8, Run::press),
+            (15.8, Run::release),
+        ],
     );
 }
 
@@ -603,9 +607,11 @@ fn pigs_smooch_wipes_the_score() {
         vec![
             // Player 1 banks 20, player 2 banks 10, then player 1 smooches.
             (THROW_AT, |r| r.throw_pigs([Back, Back])),
-            (15.6, Run::tap),
+            (14.8, Run::press),
+            (15.8, Run::release),
             (19.0, |r| r.throw_pigs([Back, Feet])),
-            (24.6, Run::tap),
+            (23.8, Run::press),
+            (24.8, Run::release),
             (28.0, |r| r.throw_pigs_touching([Feet, Feet], true)),
         ],
     );
@@ -627,9 +633,11 @@ fn pigs_win() {
         vec![
             // Player 1 banks 60, player 2 banks 10, then player 1 throws 40.
             (THROW_AT, |r| r.throw_pigs([Ear, Ear])),
-            (15.6, Run::tap),
+            (14.8, Run::press),
+            (15.8, Run::release),
             (19.0, |r| r.throw_pigs([Back, Feet])),
-            (24.6, Run::tap),
+            (23.8, Run::press),
+            (24.8, Run::release),
             (28.0, |r| r.throw_pigs([Nose, Nose])),
         ],
     );
@@ -697,8 +705,9 @@ fn throw_smoke() {
 /// The Smoke setting is the third Settings item: Off, Light, Full.
 const SMOKE_ITEM: usize = 2;
 
-/// Pass the Pot between rolls: a tap shows the bills in hand, and each tap
-/// while they're up takes one away, wrapping from 1 back to 3.
+/// Pass the Pot between rolls: a tap shows the bills in hand and what a hold
+/// does; a hold while they're up shows `bills` as the ring fills, then opens
+/// Bills alone to change them.
 #[test]
 fn pot_bills() {
     let run = Run::new().with_settings(|s| {
@@ -708,13 +717,8 @@ fn pot_bills() {
     run_timeline(
         "pot-bills",
         run,
-        &[9.5, 10.3, 11.1, 11.9],
-        vec![
-            (9.0, Run::tap),
-            (9.8, Run::tap),
-            (10.6, Run::tap),
-            (11.4, Run::tap),
-        ],
+        &[9.5, 10.0, 10.6, 11.9],
+        vec![(9.0, Run::tap), (9.6, Run::press), (10.7, Run::release)],
     );
 }
 
@@ -902,7 +906,12 @@ fn a_pig_toss_game_survives_other_modes_until_it_is_ended() {
     // Throw 20 and bank it.
     play(
         &mut run,
-        vec![(9.0, Run::shake), (10.0, Run::throw_release), (15.6, Run::tap)],
+        vec![
+            (9.0, Run::shake),
+            (10.0, Run::throw_release),
+            (14.8, Run::press),
+            (15.8, Run::release),
+        ],
         16.0,
     );
     assert_eq!(run.fw.pigs().scores(), &[20, 0]);

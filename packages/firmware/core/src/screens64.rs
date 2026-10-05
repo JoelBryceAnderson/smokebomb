@@ -622,6 +622,7 @@ pub fn page_title(page: Page) -> &'static str {
         Page::Players => "Players",
         Page::Token(_) => "Player",
         Page::EndGame => "End game",
+        Page::Next => "Next",
         Page::Settings => "Settings",
     }
 }
@@ -1163,21 +1164,6 @@ pub fn draw_pig_win<A: AssetStore, T: Target>(
         if words > 0.0 {
             token_line(p, "", winner, " wins!", 0.0, 7.0, pal::GOLD, alpha * words);
         }
-        let prompt = ramp(t, 1.6, 0.3);
-        if prompt > 0.0 {
-            let w = spr::TAP.width as usize + 2 + TEXT.measure("new game");
-            let x = -floorf(w as f32 / 2.0);
-            draw_glyph(p, &spr::TAP, x, 17.0, 1.0, style(pal::DIM, alpha * prompt));
-            TEXT.draw(
-                p,
-                "new game",
-                x + (spr::TAP.width + 2) as f32,
-                17.0,
-                1.0,
-                Align::Left,
-                style(pal::WHITE, alpha * prompt),
-            );
-        }
     });
 }
 
@@ -1458,10 +1444,6 @@ pub fn draw_boom<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
             };
             draw_arcade(p, "BOOM", roundf(6.0 + bounce), 2.0, pal::RED, pal::GOLD, fade);
         }
-        if t > 1.2 {
-            let a = ((t - 1.2) / 0.4).min(1.0) * fade;
-            draw_hint(p, &spr::TAP, "reset", 23.0, a);
-        }
     });
 }
 
@@ -1512,18 +1494,6 @@ pub fn draw_bills<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, n: u8, alpha: f32
             word,
             x + (wd + 3) as f32,
             9.0,
-            1.0,
-            Align::Left,
-            style(pal::WHITE, alpha),
-        );
-        let w = spr::TAP.width as usize + 2 + TEXT.measure("change");
-        let x = -floorf(w as f32 / 2.0);
-        draw_glyph(p, &spr::TAP, x, 21.0, 1.0, style(pal::DIM, alpha));
-        TEXT.draw(
-            p,
-            "change",
-            x + (spr::TAP.width + 2) as f32,
-            21.0,
             1.0,
             Align::Left,
             style(pal::WHITE, alpha),
@@ -1634,6 +1604,26 @@ fn draw_pot_result<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, record: &RollRec
 /// progresses (`p`, 0–1), in whole pixels: a 96×96 ring's anti-aliased
 /// line goes soft at this size. `grow` (canvas units) pushes it outward as
 /// it flashes away.
+/// What a hold will do, on the held face while the ring fills (brief 3,
+/// 2.2.1): the action in a word over what it comes to.
+pub fn draw_hold_preview<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, word: &str, value: &str) {
+    in_pixels(c, |p| {
+        if value.is_empty() {
+            TEXT.draw(p, word, 0.0, -7.0, 2.0, Align::Center, style(pal::WHITE, 1.0));
+        } else {
+            TEXT.draw(p, word, 0.0, -14.0, 1.0, Align::Center, style(pal::DIM, 1.0));
+            TEXT.draw(p, value, 0.0, -3.0, 2.0, Align::Center, style(pal::WHITE, 1.0));
+        }
+    });
+}
+
+/// A tap's hint along the bottom of the face: `hold: bank`.
+pub fn draw_tap_hint<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, text: &str, alpha: f32) {
+    in_pixels(c, |p| {
+        TEXT.draw(p, text, 0.0, 19.0, 1.0, Align::Center, style(pal::DIM, alpha));
+    });
+}
+
 pub fn draw_hold_ring<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, p: f32, alpha: f32, grow: f32) {
     if alpha <= 0.0 || p <= 0.0 {
         return;
