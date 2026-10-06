@@ -140,9 +140,11 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     // Hand tracking (AR with LiDAR): pinch the die to pick it up.
     private let handTracker = HandTracker()
     private var handTracking = false
-    /// The hand's thumb and index tips as last seen, in the anchor's space, and when.
-    private var hand: (thumb: SIMD3<Float>, index: SIMD3<Float>, seen: TimeInterval)?
+    /// When a hand was last seen, and its pinch point (in the anchor's space) when last known.
+    private var hand: (pinch: SIMD3<Float>?, seen: TimeInterval)?
     private var pinching = false
+    /// Since when a held pinch has looked open.
+    private var openSince: TimeInterval?
     /// Held in a pinch: where the die's centre sits from the pinch (eased to
     /// nothing, so it settles between the fingers), and where it has been.
     private struct HandGrab {
@@ -233,6 +235,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         model.isHandHeld = false
         hand = nil
         pinching = false
+        openSince = nil
         loadTask?.cancel()
         dropFirmware()
         updates?.cancel()
@@ -954,14 +957,17 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         if let frame = arView.session.currentFrame {
             handTracker.submit(frame) { [weak self] reading in self?.handSeen(reading) }
         }
-        if let h = hand, time - h.seen > DiePhysics.handLostAfter {
+        let lostAfter = handGrab == nil ? DiePhysics.handLostAfter : DiePhysics.handLostWhileHeld
+        if let h = hand, time - h.seen > lostAfter {
             hand = nil
             pinching = false
+            openSince = nil
+            model.handDebug = nil
             if handGrab != nil { letGo(throwing: false) }
         }
-        guard var grab = handGrab, let h = hand else { return }
+        guard var grab = handGrab, let pinch = hand?.pinch else { return }
         grab.offset *= exp(-DiePhysics.handFollowRate / 5 * dt)
-        var target = (h.thumb + h.index) / 2 + grab.offset
+        var target = pinch + grab.offset
         target.y = max(target.y, halfHeight)
         let c = centre
         setPose(centre: c + (target - c) * (1 - exp(-DiePhysics.handFollowRate * dt)), rotation: pivot.orientation)
@@ -972,19 +978,39 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     /// A hand from the tracker (nil: none in that frame, so the last one
     /// stands until it goes stale). Closing a pinch on the die picks it up;
-    /// opening it lets go.
+    /// keeping it open a moment lets go. With the fingertips hidden, the
+    /// pinch stays as it was and a held die stays put.
     private func handSeen(_ reading: HandTracker.Reading?) {
         guard handTracking, let placement, let reading else { return }
-        let thumb = placement.convert(position: reading.thumb, from: nil)
-        let index = placement.convert(position: reading.index, from: nil)
-        hand = (thumb, index, time)
-        let was = pinching
-        pinching = reading.gap < (was ? DiePhysics.handPinchOpen : DiePhysics.handPinchClose)
-        if pinching, !was {
-            pinchBegan(at: (thumb + index) / 2)
-        } else if !pinching, was, handGrab != nil {
-            letGo(throwing: true)
+        let pinch = reading.pinch.map { placement.convert(position: $0, from: nil) }
+        hand = (pinch ?? hand?.pinch, time)
+        defer { showHandDebug(gap: reading.gap) }
+        guard let gap = reading.gap, let pinch else { return }
+        if !pinching {
+            if gap < DiePhysics.handPinchClose {
+                pinching = true
+                openSince = nil
+                pinchBegan(at: pinch)
+            }
+        } else if gap > DiePhysics.handPinchOpen {
+            let since = openSince ?? time
+            openSince = since
+            if time - since >= DiePhysics.handReleaseTime {
+                pinching = false
+                openSince = nil
+                if handGrab != nil { letGo(throwing: true) }
+            }
+        } else {
+            openSince = nil
         }
+    }
+
+    /// Debug builds: what the tracker sees, to tune the pinch by.
+    private func showHandDebug(gap: Float?) {
+        #if DEBUG
+        let seen = gap.map { String(format: "gap %.1f cm", $0 * 100) } ?? "tips hidden"
+        model.handDebug = "Hand: \(seen)\(pinching ? " · pinched" : "")\(handGrab != nil ? " · holding" : "")"
+        #endif
     }
 
     private func pinchBegan(at point: SIMD3<Float>) {
@@ -1039,6 +1065,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         if handGrab != nil { letGo(throwing: false) }
         hand = nil
         pinching = false
+        openSince = nil
+        model.handDebug = nil
     }
 
     // MARK: Corral

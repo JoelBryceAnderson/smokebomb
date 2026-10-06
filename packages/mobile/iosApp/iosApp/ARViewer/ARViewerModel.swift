@@ -55,6 +55,8 @@ final class ARViewerModel {
     private static let handTrackingKey = "simulator.handTracking"
     /// Held in a tracked hand.
     var isHandHeld = false
+    /// What the hand tracker sees (debug readout).
+    var handDebug: String?
     let models: [SugarcubeModel]
     private(set) var selected: SugarcubeModel?
     /// The die to go back to when x-ray is switched off.

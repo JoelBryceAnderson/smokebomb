@@ -126,6 +126,11 @@ private struct StatusOverlay: View {
                             .font(.caption2.monospaced())
                             .foregroundStyle(.secondary)
                     }
+                    if let hand = model.handDebug {
+                        Text(hand)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                     if let check = model.boundsCheck {
                         Text(check.text)
                             .font(.caption2.monospacedDigit())

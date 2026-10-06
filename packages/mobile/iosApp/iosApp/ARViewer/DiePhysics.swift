@@ -39,16 +39,20 @@ enum DiePhysics {
 
     // Hand tracking (LiDAR only): pinch the die to pick it up, open to let go.
     /// Thumb and index tips closer than this, in metres, are a pinch…
-    static let handPinchClose: Float = 0.035
-    /// …and it lets go once they're further apart than this.
-    static let handPinchOpen: Float = 0.055
+    static let handPinchClose: Float = 0.03
+    /// …and it lets go once they've been further apart than this for
+    /// `handReleaseTime` seconds, so one bad frame doesn't drop it.
+    static let handPinchOpen: Float = 0.06
+    static let handReleaseTime: TimeInterval = 0.12
     /// A pinch picks the die up this far beyond its corners, in metres.
     static let handGrabReach: Float = 0.03
     /// How quickly a held die catches up with the hand, per second: smooths
     /// the tracking's jitter without lagging a throw much.
     static let handFollowRate: Float = 25
-    /// With no hand seen for this long, a held die is dropped.
+    /// With no hand seen for this long, a pinch is forgotten…
     static let handLostAfter: TimeInterval = 0.35
+    /// …and a held die dropped.
+    static let handLostWhileHeld: TimeInterval = 1.0
     /// A release's speed is the hand's over this last stretch, in seconds…
     static let handThrowWindow: TimeInterval = 0.12
     /// …at most this fast, in m/s.
@@ -57,7 +61,7 @@ enum DiePhysics {
     static let handSpinPerSpeed: Float = 18
     static let handMaxSpin: Float = 30
     /// Vision's fingertips below this confidence are ignored.
-    static let handMinConfidence: Float = 0.3
+    static let handMinConfidence: Float = 0.15
     /// Depth-map pixels either side of a fingertip to look at for its depth.
     static let handDepthWindow = 2
 

@@ -10,14 +10,14 @@ import simd
 /// intrinsics turn that into a point in the world. One frame is worked on at
 /// a time, off the main thread; frames that arrive meanwhile are skipped.
 final class HandTracker: @unchecked Sendable {
-    /// One hand, seen in one frame.
+    /// One hand, seen in one frame. With the thumb or index tip hidden (as
+    /// they often are, pinched), only that a hand is there is known.
     struct Reading: Sendable {
-        /// Thumb and index fingertips, in world space.
-        let thumb: SIMD3<Float>
-        let index: SIMD3<Float>
-        /// Halfway between them: where a pinch holds things.
-        var pinch: SIMD3<Float> { (thumb + index) / 2 }
-        var gap: Float { simd_distance(thumb, index) }
+        /// Halfway between the thumb and index tips, in world space: where a
+        /// pinch holds things.
+        let pinch: SIMD3<Float>?
+        /// How far apart the tips are, in metres.
+        let gap: Float?
     }
 
     /// Whether this device can: it needs LiDAR's scene depth.
@@ -69,20 +69,23 @@ final class HandTracker: @unchecked Sendable {
         // intrinsics and the depth map, so no rotation is needed anywhere.
         let handler = VNImageRequestHandler(cvPixelBuffer: image, orientation: .up)
         guard (try? handler.perform([request])) != nil,
-              let hand = request.results?.first,
-              let thumb = try? hand.recognizedPoint(.thumbTip),
+              let hand = request.results?.first
+        else { return nil }
+        guard let thumb = try? hand.recognizedPoint(.thumbTip),
               let index = try? hand.recognizedPoint(.indexTip),
               thumb.confidence > DiePhysics.handMinConfidence, index.confidence > DiePhysics.handMinConfidence
-        else { return nil }
+        else { return Reading(pinch: nil, gap: nil) }
 
         // Vision's points run from the bottom left; the image's from the top left.
         let thumbUV = SIMD2(Float(thumb.location.x), 1 - Float(thumb.location.y))
         let indexUV = SIMD2(Float(index.location.x), 1 - Float(index.location.y))
-        guard let thumbDepth = Self.depth(at: thumbUV, in: depth),
-              let indexDepth = Self.depth(at: indexUV, in: depth)
-        else { return nil }
-        return Reading(thumb: Self.unproject(thumbUV, depth: thumbDepth, camera: camera),
-                       index: Self.unproject(indexUV, depth: indexDepth, camera: camera))
+        // Both tips at the nearer one's depth: two separate depths are noisy
+        // enough apart to open a pinch that's still closed.
+        let depths = [Self.depth(at: thumbUV, in: depth), Self.depth(at: indexUV, in: depth)].compactMap { $0 }
+        guard let near = depths.min() else { return Reading(pinch: nil, gap: nil) }
+        let pixels = simd_distance(thumbUV * camera.resolution, indexUV * camera.resolution)
+        let gap = pixels * near / camera.intrinsics[0][0]
+        return Reading(pinch: Self.unproject((thumbUV + indexUV) / 2, depth: near, camera: camera), gap: gap)
     }
 
     /// The depth at a point of the image (0…1, from the top left), in metres.

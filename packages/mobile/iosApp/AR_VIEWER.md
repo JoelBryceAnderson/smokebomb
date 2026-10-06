@@ -497,7 +497,13 @@ map. People occlusion is turned on with it, so your hand hides the die
 when it's in front.
 
 - Thumb and index closer than `handPinchClose` within reach of the die
-  picks it up; apart past `handPinchOpen` lets go.
+  picks it up; apart past `handPinchOpen` for `handReleaseTime` lets go.
+  The gap is measured across the image at the nearer tip's depth, as two
+  depths read separately are too noisy. With the tips hidden (common when
+  pinched), the pinch holds and the die stays put; a held die only drops
+  once no hand is seen for `handLostWhileHeld`. Debug builds show the gap
+  in the status pill.
+- Taps still work while it's held: tap a face to touch it for the firmware.
 - Held, the die follows the pinch (eased by `handFollowRate`) and the
   firmware reads its motion uncapped, so lifting and shaking it count.
 - Let go, it leaves at the hand's speed over the last `handThrowWindow`
