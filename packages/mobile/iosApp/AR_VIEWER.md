@@ -485,7 +485,7 @@ Die tab ── DieLinks ── ArDieLink ──► DiePort ──► ARDiePort �
 | Drag elsewhere, or twist | Turn it |
 | Pinch | Scale, only when **True size** is unlocked; tap the % to return to 100% |
 | Turn pad ▲ ▼ ◀ ▶ ⟲ ⟳ (menu open) | The menu's tips: quarter turns about your right, vertical and line of sight |
-| Pinch the die with your hand (**Hand tracking** on) | Pick it up; move to carry or shake it, open your fingers to drop or throw it |
+| Pinch the die with your hand (**Hand tracking** on) | Pick it up; move to carry or shake it, tilt or turn your hand to turn it, open your fingers to drop or throw it |
 
 ### Hand tracking (prototype, LiDAR only)
 
@@ -506,6 +506,11 @@ when it's in front.
 - Taps still work while it's held: tap a face to touch it for the firmware.
 - Held, the die follows the pinch (eased by `handFollowRate`) and the
   firmware reads its motion uncapped, so lifting and shaking it count.
+- It also turns with the hand: the palm's axes (wrist to middle knuckle,
+  and across the knuckles) give the hand's turn, and the die turns by as
+  much as the hand has since the grab, eased by `handTurnFollowRate`.
+  With the wrist or knuckles hidden it holds its last turn. A twist of the
+  wrist at release carries on as spin.
 - Let go, it leaves at the hand's speed over the last `handThrowWindow`
   (capped by `handMaxThrowSpeed`) and lands as a roll, inside the usual
   corral. If the hand is lost for `handLostAfter`, the die is dropped.

@@ -140,16 +140,21 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     // Hand tracking (AR with LiDAR): pinch the die to pick it up.
     private let handTracker = HandTracker()
     private var handTracking = false
-    /// When a hand was last seen, and its pinch point (in the anchor's space) when last known.
-    private var hand: (pinch: SIMD3<Float>?, seen: TimeInterval)?
+    /// When a hand was last seen, and its pinch point and turn (in the
+    /// anchor's space) when last known.
+    private var hand: (pinch: SIMD3<Float>?, turn: simd_quatf?, seen: TimeInterval)?
     private var pinching = false
     /// Since when a held pinch has looked open.
     private var openSince: TimeInterval?
     /// Held in a pinch: where the die's centre sits from the pinch (eased to
-    /// nothing, so it settles between the fingers), and where it has been.
+    /// nothing, so it settles between the fingers), how the hand and die
+    /// were turned when the hand's turn was first known (the die turns as
+    /// much as the hand has since), and where it has been.
     private struct HandGrab {
         var offset: SIMD3<Float>
-        var path: [(time: TimeInterval, centre: SIMD3<Float>)]
+        var handTurn: simd_quatf?
+        var dieTurn: simd_quatf
+        var path: [(time: TimeInterval, centre: SIMD3<Float>, rotation: simd_quatf)]
     }
     private var handGrab: HandGrab?
 
@@ -965,13 +970,27 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             model.handDebug = nil
             if handGrab != nil { letGo(throwing: false) }
         }
-        guard var grab = handGrab, let pinch = hand?.pinch else { return }
+        guard var grab = handGrab else { return }
         grab.offset *= exp(-DiePhysics.handFollowRate / 5 * dt)
-        var target = pinch + grab.offset
-        target.y = max(target.y, halfHeight)
-        let c = centre
-        setPose(centre: c + (target - c) * (1 - exp(-DiePhysics.handFollowRate * dt)), rotation: pivot.orientation)
-        grab.path.append((time, centre))
+        var c = centre
+        if let pinch = hand?.pinch {
+            var target = pinch + grab.offset
+            target.y = max(target.y, halfHeight)
+            c += (target - c) * (1 - exp(-DiePhysics.handFollowRate * dt))
+        }
+        var rotation = pivot.orientation
+        if let turn = hand?.turn {
+            if grab.handTurn == nil {
+                grab.handTurn = turn
+                grab.dieTurn = rotation
+            }
+            if let start = grab.handTurn {
+                let target = turn * start.inverse * grab.dieTurn
+                rotation = simd_slerp(rotation, target, 1 - exp(-DiePhysics.handTurnFollowRate * dt))
+            }
+        }
+        setPose(centre: c, rotation: rotation)
+        grab.path.append((time, centre, pivot.orientation))
         grab.path.removeAll { time - $0.time > DiePhysics.handThrowWindow * 2 }
         handGrab = grab
     }
@@ -983,7 +1002,14 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private func handSeen(_ reading: HandTracker.Reading?) {
         guard handTracking, let placement, let reading else { return }
         let pinch = reading.pinch.map { placement.convert(position: $0, from: nil) }
-        hand = (pinch ?? hand?.pinch, time)
+        let turn = reading.palm.map { palm -> simd_quatf in
+            // The hand's axes as a rotation: y along the hand, z out of the palm.
+            let y = simd_normalize(placement.convert(direction: palm.forward, from: nil))
+            var z = placement.convert(direction: palm.normal, from: nil)
+            z = simd_normalize(z - y * simd_dot(z, y))
+            return simd_quatf(simd_float3x3(columns: (simd_cross(y, z), y, z)))
+        }
+        hand = (pinch ?? hand?.pinch, turn ?? hand?.turn, time)
         defer { showHandDebug(gap: reading.gap) }
         guard let gap = reading.gap, let pinch else { return }
         if !pinching {
@@ -1023,7 +1049,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         dragTarget = nil
         restTransform = pivot.transform
         touchMask = 0
-        handGrab = HandGrab(offset: c - point, path: [(time, c)])
+        handGrab = HandGrab(offset: c - point, handTurn: hand?.turn, dieTurn: pivot.orientation,
+                            path: [(time, c, pivot.orientation)])
         model.isHandHeld = true
         lightHaptic.impactOccurred()
     }
@@ -1036,12 +1063,19 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         model.isHandHeld = false
 
         var velocity = SIMD3<Float>.zero
+        var turning = SIMD3<Float>.zero
         if throwing, let last = grab.path.last,
            let first = grab.path.first(where: { last.time - $0.time <= DiePhysics.handThrowWindow }),
            last.time - first.time > 1e-3 {
-            velocity = (last.centre - first.centre) / Float(last.time - first.time)
+            let dt = Float(last.time - first.time)
+            velocity = (last.centre - first.centre) / dt
             let speed = simd_length(velocity)
             if speed > DiePhysics.handMaxThrowSpeed { velocity *= DiePhysics.handMaxThrowSpeed / speed }
+            // A flick of the wrist carries on as spin; the short way round.
+            let turned = last.rotation * first.rotation.inverse
+            var angle = turned.angle
+            if angle > .pi { angle -= 2 * .pi }
+            if abs(angle) > 1e-3 { turning = turned.axis * angle / dt }
         }
         // Tumbling the way it's thrown, more the harder; a little either way.
         let speed = simd_length(velocity)
@@ -1049,7 +1083,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         if simd_length(axis) < 1e-4 { axis = SIMD3(1, 0, Float.random(in: -1...1)) }
         let wobble = SIMD3<Float>(Float.random(in: -0.3...0.3), Float.random(in: -0.5...0.5), Float.random(in: -0.3...0.3))
         axis = simd_normalize(simd_normalize(axis) + wobble)
-        let spin = axis * min(2 + speed * DiePhysics.handSpinPerSpeed, DiePhysics.handMaxSpin)
+        var spin = axis * (2 + speed * DiePhysics.handSpinPerSpeed) + turning
+        if simd_length(spin) > DiePhysics.handMaxSpin { spin *= DiePhysics.handMaxSpin / simd_length(spin) }
 
         let c = centre
         if let radius = DiePhysics.corralRadius { buildCorral(around: SIMD3(c.x, 0, c.z), radius: radius) }

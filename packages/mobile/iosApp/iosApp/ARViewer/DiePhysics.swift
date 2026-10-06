@@ -62,6 +62,11 @@ enum DiePhysics {
     static let handMaxSpin: Float = 30
     /// Vision's fingertips below this confidence are ignored.
     static let handMinConfidence: Float = 0.15
+    /// …and the wrist and knuckles, for which way the hand is turned.
+    static let handPalmMinConfidence: Float = 0.3
+    /// How quickly a held die turns to follow the hand, per second: lower
+    /// is steadier, higher keeps up with a quick twist.
+    static let handTurnFollowRate: Float = 12
     /// Depth-map pixels either side of a fingertip to look at for its depth.
     static let handDepthWindow = 2
 

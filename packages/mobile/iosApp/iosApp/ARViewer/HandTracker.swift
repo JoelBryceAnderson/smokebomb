@@ -3,7 +3,8 @@ import Vision
 import simd
 
 /// Finds one hand in the camera image and places its thumb and index
-/// fingertips in the world, for picking the die up with a pinch.
+/// fingertips in the world, for picking the die up with a pinch, and which
+/// way the palm faces, for turning it.
 ///
 /// Vision gives the fingertips in the image; LiDAR's scene depth (so this
 /// needs a device with LiDAR) says how far away they are, and the camera's
@@ -18,6 +19,17 @@ final class HandTracker: @unchecked Sendable {
         let pinch: SIMD3<Float>?
         /// How far apart the tips are, in metres.
         let gap: Float?
+        /// Which way the hand points and the palm faces, in world space; nil
+        /// with the wrist or knuckles hidden.
+        let palm: Palm?
+    }
+
+    /// The hand's own axes, both unit length: along the hand (wrist to
+    /// middle knuckle) and out of the palm (its sign follows the hand's
+    /// chirality, which a grab doesn't change).
+    struct Palm: Sendable {
+        let forward: SIMD3<Float>
+        let normal: SIMD3<Float>
     }
 
     /// Whether this device can: it needs LiDAR's scene depth.
@@ -71,10 +83,11 @@ final class HandTracker: @unchecked Sendable {
         guard (try? handler.perform([request])) != nil,
               let hand = request.results?.first
         else { return nil }
+        let palm = Self.palm(of: hand, depth: depth, camera: camera)
         guard let thumb = try? hand.recognizedPoint(.thumbTip),
               let index = try? hand.recognizedPoint(.indexTip),
               thumb.confidence > DiePhysics.handMinConfidence, index.confidence > DiePhysics.handMinConfidence
-        else { return Reading(pinch: nil, gap: nil) }
+        else { return Reading(pinch: nil, gap: nil, palm: palm) }
 
         // Vision's points run from the bottom left; the image's from the top left.
         let thumbUV = SIMD2(Float(thumb.location.x), 1 - Float(thumb.location.y))
@@ -82,10 +95,30 @@ final class HandTracker: @unchecked Sendable {
         // Both tips at the nearer one's depth: two separate depths are noisy
         // enough apart to open a pinch that's still closed.
         let depths = [Self.depth(at: thumbUV, in: depth), Self.depth(at: indexUV, in: depth)].compactMap { $0 }
-        guard let near = depths.min() else { return Reading(pinch: nil, gap: nil) }
+        guard let near = depths.min() else { return Reading(pinch: nil, gap: nil, palm: palm) }
         let pixels = simd_distance(thumbUV * camera.resolution, indexUV * camera.resolution)
         let gap = pixels * near / camera.intrinsics[0][0]
-        return Reading(pinch: Self.unproject((thumbUV + indexUV) / 2, depth: near, camera: camera), gap: gap)
+        return Reading(pinch: Self.unproject((thumbUV + indexUV) / 2, depth: near, camera: camera), gap: gap, palm: palm)
+    }
+
+    /// The palm's axes, from the wrist and the index, middle and little
+    /// knuckles: broad, flat and seldom hidden by a pinch, so their depths
+    /// hold up better than the fingertips'.
+    private static func palm(of hand: VNHumanHandPoseObservation, depth map: CVPixelBuffer, camera: Camera) -> Palm? {
+        func point(_ joint: VNHumanHandPoseObservation.JointName) -> SIMD3<Float>? {
+            guard let p = try? hand.recognizedPoint(joint), p.confidence > DiePhysics.handPalmMinConfidence else { return nil }
+            let uv = SIMD2(Float(p.location.x), 1 - Float(p.location.y))
+            guard let d = depth(at: uv, in: map) else { return nil }
+            return unproject(uv, depth: d, camera: camera)
+        }
+        guard let wrist = point(.wrist), let index = point(.indexMCP),
+              let middle = point(.middleMCP), let little = point(.littleMCP)
+        else { return nil }
+        let forward = middle - wrist
+        let normal = simd_cross(forward, little - index)
+        // Too foreshortened to tell which way it's turned.
+        guard simd_length(forward) > 0.03, simd_length(normal) > 1e-4 else { return nil }
+        return Palm(forward: simd_normalize(forward), normal: simd_normalize(normal))
     }
 
     /// The depth at a point of the image (0…1, from the top left), in metres.
