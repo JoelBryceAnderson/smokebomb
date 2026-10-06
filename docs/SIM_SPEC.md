@@ -303,12 +303,13 @@ A sliding-stick puzzle, like Rush Hour on a cube. Every face shows a grid of sti
 The die can't tell where on a screen a finger is, only which screens are touched (A6), so it plays by **tip and tap**:
 
 - **Only the top screen is in play.** Turning the die brings another screen up.
-- **Lean to aim.** Leaning the die past about 15° toward one of the top screen's edges (and clearly toward that edge rather than a corner: the bigger tilt component at least 1.4× the other) picks that direction. The lean lasts until it drops under about 10°, so it doesn't flicker. While the die leans:
+- **Lean to aim.** Leaning the die past about 15° toward one of the top screen's edges (and clearly toward that edge rather than a corner: the bigger tilt component at least 1.4× the other) for 0.25 s picks that direction. The wait keeps turning the die onto another face, which passes through leans, from picking anything. A lean lasts until it drops under about 10°, so it doesn't flicker.
+- **The pick stays.** When the die settles back level the direction stays picked, so the tap needn't come while the die leans (a tap jolts it, and the simulator's swipes and spins end square). Leaning another way picks again; turning another screen to the top drops it. While a direction is picked:
   - the top screen's sticks that point downhill stay lit and every other stick dims;
   - the one a tap will send blinks (200 ms on, 200 ms at 55%), starting with the one nearest its edge;
   - the downhill edge of the top screen shows a 2 px bar (dim if nothing points that way);
   - a 10 ms tick plays when a lean first lights something.
-- **Tap the top screen** to slide the blinking stick. It is the stick that was blinking when the finger *landed*, so a lean that wobbles as the finger lifts doesn't change it. A tap with the die level, or with nothing lit, does nothing.
+- **Tap the top screen** to slide the blinking stick. It is the stick that was blinking when the finger *landed*, so a lean that wobbles as the finger lifts doesn't change it. A tap with no direction picked, or with nothing lit, does nothing.
 - **Tap any other screen** to blink the next lit stick (wrapping).
 - **Slide.** A clear stick slides along its way out and off the panel's edge, speeding up (14 + 60·t doubled cells ⇒ about 0.4 s), with the tick haptic.
 - **Jam.** A stick with another in its way runs at it and back (0.34 s); the stick it hit flashes red for 0.7 s, with the buzz haptic. The third jam in a level shows "Jammed" ("Try again") for 1.8 s, with the dud haptic, then the same board starts again.

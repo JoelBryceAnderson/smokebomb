@@ -146,6 +146,22 @@ fn tip_and_tap_slides_a_stick_off() {
     assert!(run.fw.rush().board.sticks()[k].gone());
 }
 
+/// The simulator's swipes and spins (and a hand that tips the die and lets
+/// it settle) end with the die square: the lean's pick stays for the tap.
+#[test]
+fn lean_then_settle_then_tap() {
+    let mut run = start::<Rgb64>();
+    advance(&mut run, 1.6);
+    let k = free_stick(&run, Face::PosZ);
+    let top = aim(&mut run, k, 0);
+    hold_die(&mut run, lean(top, None, 0.0));
+    advance(&mut run, 0.5);
+    assert_eq!(run.fw.rush().selected(), Some(k as u8), "still picked, level");
+    let before = run.fw.rush().board.left();
+    tap_face(&mut run, top, 0);
+    assert_eq!(run.fw.rush().board.left(), before - 1);
+}
+
 #[test]
 fn a_grip_on_the_sides_doesnt_hide_a_tap_on_top() {
     let mut run = start::<Rgb64>();

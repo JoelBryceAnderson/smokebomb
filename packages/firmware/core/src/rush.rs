@@ -13,7 +13,9 @@
 //! * only the top screen is in play;
 //! * leaning the die toward an edge picks that direction: the top screen's
 //!   sticks that point downhill light, nearest their edge first, and one
-//!   blinks;
+//!   blinks. The direction stays picked when the die settles back level,
+//!   so the tap needn't come while it leans, until the die is turned to
+//!   another screen or leaned another way;
 //! * a tap on the top screen slides the blinking stick off; a tap on any
 //!   other screen blinks the next one;
 //! * turning the die brings another screen to the top.
@@ -458,8 +460,10 @@ pub struct Rush {
     seed: u32,
     pub jams: u8,
     pub phase: Phase,
-    /// The top face and the downhill direction along it, if the die leans.
+    /// The top face and the direction picked along it.
     aim: Option<(Face, V)>,
+    /// The way the die leans along its top face right now, if it does.
+    lean: Option<V>,
     /// Which of the lit sticks blinks.
     pick: u8,
     /// A stick hit by a jam, flashing until then.
@@ -477,6 +481,7 @@ impl Rush {
             jams: 0,
             phase: Phase::Ready,
             aim: None,
+            lean: None,
             pick: 0,
             flash: None,
         }
@@ -500,10 +505,14 @@ impl Rush {
     }
 
     /// Where the die is: which face is up and which way it leans along that
-    /// face (`None` when level). Returns true when the lean newly lights
-    /// something.
-    pub fn aim(&mut self, top: Face, downhill: Option<V>) -> bool {
-        let aim = downhill.map(|d| (top, d));
+    /// face (`None` when level). A lean picks its direction, and the pick
+    /// stays when the die comes back level; leaning another way picks
+    /// again, and turning another face up drops it. Returns true when a
+    /// new pick lights something.
+    pub fn aim(&mut self, top: Face, lean: Option<V>) -> bool {
+        self.lean = lean;
+        let kept = self.aim.filter(|(f, _)| *f == top);
+        let aim = lean.map(|d| (top, d)).or(kept);
         if aim == self.aim {
             return false;
         }
@@ -512,9 +521,14 @@ impl Rush {
         !self.lit().is_empty()
     }
 
-    /// The downhill direction, if the die leans.
+    /// The direction picked, if one is.
     pub fn downhill(&self) -> Option<V> {
         self.aim.map(|(_, d)| d)
+    }
+
+    /// The way the die leans right now, if it does.
+    pub fn lean(&self) -> Option<V> {
+        self.lean
     }
 
     /// The top screen's sticks that point downhill, nearest their edge
@@ -1098,7 +1112,17 @@ mod tests {
             .collect();
         assert!(lanes.windows(2).all(|w| w[0] <= w[1]));
         assert!(!rush.aim(top, Some(d)), "the same lean again changes nothing");
+        // Back to level: the pick stays, so the tap can come after.
         rush.aim(top, None);
+        assert_eq!(rush.downhill(), Some(d));
+        assert_eq!(rush.lean(), None);
+        assert!(rush.selected().is_some());
+        // Leaning another way picks again...
+        rush.aim(top, Some(neg(d)));
+        assert_eq!(rush.downhill(), Some(neg(d)));
+        // ...and turning another face up drops it.
+        rush.aim(top.opposite(), None);
+        assert_eq!(rush.downhill(), None);
         assert_eq!(rush.selected(), None);
     }
 

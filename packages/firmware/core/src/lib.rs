@@ -198,6 +198,9 @@ where
     rush_latch: Option<u8>,
     /// The die was shaken or knocked while a screen was touched: not a tap.
     rush_jolted: bool,
+    /// A lean on its way to counting: the top face, its direction, and
+    /// since when (see [`RUSH_LEAN_HOLD_MS`]).
+    rush_lean: Option<(Face, rush::V, u64)>,
 }
 
 impl<P: Platform> Firmware<P>
@@ -285,6 +288,7 @@ where
             addr_of_mut!((*p).rush_touch).write([None; smokebomb_hal::FACE_COUNT]);
             addr_of_mut!((*p).rush_latch).write(None);
             addr_of_mut!((*p).rush_jolted).write(false);
+            addr_of_mut!((*p).rush_lean).write(None);
         }
         #[allow(unused_variables)]
         fn _fields<P: Platform>(f: Firmware<P>)
@@ -334,6 +338,7 @@ where
                 rush_touch,
                 rush_latch,
                 rush_jolted,
+                rush_lean,
             } = f;
         }
         // SAFETY: every field was written above.
@@ -867,8 +872,23 @@ where
         if !self.rush_playing() {
             return Ok(());
         }
-        let downhill = self.rush_downhill();
-        if self.sessions.rush.aim(self.up_face, downhill) && self.settings.haptics_on() {
+        // A lean counts once it has held: turning the die onto another face
+        // passes through leans on the way, and the pick a lean makes stays.
+        let top = self.up_face;
+        let lean = match (self.rush_downhill(), self.rush_lean) {
+            (Some(d), Some((f, held, since))) if f == top && held == d => {
+                (now.saturating_sub(since) >= RUSH_LEAN_HOLD_MS).then_some(d)
+            }
+            (Some(d), _) => {
+                self.rush_lean = Some((top, d, now));
+                None
+            }
+            (None, _) => {
+                self.rush_lean = None;
+                None
+            }
+        };
+        if self.sessions.rush.aim(top, lean) && self.settings.haptics_on() {
             self.hw.haptics.play(smokebomb_hal::HapticEffect::MenuTip)?;
         }
         match self.sessions.rush.tick(now) {
@@ -886,7 +906,7 @@ where
         Ok(())
     }
 
-    /// Which way the die leans along its top face, from gravity: the
+    /// Which way the die leans along its top face right now, from gravity: the
     /// direction a marble on the top screen would roll, snapped to one of
     /// the screen's four edges. A lean must pass [`RUSH_LEAN_ON`] (about
     /// 15°), clearly toward one edge, to count, and lasts until it drops
@@ -902,7 +922,7 @@ where
             // Downhill is against the up direction's lean.
             -(0..3).map(|i| d[i] as f32 * up[i]).sum::<f32>() / mag
         };
-        if let Some(d) = self.sessions.rush.downhill() {
+        if let Some(d) = self.sessions.rush.lean() {
             let on_top = [x, y].iter().any(|a| *a == d || a.map(|c| -c) == d);
             if on_top && along(d) > RUSH_LEAN_OFF {
                 return Some(d);
@@ -1695,6 +1715,8 @@ where
 /// lean to count, and how far back it must come to stop counting.
 const RUSH_LEAN_ON: f32 = 0.26;
 const RUSH_LEAN_OFF: f32 = 0.17;
+/// How long a lean must hold before it picks a direction.
+const RUSH_LEAN_HOLD_MS: u64 = 250;
 
 /// How much of a full cloud a lit fuse's smoke may reach, at the start and
 /// at full heat: enough to build, little enough to read "PASS IT" through.
