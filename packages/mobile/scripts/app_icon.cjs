@@ -177,13 +177,11 @@ function jumpArms() {
 
 function fist(x, y, tilt = 0) {
   // A raised cartoon fist seen from the front, wrist at the bottom: four
-  // knuckle bumps across the top, the thumb tucked across the curled fingers
-  // (thick at the side of the hand, tapering to a rounded tip short of the
-  // far side), the fingertips' crease beyond it, and a flared cuff.
+  // knuckle bumps across the top with creases between the fingers, and a
+  // flared cuff. No thumb: every version of one read as a mouth or a bar.
   const hand = `M-50,26 C-62,0 -58,-38 -40,-50 C-32,-64 -14,-66 -8,-54
     C0,-68 18,-68 22,-54 C30,-66 48,-64 50,-48 C62,-44 64,-20 56,-6
     C62,14 56,32 42,40 C20,50 -32,48 -50,26 Z`;
-  const thumb = "M-54,-20 C-34,-28 -6,-32 10,-26 C26,-20 24,-2 10,0 C-6,2 -30,8 -50,16 Z";
   const cuff = "M-36,38 C-44,54 -48,64 -50,76 C-20,88 24,88 50,74 C46,62 40,50 36,38 Z";
   return `
     <g transform="translate(${x},${y}) rotate(${tilt}) scale(0.82)" stroke="${C.ink}" stroke-width="12" stroke-linejoin="round" stroke-linecap="round">
@@ -191,8 +189,6 @@ function fist(x, y, tilt = 0) {
       <path d="M-46,64 C-14,76 22,76 46,62" fill="none" stroke-width="9"/>
       <path class="solid-w" d="${hand}" fill="${C.sugarTop}"/>
       <path d="M-8,-54 C-10,-46 -10,-38 -8,-30 M22,-54 C22,-46 22,-38 23,-30 M50,-48 C48,-40 48,-32 49,-26" fill="none" stroke-width="6"/>
-      <path d="M20,-2 C32,0 44,-4 54,-12" fill="none" stroke-width="6"/>
-      <path class="solid-w" d="${thumb}" fill="${C.sugarTop}"/>
     </g>`;
 }
 
