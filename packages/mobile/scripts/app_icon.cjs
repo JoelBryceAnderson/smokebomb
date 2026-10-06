@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 // Draws the Sugarcube app icon and writes every iOS and Android size.
 //
-// The icon is an old sugar box: aged cream paper, a sunburst, a red and navy
-// frame and a ribbon with "Sugarcube" in Pacifico (the face the die writes
-// its name in). On it stands the mascot, a rubber-hose sugar cube giving a
-// thumbs up.
+// The icon is an old candy-coloured sugar box: a white panel with a yellow
+// sunburst, a pink border and a ribbon with "Sugarcube" in Pacifico (the face the die writes
+// its name in). Above it jumps the mascot, a rubber-hose sugar cube with a
+// fist in the air.
 //
 // The art is SVG, rendered by Chromium through Playwright:
 //   npm i -g playwright   (or use any install that `require` can find)
 //   node packages/mobile/scripts/app_icon.cjs
+// He's drawn mid-jump with a fist up; ICON_POSE=stand draws the earlier
+// standing thumbs-up instead.
 
 const fs = require("fs");
 const path = require("path");
@@ -20,13 +22,17 @@ const FONT = path.join(REPO, "packages/firmware/assets/fonts/pacifico-latin-400-
 const IOS_SET = path.join(MOBILE, "iosApp/iosApp/Assets.xcassets/AppIcon.appiconset");
 const ANDROID_RES = path.join(MOBILE, "composeApp/src/androidMain/res");
 
+// Candy-box colours: a bubblegum border, a white panel with butter-yellow
+// rays, a hot-pink ribbon with white lettering, and raspberry trim.
 const C = {
-  paper: "#F4E7C9",
-  paperDark: "#E2C892",
-  ray: "#EED7A1",
-  red: "#C63A2E",
-  redDark: "#8E2620",
-  navy: "#1F2B4D",
+  paper: "#FFFCF5",
+  ray: "#FCE6A0",
+  age: "#E8B95E",
+  border: "#F48FB5",
+  ribbon: "#E2487F",
+  ribbonDark: "#B02D60",
+  trim: "#7C2147",
+  lettering: "#FFFFFF",
   ink: "#1A1410",
   sugar: "#FFFDF5",
   sugarTop: "#FFFFFF",
@@ -39,7 +45,9 @@ const C = {
 
 // --- Pieces, all on a 1024 canvas -----------------------------------------
 
-function paper() {
+// `border` draws the box's solid border over the ageing (which would
+// muddy it) but under the grain, so it shares the paper's texture.
+function paper(border = false) {
   const rays = [];
   const n = 28;
   const [cx, cy] = [512, 470];
@@ -55,27 +63,139 @@ function paper() {
     <rect width="1024" height="1024" fill="${C.paper}"/>
     <path d="${rays.join(" ")}" fill="${C.ray}"/>
     <rect width="1024" height="1024" fill="url(#age)"/>
+    ${border ? frame() : ""}
     <rect width="1024" height="1024" filter="url(#grain)" opacity="0.35"/>`;
 }
 
+// Solid pink from the icon's edge in to a rounded panel, then a pinline
+// just inside the panel's edge.
 function frame() {
   return `
-    <rect x="44" y="44" width="936" height="936" rx="196" fill="none" stroke="${C.red}" stroke-width="22"/>
-    <rect x="76" y="76" width="872" height="872" rx="168" fill="none" stroke="${C.navy}" stroke-width="6"/>
-    <g fill="${C.navy}" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="44" letter-spacing="10" text-anchor="middle">
-      <text x="512" y="196">★ PURE CANE ★</text>
+    <path d="M0,0 H1024 V1024 H0 Z M60,${60 + 176} A176,176 0 0 1 ${60 + 176},60 H${964 - 176} A176,176 0 0 1 964,${60 + 176}
+      V${964 - 176} A176,176 0 0 1 ${964 - 176},964 H${60 + 176} A176,176 0 0 1 60,${964 - 176} Z" fill="${C.border}" fill-rule="evenodd"/>
+    <rect x="78" y="78" width="868" height="868" rx="158" fill="none" stroke="${C.trim}" stroke-width="6"/>`;
+}
+
+// The thumbs-up glove: where it sits in mascot coordinates, its tilt and
+// scale, and where its cuff opens (the arm ends there).
+const GLOVE = { x: 826, y: 344, tilt: -8, scale: 0.8 };
+const CUFF = (() => {
+  const [lx, ly] = [-12, 122].map((v) => v * GLOVE.scale);
+  const t = (GLOVE.tilt * Math.PI) / 180;
+  return [GLOVE.x + lx * Math.cos(t) - ly * Math.sin(t), GLOVE.y + lx * Math.sin(t) + ly * Math.cos(t)];
+})();
+
+function glove() {
+  // A cartoon glove giving a thumbs up, seen from the front: one outline runs
+  // up the back of the hand into the thumb, over its tip, then down the four
+  // curled fingers (a bump each, smaller toward the little finger) and round
+  // the heel of the palm. Creases run in from between the fingers.
+  const { x, y, tilt, scale } = GLOVE;
+  const hand = `M-12,-140
+    C8,-140 18,-126 16,-108 C14,-92 8,-78 10,-62
+    C30,-70 58,-66 66,-46 C74,-30 66,-16 56,-14
+    C72,-10 76,10 62,18 C74,26 74,46 58,52
+    C66,62 60,78 44,80 C20,88 -24,86 -44,72
+    C-64,56 -66,20 -56,-8 C-50,-30 -44,-50 -42,-80
+    C-40,-104 -38,-138 -12,-140 Z`;
+  const creases = `M56,-14 C40,-14 24,-18 12,-24 M62,18 C44,20 28,16 14,12
+    M58,52 C44,54 30,50 20,46 M10,-62 C4,-50 -6,-44 -18,-44`;
+  const cuff = "M-48,64 C-58,84 -64,100 -66,112 C-30,128 22,126 44,108 C38,96 30,84 26,76 Z";
+  return `
+    <g transform="translate(${x},${y}) rotate(${tilt}) scale(${scale})" stroke="${C.ink}" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
+      <path class="solid-w" d="${cuff}" fill="${C.sugarTop}"/>
+      <path d="M-62,100 C-28,114 18,112 40,96" fill="none" stroke-width="9"/>
+      <path class="solid-w" d="${hand}" fill="${C.sugarTop}"/>
+      <path d="${creases}" fill="none" stroke-width="9"/>
+      <path d="M-54,-136 L-76,-146 M30,-128 L52,-138" fill="none" stroke-width="11"/>
     </g>`;
 }
 
-function glove(x, y, flip = 1) {
-  // A thumbs-up fist at (x, y) = centre of the fist, thumb to the inside.
-  const s = flip;
+// The front face's centre line, which the legs and boots mirror about.
+const FACE_X = 490;
+
+// "stand" (thumbs up, on the ribbon) or "jump" (mid-air, fist up).
+let POSE = process.env.ICON_POSE || "jump";
+
+function standLegs() {
   return `
-    <g transform="translate(${x},${y}) scale(${s},1)" stroke="${C.ink}" stroke-width="12" stroke-linejoin="round" stroke-linecap="round">
-      <path class="solid-w" d="M-40,48 L-50,84 L50,84 L40,48 Z" fill="${C.sugarTop}"/>
-      <rect class="solid-w" x="-46" y="-104" width="40" height="92" rx="20" fill="${C.sugarTop}"/>
-      <rect class="solid-w" x="-52" y="-40" width="104" height="90" rx="34" fill="${C.sugarTop}"/>
-      <path d="M8,-14 Q30,-14 50,-14 M8,10 Q30,10 50,10 M8,32 Q28,32 46,32" fill="none" stroke-width="8"/>
+      <!-- legs and boots, mirrored about the front face's centre -->
+      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
+        <path d="M${FACE_X - 38},632 Q${FACE_X - 44},672 ${FACE_X - 50},706"/>
+        <path d="M${FACE_X + 38},632 Q${FACE_X + 44},672 ${FACE_X + 50},706"/>
+      </g>
+      ${boot(FACE_X - 50, 706, 1)}
+      ${boot(FACE_X + 50, 706, -1)}`;
+}
+
+function jumpLegs() {
+  // Knees tucked: the legs kink out and the boots kick back, toes down,
+  // with whoosh lines trailing below.
+  return `
+      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <path d="M${FACE_X - 38},632 Q${FACE_X - 92},650 ${FACE_X - 74},690"/>
+        <path d="M${FACE_X + 38},632 Q${FACE_X + 92},650 ${FACE_X + 74},690"/>
+      </g>
+      <g transform="rotate(24 ${FACE_X - 74} 690)">${boot(FACE_X - 74, 690, 1)}</g>
+      <g transform="rotate(-24 ${FACE_X + 74} 690)">${boot(FACE_X + 74, 690, -1)}</g>
+      <g stroke="${C.ink}" stroke-width="9" stroke-linecap="round" fill="none">
+        <path d="M${FACE_X - 34},752 Q${FACE_X - 28},772 ${FACE_X - 34},790"/>
+        <path d="M${FACE_X},758 L${FACE_X},796"/>
+        <path d="M${FACE_X + 34},752 Q${FACE_X + 28},772 ${FACE_X + 34},790"/>
+      </g>`;
+}
+
+function standArms() {
+  return `
+      <!-- arm on the hip (left), thumbs-up arm (right) -->
+      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
+        <path d="M334,470 C250,462 238,560 300,582"/>
+        <path d="M716,450 C790,452 ${CUFF[0]},${CUFF[1] + 30} ${CUFF[0]},${CUFF[1] - 4}"/>
+      </g>
+      ${hipGlove(306, 584)}
+      ${glove()}`;
+}
+
+function jumpArms() {
+  // Right arm punches straight up into a fist; the left swings out low.
+  return `
+      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
+        <path d="M716,446 C788,438 822,390 830,342"/>
+        <path d="M334,480 C270,486 236,520 222,566"/>
+      </g>
+      ${hipGlove(220, 580)}
+      ${fist(836, 278, 14)}
+      <path d="M764,250 L744,238 M790,214 L780,198" stroke="${C.ink}" stroke-width="11" stroke-linecap="round" fill="none"/>`;
+}
+
+function fist(x, y, tilt = 0) {
+  // A raised cartoon fist seen from the front, wrist at the bottom: four
+  // knuckle bumps across the top, the thumb folded across the fingers, and
+  // a flared cuff.
+  const hand = `M-50,26 C-62,0 -58,-38 -40,-50 C-32,-64 -14,-66 -8,-54
+    C0,-68 18,-68 22,-54 C30,-66 48,-64 50,-48 C62,-44 64,-20 56,-6
+    C62,14 56,32 42,40 C20,50 -32,48 -50,26 Z`;
+  const thumb = "M-52,-4 C-32,-18 8,-20 28,-8 C36,-2 32,12 22,12 C2,10 -30,12 -48,20 Z";
+  const cuff = "M-36,38 C-44,54 -48,64 -50,76 C-20,88 24,88 50,74 C46,62 40,50 36,38 Z";
+  return `
+    <g transform="translate(${x},${y}) rotate(${tilt}) scale(0.82)" stroke="${C.ink}" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
+      <path class="solid-w" d="${cuff}" fill="${C.sugarTop}"/>
+      <path d="M-46,64 C-14,76 22,76 46,62" fill="none" stroke-width="9"/>
+      <path class="solid-w" d="${hand}" fill="${C.sugarTop}"/>
+      <path d="M-8,-54 C-10,-46 -10,-38 -8,-30 M22,-54 C22,-46 22,-38 23,-30 M50,-48 C48,-40 48,-32 49,-26" fill="none" stroke-width="7"/>
+      <path class="solid-w" d="${thumb}" fill="${C.sugarTop}"/>
+    </g>`;
+}
+
+function boot(x, y, side) {
+  // A chubby cartoon boot with its ankle at (x, y): a round toe turned
+  // outward (side 1 is the left foot), a pink cuff and a shine on the toe.
+  return `
+    <g transform="translate(${x},${y}) scale(${side},1)" stroke="${C.ink}" stroke-width="10" stroke-linejoin="round">
+      <path class="solid" d="M-18,-6 L18,-6 C20,10 24,22 30,30 C36,40 30,50 16,50 L-46,50
+        C-70,50 -76,26 -58,16 C-46,8 -26,10 -20,4 Z" fill="${C.ink}"/>
+      <ellipse class="cut" cx="-48" cy="26" rx="12" ry="6" fill="#FFFFFF" opacity="0.55" stroke="none" transform="rotate(-18 -48 26)"/>
+      <rect class="solid-w" x="-27" y="-22" width="54" height="26" rx="13" fill="${C.border}" stroke-width="8"/>
     </g>`;
 }
 
@@ -140,17 +260,10 @@ function mascot() {
       <ellipse class="solid" cx="${cx}" cy="448" rx="27" ry="44" fill="${C.ink}"/>
       <path class="cut" d="M${cx + 4},${448 - 4} L${cx + 30},${448 - 34} L${cx + 30},${448 - 4} Z" fill="${C.sugar}"/>
     </g>`;
+  const tilt = POSE === "jump" ? `rotate(-5 ${FACE_X} 480)` : "";
   return `
-    <g class="mascot">
-      <!-- legs and shoes -->
-      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
-        <path d="M440,630 Q430,690 418,724"/>
-        <path d="M545,630 Q560,690 578,724"/>
-      </g>
-      <ellipse class="solid" cx="398" cy="736" rx="56" ry="26" fill="${C.ink}"/>
-      <ellipse class="solid" cx="602" cy="736" rx="56" ry="26" fill="${C.ink}"/>
-      <ellipse class="cut" cx="380" cy="726" rx="16" ry="7" fill="#FFFFFF" opacity="0.5"/>
-      <ellipse class="cut" cx="620" cy="726" rx="16" ry="7" fill="#FFFFFF" opacity="0.5"/>
+    <g class="mascot" transform="${tilt}">
+      ${POSE === "jump" ? jumpLegs() : standLegs()}
       <!-- the cube -->
       <path class="solid-w" d="${side}" fill="${C.sugarSide}"/>
       <path class="solid-w" d="${top}" fill="${C.sugarTop}"/>
@@ -158,13 +271,7 @@ function mascot() {
       <path d="${edges}" fill="none" stroke="${C.ink}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="${outline}" fill="none" stroke="${C.ink}" stroke-width="14" stroke-linejoin="round"/>
       <g class="grain" fill="${C.sugarSide}">${grains.join("")}</g>
-      <!-- arm on the hip (left), thumbs-up arm (right) -->
-      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
-        <path d="M334,470 C250,462 238,560 300,582"/>
-        <path d="M716,450 C790,452 822,452 822,418"/>
-      </g>
-      ${hipGlove(306, 584)}
-      ${glove(822, 336, -1)}
+      ${POSE === "jump" ? jumpArms() : standArms()}
       <!-- face -->
       ${eye(445)}
       ${eye(540)}
@@ -180,15 +287,53 @@ function mascot() {
     </g>`;
 }
 
+// The ribbon: a band bent along a circular arc, so it keeps its depth all the
+// way to the ends where the lettering tilts. The arc's chord runs from x0 to
+// x1 at height y (the band's centre line) and rises by `lift` in the middle;
+// the band is `h` deep, with notched tails behind each end.
+const RIBBON = { x0: 176, x1: 848, y: 850, lift: 70, h: 184 };
+// Pacifico's ink for "Sugarcube", in em: the b's ascender to the g's descender.
+const WORD_INK = { top: 0.94, bottom: -0.455 };
+// The lettering fills this share of the band's depth.
+const WORD_FILL = 0.74;
+
 function banner() {
+  const { x0, x1, y, lift, h } = RIBBON;
+  const half = (x1 - x0) / 2;
+  const R = (half * half + lift * lift) / (2 * lift);
+  const [cx, cy] = [(x0 + x1) / 2, y - lift + R];
+  const theta = Math.asin(half / R);
+  const deg = (theta * 180) / Math.PI;
+  const at = (r, a) => [cx + r * Math.sin(a), cy - r * Math.cos(a)];
+  const arc = (r, from, to) => {
+    const [a, b] = [at(r, from), at(r, to)];
+    const sweep = to > from ? 1 : 0;
+    return `${a[0].toFixed(1)},${a[1].toFixed(1)} A${r.toFixed(1)},${r.toFixed(1)} 0 0 ${sweep} ${b[0].toFixed(1)},${b[1].toFixed(1)}`;
+  };
+  const [ro, ri] = [R + h / 2, R - h / 2];
+  const band = `M${arc(ro, -theta, theta)} L${arc(ri, theta, -theta)} Z`;
+  // A tail drawn for the left end with the band running along +x and ending
+  // at x = 0, then turned to the band's slope there; mirrored for the right.
+  const v = h / 2;
+  const tailShape = `
+    <path class="solid" d="M34,${-v + 40} L-78,${-v + 40} L-46,4 L-78,${v + 6} L34,${v + 14} Z" fill="${C.ribbonDark}"/>
+    <path class="solid" d="M0,${v} L34,${v + 14} L34,${v - 6} Z" fill="${C.trim}"/>`;
+  const [lx, ly] = at(R, -theta);
+  const fontSize = (WORD_FILL * h) / (WORD_INK.top - WORD_INK.bottom);
+  // Shift the baseline down so the ink is centred on the band's centre line.
+  const dy = ((WORD_INK.top + WORD_INK.bottom) / 2) * fontSize;
   return `
-    <g class="banner" stroke="${C.navy}" stroke-width="10" stroke-linejoin="round">
-      <path class="solid" d="M130,800 L232,800 L232,890 L130,890 L170,845 Z" fill="${C.redDark}"/>
-      <path class="solid" d="M894,800 L792,800 L792,890 L894,890 L854,845 Z" fill="${C.redDark}"/>
-      <path class="solid" d="M192,770 Q512,738 832,770 L832,868 Q512,836 192,868 Z" fill="${C.red}"/>
+    <defs><path id="ribbon-line" d="M${arc(R, -theta, theta)}"/></defs>
+    <g class="banner" stroke="${C.trim}" stroke-width="10" stroke-linejoin="round">
+      <g transform="translate(${lx},${ly}) rotate(${-deg})">${tailShape}</g>
+      <g transform="translate(${2 * cx - lx},${ly}) rotate(${deg}) scale(-1,1)">${tailShape}</g>
+      <path class="solid" d="${band}" fill="${C.ribbon}"/>
+      <path d="M${arc(ro - 16, -theta, theta)} M${arc(ri + 16, -theta, theta)}" fill="none" stroke="${C.lettering}" stroke-width="4" opacity="0.7"/>
     </g>
-    <text class="word" x="512" y="830" text-anchor="middle" font-family="Pacifico" font-size="94"
-      fill="${C.paper}" stroke="${C.navy}" stroke-width="5" paint-order="stroke">Sugarcube</text>`;
+    <text class="word" font-family="Pacifico" font-size="${fontSize.toFixed(1)}" dy="${dy.toFixed(1)}" text-anchor="middle"
+      fill="${C.lettering}" stroke="${C.trim}" stroke-width="7" paint-order="stroke">
+      <textPath href="#ribbon-line" startOffset="50%">Sugarcube</textPath>
+    </text>`;
 }
 
 // --- Variants --------------------------------------------------------------
@@ -197,8 +342,8 @@ function defs() {
   return `
     <defs>
       <radialGradient id="age" cx="50%" cy="46%" r="70%">
-        <stop offset="55%" stop-color="${C.paperDark}" stop-opacity="0"/>
-        <stop offset="100%" stop-color="#B98F55" stop-opacity="0.55"/>
+        <stop offset="60%" stop-color="${C.age}" stop-opacity="0"/>
+        <stop offset="100%" stop-color="${C.age}" stop-opacity="0.3"/>
       </radialGradient>
       <filter id="grain" x="0" y="0" width="100%" height="100%">
         <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="4"/>
@@ -207,23 +352,40 @@ function defs() {
     </defs>`;
 }
 
-// Centre of the mascot and banner, and the distance from it to their farthest
-// points (the thumb and the ribbon tails), for fitting into Android's circle.
-const CONTENT = { cx: 512, cy: 568, r: 500 };
+// The cube's horizontal centre in mascot coordinates (its silhouette runs
+// from 330 to 718). He's centred on the cube, not on the whole drawing, so the
+// raised arm off to one side doesn't pull the cube off centre.
+const CUBE_X = 524;
+// The mascot's vertical centre in its own coordinates, and where (y) and how
+// big it sits on the box art. Standing, the boots rest on the ribbon; jumping,
+// he's smaller and higher, so the fist clears the border and there's air
+// between his boots and the ribbon.
+const MASCOT = { cy: 494, stand: { y: 404, scale: 1.08 }, jump: { y: 388, scale: 0.95 } };
+
+function placedMascot() {
+  const { y, scale: k } = MASCOT[POSE];
+  return `<g transform="translate(${512 - CUBE_X * k},${y - MASCOT.cy * k}) scale(${k})">${mascot()}</g>`;
+}
+
+// Android foreground fit, measured from the drawing (see fitAndroid): the
+// centre of the art and the scale that puts its farthest point on the
+// 66 dp safe circle of the 108 dp layer.
+let ANDROID_FIT = { tx: 0, ty: 0, s: 1 };
 
 function svg(variant) {
   let body;
   if (variant === "full") {
-    body = paper() + frame() + mascot() + banner();
+    body = paper(true) + placedMascot() + banner();
   } else if (variant === "android-bg") {
     body = paper();
+  } else if (variant === "android-art" || variant === "mono-art") {
+    // Unscaled, for measuring.
+    body = `<g id="art">${variant === "mono-art" ? placedMascot() : placedMascot() + banner()}</g>`;
   } else {
-    // Android foreground and monochrome: the mascot and ribbon, scaled to sit
-    // inside the 66 dp safe circle of the 108 dp layer.
-    const s = (1024 * 33) / 108 / CONTENT.r;
-    const tx = 512 - CONTENT.cx * s;
-    const ty = 512 - CONTENT.cy * s;
-    const content = variant === "mono" ? mascot() : mascot() + banner();
+    // Android foreground and monochrome: the mascot and ribbon, fitted inside
+    // the safe circle so no launcher mask (circle, squircle, teardrop) cuts them.
+    const { tx, ty, s } = ANDROID_FIT[variant];
+    const content = variant === "mono" ? placedMascot() : placedMascot() + banner();
     body = `<g transform="translate(${tx},${ty}) scale(${s})">${content}</g>`;
     if (variant === "mono") {
       // A mask, so the black cut-outs become holes rather than black ink.
@@ -272,6 +434,10 @@ async function main() {
   fs.writeFileSync(path.join(path.dirname(IOS_SET), "Contents.json"), CATALOG_CONTENTS);
 
   // Android: adaptive layers (108 dp) plus legacy launchers (48 dp).
+  ANDROID_FIT = {
+    "android-fg": await fitAndroid(page, "android-art"),
+    mono: await fitAndroid(page, "mono-art"),
+  };
   for (const [name, k] of Object.entries(DENSITIES)) {
     const dir = path.join(ANDROID_RES, `mipmap-${name}`);
     const layer = Math.round(108 * k);
@@ -288,6 +454,46 @@ async function main() {
     fs.writeFileSync(path.join(anydpi, `${name}.xml`), ADAPTIVE);
   }
   await browser.close();
+}
+
+// Renders `variant` unscaled and measures its visible pixels. The art is
+// already centred horizontally on the cube (placedMascot), so only the
+// vertical centre comes from their bounding box. Returns the transform that
+// keeps that centre and puts the farthest pixel from it on the safe circle
+// (33 of 108 dp from centre).
+async function fitAndroid(page, variant) {
+  const n = 1024;
+  await page.setViewportSize({ width: n, height: n });
+  await page.setContent(`<style>${CSS}</style>${svg(variant)}`);
+  await page.evaluate(() => document.fonts.ready);
+  const png = (await page.screenshot({ omitBackground: true })).toString("base64");
+  const { cx, cy, r } = await page.evaluate(async ([b64, n]) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = n;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const a = ctx.getImageData(0, 0, n, n).data;
+    let [x0, y0, x1, y1] = [n, n, 0, 0];
+    const pts = [];
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if (a[(y * n + x) * 4 + 3] > 8) {
+          x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+          y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+          pts.push(x, y);
+        }
+      }
+    }
+    const [cx, cy] = [n / 2, (y0 + y1 + 1) / 2];
+    let r = 0;
+    for (let i = 0; i < pts.length; i += 2) r = Math.max(r, Math.hypot(pts[i] + 0.5 - cx, pts[i + 1] + 0.5 - cy));
+    return { cx, cy, r };
+  }, [png, n]);
+  const s = (n * 33) / 108 / r;
+  return { tx: n / 2 - cx * s, ty: n / 2 - cy * s, s };
 }
 
 const IOS_CONTENTS = `{
@@ -323,7 +529,7 @@ const ADAPTIVE = `<?xml version="1.0" encoding="utf-8"?>
 </adaptive-icon>
 `;
 
-module.exports = { svg, CSS };
+module.exports = { svg, CSS, setPose: (p) => (POSE = p) };
 
 if (require.main === module) {
   main().catch((e) => {
