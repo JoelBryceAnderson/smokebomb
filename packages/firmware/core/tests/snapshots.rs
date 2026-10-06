@@ -906,22 +906,25 @@ fn a_pig_toss_game_survives_other_modes_until_it_is_ended() {
         16.0,
     );
     assert_eq!(run.fw.pigs().scores(), &[20, 0]);
-    // Off to Dice: the menu opens on Mode, one tip up is Dice, hold saves.
+    // Off to Dice: the menu opens on Mode, two tips up (past Sugar Rush)
+    // is Dice, hold saves.
     play(
         &mut run,
         vec![
             (16.1, Run::press),
             (17.3, Run::release),
             (17.6, |r| r.tip(TipDir::Up)),
-            (18.2, Run::press),
-            (19.15, Run::release),
+            (18.2, |r| r.tip(TipDir::Up)),
+            (18.8, Run::press),
+            (19.75, Run::release),
         ],
-        20.0,
+        20.5,
     );
     assert_eq!(run.fw.settings().play, PlayMode::Dice);
     assert_eq!(run.fw.pigs().scores(), &[20, 0], "kept while away");
     // Back to Pig Toss: Dice opens on its count, Mode is one tip right, and
-    // Pig Toss one down. With the game in play a hold just saves.
+    // Pig Toss two down (past Sugar Rush). With the game in play a hold just
+    // saves.
     play(
         &mut run,
         vec![
@@ -929,10 +932,11 @@ fn a_pig_toss_game_survives_other_modes_until_it_is_ended() {
             (22.2, Run::release),
             (22.5, |r| r.tip(TipDir::Right)),
             (23.1, |r| r.tip(TipDir::Down)),
-            (23.8, Run::press),
-            (24.75, Run::release),
+            (23.7, |r| r.tip(TipDir::Down)),
+            (24.4, Run::press),
+            (25.35, Run::release),
         ],
-        25.5,
+        26.0,
     );
     assert_eq!(run.fw.settings().play, PlayMode::PigToss);
     assert_eq!(run.fw.pigs().scores(), &[20, 0], "picked up where it was");

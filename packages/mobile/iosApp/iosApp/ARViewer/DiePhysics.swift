@@ -36,6 +36,18 @@ enum DiePhysics {
     static let handlingMaxLinearMg: Float = 400
     /// How quickly a dragged die catches up with the finger, per second.
     static let dragFollowRate: Float = 18
+    /// Leaning with two fingers: the most the die tips, in radians (about
+    /// 26°, past the firmware's 15° lean), and how much each point of drag
+    /// tips it. A lean stays where it's left.
+    static let leanMaxAngle: Float = 0.45
+    static let leanPerPoint: Float = 0.006
+    /// Dragged this far (points), the die tips up toward 40° and, let go,
+    /// rolls over onto that side.
+    static let rollDistance: CGFloat = 140
+    /// Under this (points), letting go sets the die back flat.
+    static let leanDeadZone: CGFloat = 12
+    /// Seconds to roll over, or to settle back flat.
+    static let leanSettleTime: TimeInterval = 0.3
 
     // Held for the menu: lifted off the table with the menu's face toward you.
     /// How high the die's bottom floats above the table, in metres.

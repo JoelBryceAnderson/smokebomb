@@ -17,15 +17,17 @@ pub enum ModeId {
     PassThePot = 1,
     HotPotato = 2,
     PigToss = 3,
+    SugarRush = 4,
 }
 
 impl ModeId {
     /// Every mode, in wire order (also the Mode page's order).
-    pub const ALL: [ModeId; 4] = [
+    pub const ALL: [ModeId; 5] = [
         ModeId::Dice,
         ModeId::PassThePot,
         ModeId::HotPotato,
         ModeId::PigToss,
+        ModeId::SugarRush,
     ];
 
     /// Stable name used in the REST API, the store catalog and licenses.
@@ -35,6 +37,7 @@ impl ModeId {
             ModeId::PassThePot => "pass_the_pot",
             ModeId::HotPotato => "hot_potato",
             ModeId::PigToss => "pig_toss",
+            ModeId::SugarRush => "sugar_rush",
         }
     }
 
@@ -180,7 +183,7 @@ mod tests {
             assert_eq!(ModeId::from_u8(m as u8), Some(m));
         }
         assert_eq!(ModeId::from_wire("chess"), None);
-        assert_eq!(ModeId::from_u8(4), None);
+        assert_eq!(ModeId::from_u8(5), None);
     }
 
     #[test]

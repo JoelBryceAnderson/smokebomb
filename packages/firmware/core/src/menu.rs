@@ -104,15 +104,18 @@ pub enum PlayMode {
     HotPotato,
     /// Two pigs to throw for points; the die keeps score for the table.
     PigToss,
+    /// A sliding-stick puzzle: tip the die and tap ([`crate::rush`]).
+    SugarRush,
 }
 
 impl PlayMode {
     /// Menu order on the Mode page.
-    pub const ALL: [PlayMode; 4] = [
+    pub const ALL: [PlayMode; 5] = [
         PlayMode::Dice,
         PlayMode::PassThePot,
         PlayMode::HotPotato,
         PlayMode::PigToss,
+        PlayMode::SugarRush,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -121,12 +124,13 @@ impl PlayMode {
             PlayMode::PassThePot => "Pass the Pot",
             PlayMode::HotPotato => "Hot Potato",
             PlayMode::PigToss => "Pig Toss",
+            PlayMode::SugarRush => "Sugar Rush",
         }
     }
 
     /// Whether a throw rolls and signs dice in this mode.
     pub const fn rolls(self) -> bool {
-        !matches!(self, PlayMode::HotPotato)
+        !matches!(self, PlayMode::HotPotato | PlayMode::SugarRush)
     }
 
     /// The mode's id on the wire and in the store.
@@ -136,6 +140,7 @@ impl PlayMode {
             PlayMode::PassThePot => ModeId::PassThePot,
             PlayMode::HotPotato => ModeId::HotPotato,
             PlayMode::PigToss => ModeId::PigToss,
+            PlayMode::SugarRush => ModeId::SugarRush,
         }
     }
 
@@ -145,6 +150,7 @@ impl PlayMode {
             ModeId::PassThePot => PlayMode::PassThePot,
             ModeId::HotPotato => PlayMode::HotPotato,
             ModeId::PigToss => PlayMode::PigToss,
+            ModeId::SugarRush => PlayMode::SugarRush,
         }
     }
 
@@ -157,6 +163,7 @@ impl PlayMode {
             (PlayMode::PassThePot, true) => &[Page::Mode, Page::Pot, Page::Settings],
             (PlayMode::HotPotato, true) => &[Page::Mode, Page::Fuse, Page::Settings],
             (PlayMode::PigToss, true) => &[Page::Mode, Page::Players, Page::Settings],
+            (PlayMode::SugarRush, true) => &[Page::Mode, Page::Grid, Page::Settings],
             _ => &[Page::Count, Page::Die, Page::Settings],
         }
     }
@@ -184,6 +191,8 @@ pub enum Page {
     /// Pig Toss while a game is in play: hold to end it. Players takes its
     /// place once it's ended.
     EndGame,
+    /// Sugar Rush's option: how many cells across each screen.
+    Grid,
     Settings,
 }
 
@@ -220,7 +229,35 @@ impl Page {
                 _ => "Player 6",
             },
             Page::EndGame => "End game",
+            Page::Grid => "Board size",
             Page::Settings => "Settings",
+        }
+    }
+}
+
+/// Sugar Rush's board: cells across each screen. Small (3×3) suits the
+/// 64×64 screens best; Big (4×4) fits more sticks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grid {
+    Small,
+    Big,
+}
+
+impl Grid {
+    pub const ALL: [Grid; 2] = [Grid::Small, Grid::Big];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Grid::Small => "Small",
+            Grid::Big => "Big",
+        }
+    }
+
+    /// Cells across a screen.
+    pub const fn cells(self) -> u8 {
+        match self {
+            Grid::Small => 3,
+            Grid::Big => 4,
         }
     }
 }
@@ -263,6 +300,8 @@ pub enum Setup {
     HotPotato,
     /// Pig Toss for this many players.
     Pigs(u8),
+    /// Sugar Rush.
+    Rush,
 }
 
 impl Setup {
@@ -280,6 +319,11 @@ impl Setup {
                 let _ = s.push_str("Pig Toss");
                 s
             }
+            Setup::Rush => {
+                let mut s = String::new();
+                let _ = s.push_str("Sugar Rush");
+                s
+            }
         }
     }
 
@@ -289,6 +333,7 @@ impl Setup {
             Setup::Roll(..) => "Ready to roll",
             Setup::HotPotato => "Shake to light",
             Setup::Pigs(_) => "Shake to roll",
+            Setup::Rush => "Tip, then tap",
         }
     }
 
@@ -304,6 +349,11 @@ impl Setup {
             Setup::Pigs(players) => {
                 let mut s = String::new();
                 let _ = write!(s, "Pigs ×{players}");
+                s
+            }
+            Setup::Rush => {
+                let mut s = String::new();
+                let _ = s.push_str("Rush");
                 s
             }
         }
@@ -333,6 +383,8 @@ pub struct Settings {
     pub players: u8,
     /// Pig Toss: each player's initial or symbol.
     pub tokens: [Token; MAX_PLAYERS as usize],
+    /// Sugar Rush: the board's size.
+    pub grid: Grid,
     /// The chosen option of each [`SETTINGS`] item.
     pub choices: Choices,
     /// A short id made from the die's serial, which About shows. It is the
@@ -369,6 +421,7 @@ impl Default for Settings {
             fuse: Fuse::Medium,
             players: crate::pigs::MIN_PLAYERS,
             tokens: DEFAULT_TOKENS,
+            grid: Grid::Small,
             choices: default_choices(),
             device_id: 0,
             night_hours: (crate::nest::NIGHT_START_H, crate::nest::NIGHT_END_H),
@@ -428,7 +481,9 @@ impl Settings {
     /// doesn't roll leaves this at the dice setup.
     pub fn active(&self) -> (DieKind, u8) {
         match self.play() {
-            PlayMode::Dice | PlayMode::HotPotato | PlayMode::PigToss => (self.die, self.count),
+            PlayMode::Dice | PlayMode::HotPotato | PlayMode::PigToss | PlayMode::SugarRush => {
+                (self.die, self.count)
+            }
             PlayMode::PassThePot => (DieKind::PassThePot, self.pot_count),
         }
     }
@@ -438,6 +493,7 @@ impl Settings {
         match self.play() {
             PlayMode::HotPotato => Setup::HotPotato,
             PlayMode::PigToss => Setup::Pigs(self.players),
+            PlayMode::SugarRush => Setup::Rush,
             _ => {
                 let (die, count) = self.active();
                 Setup::Roll(die, count)
@@ -459,6 +515,7 @@ pub struct Draft {
     pub fuse: Fuse,
     pub players: u8,
     pub tokens: [Token; MAX_PLAYERS as usize],
+    pub grid: Grid,
     /// Index into [`SETTINGS`].
     pub setting: u8,
     pub choices: Choices,
@@ -493,6 +550,7 @@ impl Draft {
             fuse: s.fuse,
             players: s.players,
             tokens: s.tokens,
+            grid: s.grid,
             setting: 0,
             choices: s.choices,
             device_id: s.device_id,
@@ -608,6 +666,10 @@ impl Draft {
                         *t = t.stepped(by as i32);
                     }
                     Page::EndGame => {}
+                    Page::Grid => {
+                        let i = Grid::ALL.iter().position(|g| *g == self.grid).unwrap_or(0);
+                        next.grid = Grid::ALL[step(i, by, Grid::ALL.len())];
+                    }
                     Page::Settings => {
                         next.setting = step(self.setting as usize, by, SETTINGS.len()) as u8;
                     }
@@ -676,6 +738,7 @@ impl Draft {
         s.fuse = self.fuse;
         s.players = self.players;
         s.tokens = self.tokens;
+        s.grid = self.grid;
         s.choices = self.choices;
     }
 
@@ -720,6 +783,7 @@ impl Draft {
                 }
             }
             Page::EndGame => Ok(()),
+            Page::Grid => write!(s, "{}", self.grid.name()),
             Page::Settings => write!(s, "{}", self.setting().0),
         };
         s
@@ -1194,8 +1258,12 @@ mod tests {
         assert_eq!(p2.page, Page::Token(1));
         assert_eq!(p2.held(), Held::Save);
         assert!(p2.ended && p2.set_up());
-        // ...or off to Dice with the game ended and no new one.
-        let dice = players.tipped(TipDir::Right).tipped(TipDir::Up);
+        // ...or off to Dice (past Sugar Rush) with the game ended and no
+        // new one.
+        let dice = players
+            .tipped(TipDir::Right)
+            .tipped(TipDir::Up)
+            .tipped(TipDir::Up);
         assert_eq!(dice.play, PlayMode::Dice);
         assert_eq!(dice.held(), Held::Save);
         assert!(dice.ended && !dice.set_up());
@@ -1204,7 +1272,8 @@ mod tests {
     #[test]
     fn switching_modes_keeps_the_game() {
         let d = Draft::new(&pigs(2)).with_session(true);
-        let dice = d.tipped(TipDir::Up);
+        assert_eq!(d.tipped(TipDir::Up).play, PlayMode::SugarRush);
+        let dice = d.tipped(TipDir::Up).tipped(TipDir::Up);
         assert_eq!(dice.play, PlayMode::Dice);
         assert_eq!(dice.held(), Held::Save);
         assert!(!dice.ended);
@@ -1214,6 +1283,7 @@ mod tests {
         let back = Draft::new(&s)
             .with_session(true)
             .tipped(TipDir::Right)
+            .tipped(TipDir::Down)
             .tipped(TipDir::Down);
         assert_eq!(back.play, PlayMode::PigToss);
         assert_eq!(back.held(), Held::Save);

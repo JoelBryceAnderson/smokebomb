@@ -10,9 +10,9 @@
 //! | [`WHITE`] | the thing to read: a result, a value |
 //! | [`DIM`] | secondary: the setup under a result, titles, units |
 //! | [`GOLD`] | the best roll: max / crit, and the gold ring of sparks; Pass the Pot's pot, like its coins |
-//! | [`RED`] | the worst roll: fumble / min, a battery that needs charging, Hot Potato's BOOM |
-//! | [`VIOLET`] | the die itself: its icon, the menu's arrows, the sugar |
-//! | [`MINT`] | good news that isn't a roll: charging, saved, a + modifier, bills in hand, a die that keeps |
+//! | [`RED`] | the worst roll: fumble / min, a battery that needs charging, Hot Potato's BOOM, a Sugar Rush jam |
+//! | [`VIOLET`] | the die itself: its icon, the menu's arrows, the sugar, Sugar Rush's downhill edge |
+//! | [`MINT`] | good news that isn't a roll: charging, saved, a + modifier, bills in hand, a die that keeps, the Sugar Rush stick that will go |
 //! | [`EMBER`] | warmth and warning: embers, a − modifier, the low-battery bolt, a heating fuse |
 //! | [`PINK`] | Pig Toss: the pigs, and its players' turn |
 //! | [`POTATO`] | Hot Potato's potato, reddening as it heats; [`CHAR`] once it's gone off |

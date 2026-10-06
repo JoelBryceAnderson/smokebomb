@@ -32,8 +32,8 @@ class SharedModelsTest {
         assertEquals(ModeId.PIG_TOSS, ModeId.fromWire("pig_toss"))
         assertNull(ModeId.fromWire("chess"))
         val all = ModeId.entries.toSet()
-        assertEquals(0b1111, ModeId.maskOf(all))
-        assertEquals(all, ModeId.setOf(0b1111))
+        assertEquals(0b11111, ModeId.maskOf(all))
+        assertEquals(all, ModeId.setOf(0b11111))
         assertEquals(setOf(ModeId.DICE), ModeId.setOf(1 or (1 shl 15)), "unknown bits are skipped")
     }
 

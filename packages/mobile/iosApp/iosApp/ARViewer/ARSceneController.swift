@@ -136,6 +136,15 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var lastPanY: CGFloat = 0
     private var lastPanX: CGFloat = 0
     private var pinchStartScale: Float = 1
+    /// A two-finger lean: where the die sat flat, the drag so far (points),
+    /// and whether fingers are on it now.
+    private struct Lean {
+        var centre: SIMD3<Float>
+        var rotation: simd_quatf
+        var offset: CGPoint
+        var dragging = false
+    }
+    private var lean: Lean?
 
     init(model: ARViewerModel, augmented: Bool) {
         self.model = model
@@ -441,8 +450,11 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         pan.maximumNumberOfTouches = 1
         let twist = UIRotationGestureRecognizer(target: self, action: #selector(didTwist(_:)))
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(didPinch(_:)))
+        let leanPan = UIPanGestureRecognizer(target: self, action: #selector(didLean(_:)))
+        leanPan.minimumNumberOfTouches = 2
+        leanPan.maximumNumberOfTouches = 2
         let touch = TouchTracker { [weak self] point in self?.touchChanged(at: point) }
-        for recognizer in [tap, pan, twist, pinch, touch] as [UIGestureRecognizer] {
+        for recognizer in [tap, pan, twist, pinch, leanPan, touch] as [UIGestureRecognizer] {
             recognizer.delegate = self
             arView.addGestureRecognizer(recognizer)
         }
@@ -469,6 +481,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let point = g.location(in: arView)
         switch g.state {
         case .began:
+            endLean()
             let ray = arView.ray(through: point)
             panOnLid = ray.map { lidIsNearest(origin: $0.origin, direction: $0.direction) } ?? false
             let onDie = !panOnLid && (ray.map { rig.contains(origin: $0.origin, direction: $0.direction) } ?? false)
@@ -523,9 +536,98 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         }
     }
 
+    /// Two fingers dragged across the view lean the die toward the drag, up
+    /// to `DiePhysics.leanMaxAngle`, tipping on its bottom edge like a die
+    /// tilted in the hand, so its IMU reads a lean (Sugar Rush aims with
+    /// one). The lean is square to the die's side nearest the drag, and it
+    /// stays where it's left, so one finger can tap the top while the die
+    /// leans; two fingers move it again (back to the middle sets it flat).
+    /// Dragged past `DiePhysics.rollDistance` and let go, the die rolls
+    /// over onto that side: the way to turn it between faces on the table.
+    @objc private func didLean(_ g: UIPanGestureRecognizer) {
+        switch g.state {
+        case .began:
+            guard model.isPlaced, !model.isRolling, !held, glide == nil, !lidBusy, lid == nil else { return }
+            dragTarget = nil
+            if lean == nil { lean = Lean(centre: centre, rotation: pivot.orientation, offset: .zero) }
+            lean?.dragging = true
+        case .changed:
+            guard let l = lean, l.dragging else { return }
+            guard !held, !model.isRolling else {
+                lean = nil
+                return
+            }
+            let t = g.translation(in: arView)
+            showLean(l, total: CGPoint(x: l.offset.x + t.x, y: l.offset.y + t.y))
+        case .ended, .cancelled, .failed:
+            guard var l = lean, l.dragging else { return }
+            l.dragging = false
+            let t = g.translation(in: arView)
+            let total = CGPoint(x: l.offset.x + t.x, y: l.offset.y + t.y)
+            let distance = hypot(total.x, total.y)
+            if held || model.isRolling {
+                lean = nil
+            } else if distance >= DiePhysics.rollDistance, let side = leanSide(l, total: total) {
+                // Over onto that side, in place: a quarter turn, square again.
+                lean = nil
+                let q = simd_quatf(angle: .pi / 2, axis: simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), side)))
+                glide(to: l.centre, rotation: (q * l.rotation).normalized, duration: DiePhysics.leanSettleTime, easeOut: true)
+            } else if distance < DiePhysics.leanDeadZone {
+                lean = nil
+                glide(to: l.centre, rotation: l.rotation, duration: DiePhysics.leanSettleTime, easeOut: true)
+            } else {
+                // Left leaning.
+                l.offset = total
+                lean = l
+            }
+        default:
+            break
+        }
+    }
+
+    /// The die's side nearest a drag of `total` points, flat on the table.
+    private func leanSide(_ l: Lean, total: CGPoint) -> SIMD3<Float>? {
+        guard let cam = cameraInAnchor else { return nil }
+        // Right on screen is right on the table; up on screen is away.
+        let drag = flatten(cam.right) * Float(total.x) - flatten(l.centre - cam.position) * Float(total.y)
+        guard simd_length(drag) > 1 else { return nil }
+        let sides = DieFace.allCases.map { l.rotation.act($0.normal) }.filter { abs($0.y) < 0.5 }
+        return sides.max(by: { simd_dot($0, drag) < simd_dot($1, drag) }).map { flatten($0) }
+    }
+
+    /// Pose the die leaning for a drag of `total` points.
+    private func showLean(_ l: Lean, total: CGPoint) {
+        let distance = hypot(total.x, total.y)
+        guard let side = leanSide(l, total: total) else {
+            setPose(centre: l.centre, rotation: l.rotation)
+            return
+        }
+        var angle = min(Float(distance) * DiePhysics.leanPerPoint, DiePhysics.leanMaxAngle)
+        let full = CGFloat(DiePhysics.leanMaxAngle / DiePhysics.leanPerPoint)
+        if distance > full {
+            // On toward the roll: up to 40° at the roll distance.
+            let u = Float(min((distance - full) / (DiePhysics.rollDistance - full), 1))
+            angle += u * (0.7 - DiePhysics.leanMaxAngle)
+        }
+        let up = SIMD3<Float>(0, 1, 0)
+        let q = simd_quatf(angle: angle, axis: simd_normalize(simd_cross(up, side)))
+        // About the bottom edge on that side, which stays on the table.
+        let edge = l.centre + side * halfHeight - up * halfHeight
+        setPose(centre: edge + q.act(l.centre - edge), rotation: q * l.rotation)
+    }
+
+    /// Anything else that moves the die starts from it sitting flat.
+    private func endLean() {
+        guard let l = lean else { return }
+        lean = nil
+        setPose(centre: l.centre, rotation: l.rotation)
+        restTransform = pivot.transform
+    }
+
     @objc private func didTwist(_ g: UIRotationGestureRecognizer) {
         guard model.isPlaced, !model.isRolling, !held, glide == nil, !lidBusy else { return }
         if g.state == .began {
+            endLean()
             twistOnLid = arView.ray(through: g.location(in: arView)).map { lidIsNearest(origin: $0.origin, direction: $0.direction) } ?? false
         }
         if twistOnLid {
@@ -562,6 +664,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
               let rig, rig.model.isThrowable, let placement else { return }
         if model.explode > 0 { model.explode = 0 }
         dragTarget = nil
+        endLean()
 
         // Camera right and forward, flattened onto the table, in the anchor's space.
         let camera = cameraTransform.matrix
@@ -642,6 +745,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     func reset() {
         windup = nil
         glide = nil
+        lean = nil
         closeLidNow()
         held = false
         model.isHeld = false
@@ -808,6 +912,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// Lifts the die off the table, the menu's face toward the camera.
     private func pickUp(showing front: DieFace) {
         guard let cam = cameraInAnchor else { return }
+        lean = nil
         held = true
         model.isHeld = true
         dragTarget = nil
@@ -1262,8 +1367,21 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 /// Watches one finger without claiming it: reports where it went down and
 /// when it lifts. It never recognises, so taps, drags and pinches still work;
 /// when one of those takes over, UIKit resets this and the touch ends.
+///
+/// A finger is reported a moment after it lands (`settle`): a second finger
+/// that soon makes it a two-finger gesture (a lean, pinch or twist), and the
+/// first is never reported, so the firmware doesn't take it for a tap.
 private final class TouchTracker: UIGestureRecognizer {
+    static let settle: TimeInterval = 0.1
+    /// How long a tap shorter than `settle` is held down for, so the
+    /// firmware's ticks see it.
+    static let shortTap: TimeInterval = 0.05
+
     private let changed: (CGPoint?) -> Void
+    private var pending: (point: CGPoint, work: DispatchWorkItem)?
+    /// A short tap is being played out: don't let the reset that follows
+    /// its end lift it early.
+    private var playingTap = false
 
     init(changed: @escaping (CGPoint?) -> Void) {
         self.changed = changed
@@ -1275,23 +1393,48 @@ private final class TouchTracker: UIGestureRecognizer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         if let view, let touch = touches.first, (event.allTouches?.count ?? 1) == 1 {
-            changed(touch.location(in: view))
+            let point = touch.location(in: view)
+            let work = DispatchWorkItem { [weak self] in
+                self?.pending = nil
+                self?.changed(point)
+            }
+            pending?.work.cancel()
+            pending = (point, work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.settle, execute: work)
         } else {
-            changed(nil)
+            lift()
         }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        changed(nil)
+        if let quick = pending {
+            // Lifted before it was reported: a quick tap. Press and release.
+            quick.work.cancel()
+            pending = nil
+            playingTap = true
+            changed(quick.point)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.shortTap) { [weak self] in
+                self?.playingTap = false
+                self?.changed(nil)
+            }
+        } else {
+            changed(nil)
+        }
         state = .failed
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        changed(nil)
+        lift()
         state = .failed
     }
 
     override func reset() {
+        if !playingTap { lift() }
+    }
+
+    private func lift() {
+        pending?.work.cancel()
+        pending = nil
         changed(nil)
     }
 }

@@ -321,6 +321,38 @@ pub fn draw_idle<A: AssetStore, T: Target>(
     });
 }
 
+// ---------- Sugar Rush (X3) ----------
+
+/// Sugar Rush between levels, in the colour of what happened: the level
+/// number in the result numerals, a mint "Clear!", a red "Jammed".
+pub fn draw_rush_banner<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, banner: crate::rush::Banner, t: f32) {
+    use crate::rush::Banner;
+    let a = (t / 0.15).min(1.0);
+    let colour = banner.colour();
+    in_pixels(c, |p| match banner {
+        Banner::Level(n) => {
+            TEXT.draw(p, "Level", 0.0, -24.0, 1.0, Align::Center, style(pal::DIM, a));
+            let mut s: String<6> = String::new();
+            let _ = write!(s, "{n}");
+            if s.len() <= 2 {
+                NUM_M.draw(p, &s, 0.0, -12.0, style(colour, a));
+            } else {
+                NUM_S.draw(p, &s, 0.0, -8.0, style(colour, a));
+            }
+        }
+        Banner::Cleared(n) => {
+            TEXT.draw(p, "Clear!", 0.0, -10.0, 2.0, Align::Center, style(colour, a));
+            let mut s: String<16> = String::new();
+            let _ = write!(s, "Level {n}");
+            TEXT.draw(p, &s, 0.0, 8.0, 1.0, Align::Center, style(pal::DIM, a));
+        }
+        Banner::Jammed => {
+            TEXT.draw(p, "Jammed", 0.0, -10.0, 2.0, Align::Center, style(colour, a));
+            TEXT.draw(p, "Try again", 0.0, 8.0, 1.0, Align::Center, style(pal::DIM, a));
+        }
+    });
+}
+
 // ---------- boot (C1) ----------
 
 /// The boot on one face: the 96×96 die's animation, drawn smooth through
@@ -542,6 +574,7 @@ pub fn page_title(page: Page) -> &'static str {
         Page::Players => "Players",
         Page::Token(_) => "Player",
         Page::EndGame => "End game",
+        Page::Grid => "Board",
         Page::Settings => "Settings",
     }
 }
@@ -1706,6 +1739,7 @@ mod tests {
             Page::Players,
             Page::Token(5),
             Page::EndGame,
+            Page::Grid,
             Page::Settings,
         ] {
             assert!(TEXT.measure(page_title(page)) <= LINE_MAX, "{page:?}");

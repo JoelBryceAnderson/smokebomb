@@ -42,6 +42,7 @@ pub fn draw_setup_icon<A: AssetStore, T: Target>(
         Setup::Pigs(_) => {
             crate::pigfx::draw_icon(c.painter, cx, cy, r, alpha);
         }
+        Setup::Rush => stick(c, cx, cy, r, style),
         Setup::Roll(DieKind::PassThePot, _) => banknote(c, cx, cy, r, style),
         Setup::Roll(die, _) => die_solid(c, die, cx, cy, r, style),
     }
@@ -51,6 +52,18 @@ pub fn draw_setup_icon<A: AssetStore, T: Target>(
 /// in hand).
 pub fn draw_banknote<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, cx: f32, cy: f32, r: f32, alpha: f32) {
     banknote(c, cx, cy, r, Style::new(FG, alpha, GLOW));
+}
+
+/// Sugar Rush: one of its sticks, bent over an edge, arrow first.
+fn stick<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, cx: f32, cy: f32, r: f32, style: Style) {
+    let m = |p: P| at(cx, cy, r, p);
+    strokes(
+        c,
+        &[&[m((-0.75, 0.7)), m((-0.75, -0.05)), m((0.35, -0.05))]],
+        style,
+    );
+    c.painter
+        .fill_triangle([m((0.9, -0.05)), m((0.3, -0.42)), m((0.3, 0.32))], style);
 }
 
 fn strokes<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, paths: &[&[P]], style: Style) {

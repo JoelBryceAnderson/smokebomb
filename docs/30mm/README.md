@@ -4,7 +4,7 @@ Branch `poc/30mm-64-colour`. A 30 mm die with six 0.6" 64×64 RGB PMOLEDs (SSD13
 
 ![Contact sheet, page 1](contact-sheet-1.png)
 
-Contact sheets: [page 1](contact-sheet-1.png), [page 2](contact-sheet-2.png), [Pig Toss](contact-sheet-pigs.png), and [Hot Potato, Pass the Pot and the hold ring](contact-sheet-games.png). On each row of pages 1 and 2:
+Contact sheets: [page 1](contact-sheet-1.png), [page 2](contact-sheet-2.png), [Pig Toss](contact-sheet-pigs.png), [Hot Potato, Pass the Pot and the hold ring](contact-sheet-games.png), and [Sugar Rush](contact-sheet-rush.png). On each row of pages 1 and 2:
 
 - the 64×64 screen at 1:1 and at 8×,
 - its 96×96 counterpart at 1:1 and at 5× (the same shown size),
@@ -46,10 +46,10 @@ Screen code has no target checks.
   | Colour | Means |
   |---|---|
   | gold | max, and Pass the Pot's pot |
-  | red | fumble, low battery, Hot Potato's BOOM |
+  | red | fumble, low battery, Hot Potato's BOOM, a Sugar Rush jam |
   | potato tan, char brown, sweat blue | Hot Potato's potato only |
-  | violet | the die and the menu's arrows |
-  | mint | charging, saved, a + modifier, bills in hand, a die that keeps |
+  | violet | the die and the menu's arrows, Sugar Rush's downhill edge |
+  | mint | charging, saved, a + modifier, bills in hand, a die that keeps, the Sugar Rush stick a tap will send |
   | ember | embers, a − modifier, a heating fuse |
   | pink | Pig Toss: the pigs and whose turn it is |
   | grey | secondary text |
@@ -90,6 +90,14 @@ The fuse screen takes the die's clock, so the potato animates between ticks.
 - **Results:** each die is a sprite, bigger the fewer there are (×3 for one, ×2 for two, ×1 for three): white arrows pass a bill left or right, a gold pot takes one, a mint dot keeps it. Under them is one short line per kind in the same colour ("1 left", "1 right", "1 pot", or "keep all"). The 96×96 summary ran off the face at 64×64 with three dice, and these lines can't.
 
 Both have a whole-game sheet, [contact-sheet-games.png](contact-sheet-games.png), with the hold ring. A test draws every throw of up to three dice, the fuse at each heat, the boom once its chunks have flown, and the ring, and checks nothing reaches under the glass's corners.
+
+**Sugar Rush** (SIM_SPEC X3) was designed for this panel first, and the 96×96 die uses the same layout at its size.
+
+- **The board.** Small boards are 3×3 cells a screen (18 px cells, 8 px sticks), Big ones 4×4 (14 px, 6 px), inside a 4 px margin that keeps the arrows clear of the glass's rounded corners. Sticks are filled rectangles on whole pixels with square joints, and the arrowhead is twice the stick's width. Where a stick bends over the die's edge, it runs to the panel's edge, so it reads as continuing onto the next screen.
+- **Lean and tap.** While the die leans, the sticks that can go stay white and the rest go grey, the one a tap will send blinks mint, and a 2 px violet bar marks the downhill edge (dark grey if nothing points that way). A stick that slides off turns mint and runs off the panel. A jam flashes the stick it hit red.
+- **Between levels:** "Level" and the number in the result numerals, a mint "Clear!", a red "Jammed".
+
+Its sheet, [contact-sheet-rush.png](contact-sheet-rush.png), is a whole level played through the firmware on both panels: the level number, the board, a lean, a slide, a jam and "Clear!".
 
 **What fits.** Tests walk every case:
 

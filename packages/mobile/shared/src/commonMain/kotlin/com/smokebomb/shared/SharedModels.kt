@@ -79,7 +79,8 @@ enum class ModeId(val bit: Int, val wire: String, val variant: String, val label
     DICE(0, "dice", "Dice", "Dice"),
     PASS_THE_POT(1, "pass_the_pot", "PassThePot", "Pass the Pot"),
     HOT_POTATO(2, "hot_potato", "HotPotato", "Hot Potato"),
-    PIG_TOSS(3, "pig_toss", "PigToss", "Pig Toss");
+    PIG_TOSS(3, "pig_toss", "PigToss", "Pig Toss"),
+    SUGAR_RUSH(4, "sugar_rush", "SugarRush", "Sugar Rush");
 
     companion object {
         fun fromVariant(variant: String): ModeId? = entries.firstOrNull { it.variant == variant }

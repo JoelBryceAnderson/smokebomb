@@ -25,7 +25,10 @@ the real firmware, the backend that verifies rolls, and the phone app.
 - **Game modes.** Dice, Pass the Pot (the menu page is the bills in your
   hand) and Hot Potato (set a fuse length and pass it round),
   and Pig Toss (two 3D pigs tumble across the screens instead of sugar and land
-  in scored poses; set 2–6 players, tap to bank and pass the die).
+  in scored poses; set 2–6 players, tap to bank and pass the die), and Sugar
+  Rush (a sliding-stick puzzle across all six screens: lean the die toward an
+  edge to light the sticks that point that way, tap the top screen to slide
+  one off).
 - **On-die menu.** Press and hold a screen to open it, tip the die to move
   between pages and values, tap to edit a setting, hold to save. Turning
   several faces in one swipe steps several pages or values. Settings include
@@ -133,6 +136,11 @@ What's done and what isn't:
   sprites with one line per kind for the pot's dice
   (`cargo test -p smokebomb-core --test games64` draws their sheet). The
   hold ring is drawn in whole pixels.
+- **Sugar Rush** was designed for 64×64 first: a 3×3 board a screen with
+  sticks on whole pixels, mint for the stick a tap will send, red for a jam
+  and a violet bar on the downhill edge; the 96×96 die uses the same layout
+  at its size (`cargo test -p smokebomb-core --test rush64` plays it and
+  draws its sheet).
 - **Fallback screens.** The Nest's clock and guidance fall back to the
   96×96 layout.
 
