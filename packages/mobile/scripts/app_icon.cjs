@@ -36,6 +36,11 @@ const C = {
   lettering: "#FFFFFF",
   ink: "#1A1410",
   shard: "#EA6A98",
+  // Inside the burst's hole: deeper golds, so the opening recedes behind
+  // the white flaps.
+  deepLight: "#FCE3A0",
+  deepDark: "#F8C84A",
+  deepEdge: "#D99A12",
   sugar: "#FFFDF5",
   sugarTop: "#FFFFFF",
   sugarSide: "#E8DFC9",
@@ -50,7 +55,7 @@ const C = {
 // `border` draws the box's solid border over the ageing (which would
 // muddy it) but under the grain, so it shares the paper's texture.
 // The sunburst: alternating rays from (cx, cy) across the whole canvas.
-function rays(cx = 512, cy = 470) {
+function rays(cx = 512, cy = 470, light = C.paper, dark = C.ray) {
   const d = [];
   const n = 28;
   for (let i = 0; i < n; i += 2) {
@@ -60,8 +65,8 @@ function rays(cx = 512, cy = 470) {
     d.push(`M${cx},${cy} L${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)} L${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)} Z`);
   }
   return `
-    <rect x="-1024" y="-1024" width="3072" height="3072" fill="${C.paper}"/>
-    <path d="${d.join(" ")}" fill="${C.ray}"/>`;
+    <rect x="-1024" y="-1024" width="3072" height="3072" fill="${light}"/>
+    <path d="${d.join(" ")}" fill="${dark}"/>`;
 }
 
 function paper(border = false) {
@@ -343,33 +348,93 @@ function banner() {
 
 // --- Burst style -----------------------------------------------------------
 
-// The hole he bursts through: a jagged star of alternating long and short
-// points around (cx, cy), irregular like torn paper.
-const HOLE = { cx: 512, cy: 512, points: 9, outer: 440, inner: 300 };
+// The hole he bursts through, an irregular polygon around (cx, cy). Each of
+// its edges is the hinge of a torn flap that he's punched out toward the
+// viewer: seen in perspective, a flap swung toward the camera reaches out
+// past its hinge, showing its paper-white back.
+const HOLE = { cx: 512, cy: 516, sides: 9, r: 335 };
+
+function seeded(seed) {
+  return () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+}
 
 function holePoints() {
-  const { cx, cy, points, outer, inner } = HOLE;
-  let seed = 5;
-  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const { cx, cy, sides, r } = HOLE;
+  const rnd = seeded(5);
   const pts = [];
-  for (let i = 0; i < points * 2; i++) {
-    const a = (i / (points * 2)) * Math.PI * 2 + (rnd() - 0.5) * 0.12;
-    const r = (i % 2 ? inner : outer) * (0.9 + rnd() * 0.18);
-    pts.push([cx + r * Math.sin(a), cy - r * Math.cos(a) * 0.96]);
+  for (let i = 0; i < sides; i++) {
+    const a = ((i + (rnd() - 0.5) * 0.5) / sides) * Math.PI * 2;
+    const d = r * (0.86 + rnd() * 0.26);
+    pts.push([cx + d * Math.sin(a), cy - d * Math.cos(a)]);
   }
   return pts;
 }
 
-// The pink sheet with the hole torn in it: a paper-white torn rim, an ink
-// outline and a shadow falling into the hole.
+// The flaps, one per hole edge: torn paper from the hinge out to a tip, with
+// ragged sides, a shaded band where it bends at the hinge, and the tip curled
+// back to show a sliver of the pink front. Sizes vary a lot, and the lower
+// flaps reach further, as they're nearer the eye.
+function flaps() {
+  const pts = holePoints();
+  const rnd = seeded(41);
+  const f = (v) => v.toFixed(1);
+  const path = (ps) => "M" + ps.map((p) => `${f(p[0])},${f(p[1])}`).join(" L");
+  // Points along p→q with a ragged sideways jitter, as torn paper.
+  const torn = (p, q, steps, amp) => {
+    const out = [];
+    const [dx, dy] = [q[0] - p[0], q[1] - p[1]];
+    const l = Math.hypot(dx, dy);
+    for (let k = 1; k < steps; k++) {
+      const t = k / steps;
+      const w = (rnd() - 0.5) * 2 * amp;
+      out.push([p[0] + dx * t - (dy / l) * w, p[1] + dy * t + (dx / l) * w]);
+    }
+    return out;
+  };
+  return pts
+    .map((a, i) => {
+      const b = pts[(i + 1) % pts.length];
+      const [mx, my] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      let [nx, ny] = [mx - HOLE.cx, my - HOLE.cy];
+      const nl = Math.hypot(nx, ny);
+      [nx, ny] = [nx / nl, ny / nl];
+      const [tx, ty] = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+      const near = 1 + 0.6 * Math.max(0, ny);
+      const reach = len * (0.28 + rnd() * 0.5) * near;
+      const slide = (rnd() - 0.5) * len * 0.4;
+      const tip = [mx + nx * reach + tx * slide, my + ny * reach + ty * slide];
+      const sideA = [a, ...torn(a, tip, 4, len * 0.035), tip];
+      const sideB = [tip, ...torn(tip, b, 4, len * 0.035), b];
+      const flap = path([...sideA, ...sideB.slice(1)]) + " Z";
+      const lerp = (p, q, t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+      const shade = path([a, lerp(a, tip, 0.3), lerp(b, tip, 0.3), b]) + " Z";
+      // The curl: the last stretch of the tip, folded back to its pink face.
+      const [ca, cb] = [lerp(tip, a, 0.24), lerp(tip, b, 0.24)];
+      const fold = lerp(lerp(ca, cb, 0.5), [HOLE.cx, HOLE.cy], 0.06);
+      const curl = path([ca, tip, cb, fold]) + " Z";
+      return `
+    <path d="${flap}" fill="${C.paper}" stroke="${C.ink}" stroke-width="8" stroke-linejoin="round"/>
+    <path d="${shade}" fill="${C.trim}" opacity="0.07"/>
+    <path d="${curl}" fill="${C.shard}" stroke="${C.ink}" stroke-width="7" stroke-linejoin="round"/>`;
+    })
+    .join("");
+}
+
+// The pink sheet with the hole in it and the flaps folded out over it.
 function sheet() {
   const pts = holePoints();
   const hole = "M" + pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" L") + " Z";
   return `
-    <path d="${hole}" fill="none" stroke="${C.trim}" stroke-width="34" opacity="0.1" transform="translate(8,12)"/>
+    <path d="${hole}" fill="url(#depth)"/>
     <path d="M-1024,-1024 H2048 V2048 H-1024 Z ${hole}" fill="${C.border}" fill-rule="evenodd"/>
-    <path d="${hole}" fill="none" stroke="${C.paper}" stroke-width="22" stroke-linejoin="round"/>
-    <path d="${hole}" fill="none" stroke="${C.ink}" stroke-width="9" stroke-linejoin="round"/>`;
+    <path d="${hole}" fill="none" stroke="${C.ink}" stroke-width="9" stroke-linejoin="round"/>
+    ${flaps()}`;
+}
+
+// His shadow on the sheet behind him, so he reads as out in front of it.
+function mascotShadow() {
+  return `<g filter="url(#drop)">${placedMascot()}</g>`;
 }
 
 // Scraps of the sheet flying off around him. Each is its own jagged shape:
@@ -398,13 +463,15 @@ function shards() {
       <path class="cut" d="M${torn}" fill="none" stroke="${C.paper}" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
     </g>`;
   };
+  // Further from the hole is nearer the eye, so bigger.
+  const flying = (x, y, base, rot) => shard(x, y, base * (0.55 + Math.hypot(x - HOLE.cx, y - HOLE.cy) / 520), rot);
   return [
-    shard(134, 214, 58, -20),
-    shard(86, 566, 40, 30),
-    shard(934, 544, 50, 15),
-    shard(862, 892, 44, -35),
-    shard(168, 872, 50, 50),
-    shard(604, 64, 36, 70),
+    flying(120, 190, 52, -20),
+    flying(70, 600, 40, 30),
+    flying(950, 420, 46, 15),
+    flying(880, 920, 52, -35),
+    flying(150, 900, 50, 50),
+    flying(640, 70, 34, 70),
   ].join("");
 }
 
@@ -417,6 +484,16 @@ function defs() {
         <stop offset="60%" stop-color="${C.age}" stop-opacity="0"/>
         <stop offset="100%" stop-color="${C.age}" stop-opacity="0.3"/>
       </radialGradient>
+      <radialGradient id="depth" gradientUnits="userSpaceOnUse" cx="${HOLE.cx}" cy="${HOLE.cy}" r="${HOLE.r * 1.1}">
+        <stop offset="60%" stop-color="${C.deepEdge}" stop-opacity="0"/>
+        <stop offset="100%" stop-color="${C.deepEdge}" stop-opacity="0.32"/>
+      </radialGradient>
+      <filter id="drop" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur in="SourceAlpha" stdDeviation="9" result="blur"/>
+        <feOffset in="blur" dx="22" dy="30" result="moved"/>
+        <feFlood flood-color="${C.trim}" flood-opacity="0.32"/>
+        <feComposite operator="in" in2="moved"/>
+      </filter>
       <filter id="grain" x="0" y="0" width="100%" height="100%">
         <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="4"/>
         <feColorMatrix values="0 0 0 0 0.45  0 0 0 0 0.32  0 0 0 0 0.18  0 0 0 0.55 -0.12"/>
@@ -433,8 +510,9 @@ const CUBE_X = 524;
 // he's smaller and higher, so the fist clears the border and there's air
 // between his boots and the ribbon.
 const MASCOT = { cy: 494, stand: { y: 404, scale: 1.08 }, jump: { y: 388, scale: 0.95 } };
-// Bursting, there's no ribbon below him, so he's bigger and centred on the hole.
-const MASCOT_BURST = { y: 500, scale: 0.98 };
+// Bursting, there's no ribbon below him, so he's bigger, coming out at the
+// viewer, and centred on the hole.
+const MASCOT_BURST = { y: 500, scale: 1.04 };
 
 function placedMascot() {
   const { y, scale: k } = STYLE === "burst" ? MASCOT_BURST : MASCOT[POSE];
@@ -473,13 +551,13 @@ function svg(variant) {
 function burstBody(variant) {
   const grain = `<rect width="1024" height="1024" filter="url(#grain)" opacity="0.3"/>`;
   const front = placedMascot() + shards();
-  if (variant === "full") return rays(HOLE.cx, HOLE.cy) + sheet() + front + grain;
+  if (variant === "full") return rays(HOLE.cx, HOLE.cy, C.deepLight, C.deepDark) + sheet() + mascotShadow() + front + grain;
   if (variant === "android-art") return `<g id="art">${front}</g>`;
   if (variant === "mono-art") return `<g id="art">${placedMascot()}</g>`;
   const { tx, ty, s } = ANDROID_FIT[variant === "android-bg" ? "android-fg" : variant];
   const fit = (inner) => `<g transform="translate(${tx},${ty}) scale(${s})">${inner}</g>`;
   // The background layer scales the hole with the mascot so they still line up.
-  if (variant === "android-bg") return rays(tx + HOLE.cx * s, ty + HOLE.cy * s) + fit(sheet()) + grain;
+  if (variant === "android-bg") return rays(tx + HOLE.cx * s, ty + HOLE.cy * s, C.deepLight, C.deepDark) + fit(sheet() + mascotShadow()) + grain;
   if (variant === "android-fg") return fit(front);
   return `<mask id="mono" class="mono">${fit(placedMascot())}</mask><rect width="1024" height="1024" fill="#fff" mask="url(#mono)"/>`;
 }
