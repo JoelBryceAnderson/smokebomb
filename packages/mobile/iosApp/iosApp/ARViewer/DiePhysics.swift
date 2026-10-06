@@ -51,8 +51,16 @@ enum DiePhysics {
     static let handFollowRate: Float = 25
     /// With no hand seen for this long, a pinch is forgotten…
     static let handLostAfter: TimeInterval = 0.35
-    /// …and a held die dropped.
+    /// …and a held die dropped…
     static let handLostWhileHeld: TimeInterval = 1.0
+    /// …or, moving faster than `handFlingSpeed`, thrown after only this.
+    static let handLostWhileFlung: TimeInterval = 0.2
+    /// Held, moving faster than this (m/s) is a throw under way: the pinch
+    /// lets go as soon as it opens past `handFlingOpen`, without waiting.
+    static let handFlingSpeed: Float = 0.5
+    static let handFlingOpen: Float = 0.045
+    /// How much of a held die's path is kept, in seconds.
+    static let handPathKept: TimeInterval = 0.5
     /// A release's speed is the hand's over this last stretch, in seconds…
     static let handThrowWindow: TimeInterval = 0.12
     /// …at most this fast, in m/s.

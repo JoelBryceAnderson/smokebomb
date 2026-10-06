@@ -962,13 +962,17 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         if let frame = arView.session.currentFrame {
             handTracker.submit(frame) { [weak self] reading in self?.handSeen(reading) }
         }
-        let lostAfter = handGrab == nil ? DiePhysics.handLostAfter : DiePhysics.handLostWhileHeld
+        // A hand flung out of view (or blurred past seeing) throws the die;
+        // one that just goes missing drops it, after longer.
+        let flung = handGrab.map { isFast($0, at: hand?.seen) } ?? false
+        let lostAfter = handGrab == nil ? DiePhysics.handLostAfter
+            : flung ? DiePhysics.handLostWhileFlung : DiePhysics.handLostWhileHeld
         if let h = hand, time - h.seen > lostAfter {
             hand = nil
             pinching = false
             openSince = nil
             model.handDebug = nil
-            if handGrab != nil { letGo(throwing: false) }
+            if handGrab != nil { letGo(throwing: flung, endingAt: h.seen) }
         }
         guard var grab = handGrab else { return }
         grab.offset *= exp(-DiePhysics.handFollowRate / 5 * dt)
@@ -996,14 +1000,14 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         setPose(centre: c, rotation: rotation)
         grab.path.append((time, centre, pivot.orientation))
-        grab.path.removeAll { time - $0.time > DiePhysics.handThrowWindow * 2 }
+        grab.path.removeAll { time - $0.time > DiePhysics.handPathKept }
         handGrab = grab
     }
 
     /// A hand from the tracker (nil: none in that frame, so the last one
     /// stands until it goes stale). Closing a pinch on the die picks it up;
-    /// keeping it open a moment lets go. With the fingertips hidden, the
-    /// pinch stays as it was and a held die stays put.
+    /// keeping it open a moment lets go, or at once mid-throw. With the
+    /// fingertips hidden, the pinch stays as it was and a held die stays put.
     private func handSeen(_ reading: HandTracker.Reading?) {
         guard handTracking, let placement, let reading else { return }
         let pinch = reading.pinch.map { placement.convert(position: $0, from: nil) }
@@ -1017,19 +1021,22 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         hand = (pinch ?? hand?.pinch, turn ?? hand?.turn, time)
         defer { showHandDebug(gap: reading.gap, palmSeen: turn != nil) }
         guard let gap = reading.gap, let pinch else { return }
+        let fast = handGrab.map { isFast($0, at: nil) } ?? false
         if !pinching {
             if gap < DiePhysics.handPinchClose {
                 pinching = true
                 openSince = nil
                 pinchBegan(at: pinch)
             }
-        } else if gap > DiePhysics.handPinchOpen {
+        } else if gap > (fast ? DiePhysics.handFlingOpen : DiePhysics.handPinchOpen) {
+            // Opening mid-throw lets go at once, at the speed it had: the
+            // hand slows as it opens, and waiting would throw it short.
             let since = openSince ?? time
             openSince = since
-            if time - since >= DiePhysics.handReleaseTime {
+            if fast || time - since >= DiePhysics.handReleaseTime {
                 pinching = false
                 openSince = nil
-                if handGrab != nil { letGo(throwing: true) }
+                if handGrab != nil { letGo(throwing: true, endingAt: since) }
             }
         } else {
             openSince = nil
@@ -1045,6 +1052,9 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         var text = "Hand: " + (gap.map { String(format: "gap %.1f cm", $0 * 100) } ?? "tips hidden")
         if pinching { text += " · pinched" }
         if let grab = handGrab {
+            if let motion = heldMotion(grab, endingAt: nil) {
+                text += String(format: " · %.2f m/s", simd_length(motion.velocity))
+            }
             if !palmSeen {
                 text += " · palm hidden"
             } else if let start = grab.handTurn, let turn = hand?.turn {
@@ -1075,27 +1085,43 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         lightHaptic.impactOccurred()
     }
 
-    /// Lets the held die go: thrown at the hand's speed, or (`throwing`
-    /// false, the hand lost) just dropped. Either way it lands as a roll.
-    private func letGo(throwing: Bool) {
+    /// How the held die was moving and turning over `handThrowWindow`,
+    /// up to `end` (or now).
+    private func heldMotion(_ grab: HandGrab, endingAt end: TimeInterval?) -> (velocity: SIMD3<Float>, turning: SIMD3<Float>)? {
+        let upTo = end ?? time
+        guard let last = grab.path.last(where: { $0.time <= upTo }) ?? grab.path.first,
+              let first = grab.path.first(where: { last.time - $0.time <= DiePhysics.handThrowWindow }),
+              last.time - first.time > 1e-3
+        else { return nil }
+        let dt = Float(last.time - first.time)
+        // A flick of the wrist carries on as spin; the short way round.
+        let turned = last.rotation * first.rotation.inverse
+        var angle = turned.angle
+        if angle > .pi { angle -= 2 * .pi }
+        let turning = abs(angle) > 1e-3 ? turned.axis * angle / dt : .zero
+        return ((last.centre - first.centre) / dt, turning)
+    }
+
+    /// Whether the held die is moving fast enough to be mid-throw.
+    private func isFast(_ grab: HandGrab, at end: TimeInterval?) -> Bool {
+        guard let motion = heldMotion(grab, endingAt: end) else { return false }
+        return simd_length(motion.velocity) > DiePhysics.handFlingSpeed
+    }
+
+    /// Lets the held die go: thrown at the hand's speed up to `end`, or
+    /// (`throwing` false) just dropped. Either way it lands as a roll.
+    private func letGo(throwing: Bool, endingAt end: TimeInterval? = nil) {
         guard let grab = handGrab else { return }
         handGrab = nil
         model.isHandHeld = false
 
         var velocity = SIMD3<Float>.zero
         var turning = SIMD3<Float>.zero
-        if throwing, let last = grab.path.last,
-           let first = grab.path.first(where: { last.time - $0.time <= DiePhysics.handThrowWindow }),
-           last.time - first.time > 1e-3 {
-            let dt = Float(last.time - first.time)
-            velocity = (last.centre - first.centre) / dt
+        if throwing, let motion = heldMotion(grab, endingAt: end) {
+            velocity = motion.velocity
+            turning = motion.turning
             let speed = simd_length(velocity)
             if speed > DiePhysics.handMaxThrowSpeed { velocity *= DiePhysics.handMaxThrowSpeed / speed }
-            // A flick of the wrist carries on as spin; the short way round.
-            let turned = last.rotation * first.rotation.inverse
-            var angle = turned.angle
-            if angle > .pi { angle -= 2 * .pi }
-            if abs(angle) > 1e-3 { turning = turned.axis * angle / dt }
         }
         // Tumbling the way it's thrown, more the harder; a little either way.
         let speed = simd_length(velocity)

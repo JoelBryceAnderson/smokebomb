@@ -515,9 +515,13 @@ when it's in front.
   since the grab beside the die's ("hand 40° die 38°"), or "palm hidden".
   With the wrist or knuckles hidden it holds its last turn. A twist of the
   wrist at release carries on as spin.
-- Let go, it leaves at the hand's speed over the last `handThrowWindow`
-  (capped by `handMaxThrowSpeed`) and lands as a roll, inside the usual
-  corral. If the hand is lost for `handLostAfter`, the die is dropped.
+- Let go, it leaves at the hand's speed over the `handThrowWindow` before
+  the pinch opened (capped by `handMaxThrowSpeed`) and lands as a roll,
+  inside the usual corral.
+- Mid-throw (held, faster than `handFlingSpeed`) the pinch lets go as soon
+  as it opens past `handFlingOpen`, with no wait. A hand that blurs or
+  leaves the view mid-throw throws the die after `handLostWhileFlung`; a
+  hand lost at rest drops it after `handLostWhileHeld`.
 
 The constants are in `DiePhysics` and untuned.
 
