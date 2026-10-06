@@ -64,6 +64,14 @@ impl MotionDetector {
         matches!(self.last, None | Some(Motion::Rest))
     }
 
+    /// Shaken, thrown or knocked: more than being held or turned.
+    pub fn agitated(&self) -> bool {
+        matches!(
+            self.last,
+            Some(Motion::Shaking | Motion::FreeFall | Motion::Impact)
+        )
+    }
+
     /// Feed a sample; returns a motion event when the classification changes.
     pub fn update(&mut self, s: &ImuSample, now_ms: u64) -> Option<Motion> {
         let mag = magnitude_mg(s);

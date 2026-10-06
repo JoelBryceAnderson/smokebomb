@@ -264,14 +264,16 @@ The mockup has three pages: How many dice, Which die, Settings. The firmware add
 | Dice | Mode, How many dice, Which die, Settings | How many dice |
 | Pass the Pot | Mode, Bills in hand, Settings | Bills in hand |
 | Hot Potato | Mode, Fuse length, Settings | Fuse length |
+| Sugar Rush | Mode, Board size, Settings | Board size |
 
 | Page | Title | Values |
 |---|---|---|
-| Mode | Mode | Dice, Pass the Pot, Hot Potato |
+| Mode | Mode | Dice, Pass the Pot, Hot Potato, Pig Toss, Sugar Rush |
 | Count | How many dice | 1–10 |
 | Die | Which die | d4, d6, d8, d10, d12, d20, d100 |
 | Pot | Bills in hand | 1–3 (starts at 3) |
 | Fuse | Fuse length | Short (10–20 s), Medium (20–40 s), Long (40–90 s) |
+| Grid | Board size (64×64: "Board") | Small (3×3 cells a screen, the default), Big (4×4) |
 | Settings | Settings | Brightness 70%; Haptics On; Sugar Full; Sleep after 2 min; Bluetooth On; Owner "Joel"; Power off "Tap to power off"; About (the firmware version and the die's id, `v0.1.0 · SC-A1B2`); Regulatory (`FCC ID: TBD` over `IC: TBD · CE · SC-1`, placeholders until certified, H14). **Decided (H11, H13):** a tap steps the selected item to its next value; Owner, Power off, About and Regulatory aren't editable. |
 
 - **X1, Mode page.** Mode sits one tip *right* of How many dice, so the dice flow is unchanged: hold, tip up or down for the count, one tip left for the die, hold to save.
@@ -293,6 +295,31 @@ Shake the die to light the fuse, then pass it around. Whoever holds it when it g
 - **No menu mid-round.** A hold does nothing while the fuse is lit (and no hold ring shows). It opens the menu as usual once the die has gone off. Opening the menu, docking or changing mode resets the round.
 - **Shakes in the menu.** A shake or throw with the menu open closes it without saving and leaves the die idle; in a game that doesn't roll it doesn't start a round.
 - **Label.** The wake label and menu status read "Hot Potato" and "Potato". The success screen says "Shake to light" instead of "Ready to roll".
+
+**X3, Sugar Rush** (extension; not in the mockup)
+
+A sliding-stick puzzle, like Rush Hour on a cube. Every face shows a grid of sticks; each has an arrow at its head and only moves the way it points, sliding off the edge of its screen. A stick in the way stops it. Clear every stick to finish the level. Sticks can bend over the die's edges, so the puzzle is read by turning the die. It never rolls or signs anything. Code: `rush.rs`; the whole-firmware test and contact sheet are `tests/rush64.rs`.
+
+The die can't tell where on a screen a finger is, only which screens are touched (A6), so it plays by **tip and tap**:
+
+- **Only the top screen is in play.** Turning the die brings another screen up.
+- **Lean to aim.** Leaning the die past about 15° toward one of the top screen's edges (and clearly toward that edge rather than a corner: the bigger tilt component at least 1.4× the other) picks that direction. The lean lasts until it drops under about 10°, so it doesn't flicker. While the die leans:
+  - the top screen's sticks that point downhill stay lit and every other stick dims;
+  - the one a tap will send blinks (200 ms on, 200 ms at 55%), starting with the one nearest its edge;
+  - the downhill edge of the top screen shows a 2 px bar (dim if nothing points that way);
+  - a 10 ms tick plays when a lean first lights something.
+- **Tap the top screen** to slide the blinking stick. It is the stick that was blinking when the finger *landed*, so a lean that wobbles as the finger lifts doesn't change it. A tap with the die level, or with nothing lit, does nothing.
+- **Tap any other screen** to blink the next lit stick (wrapping).
+- **Slide.** A clear stick slides along its way out and off the panel's edge, speeding up (14 + 60·t doubled cells ⇒ about 0.4 s), with the tick haptic.
+- **Jam.** A stick with another in its way runs at it and back (0.34 s); the stick it hit flashes red for 0.7 s, with the buzz haptic. The third jam in a level shows "Jammed" ("Try again") for 1.8 s, with the dud haptic, then the same board starts again.
+- **Levels.** Each level starts with its number on every face for 1.4 s (from when it first shows, so a boot or another mode doesn't use it up); a tap skips it. Clearing the board shows "Clear!" and the level for 2.6 s with the max haptic, then the next level, on a new board. Sticks get longer as the levels go up (up to 3 + level/3 cells, at most 6) and boards fuller (70% of the cells on level 1, 85% after).
+- **Every board can be cleared.** Boards are built in reverse: each new stick's way out is clear of every stick placed before it, and those leave after it. A test builds 1,200 boards and clears each one.
+- **Touch, one screen at a time.** Holding the die puts fingers on its sides and bottom, and those stay down. In Sugar Rush each screen's touch is read on its own: a touch counts from when *that* screen's touch starts, and a short one (≤ 0.5 s) is a tap on that screen. Nothing counts while the die is shaken or knocked. Other modes still read touches as one (any screen).
+- **Menu.** Holding the **top** screen for 0.8 s opens the menu (with the hold ring). A grip on the other screens never does.
+- **Session.** The board and level are a session, like Pig Toss's game: they last through the menu and other modes. Changing Board size starts the same level on a new board.
+- **Screens.** The board is fixed to the die like print: it is drawn on each face's own axes (B2's orientation doesn't turn it), except "Level", "Clear!" and "Jammed", which are text and follow B2. The face-down screen stays dark (B3). Sticks and cells sit on whole pixels: on 64×64 a cell is 18 px (Small) or 14 px (Big) with sticks 8 or 6 px wide, inside a 4 px margin; a stick that bends over an edge runs to the panel's edge. The 96×96 die uses the same layout at its size (28 or 20 px cells, 6 px margin).
+- **Colour (64×64).** White: a stick. Grey: a stick that can't go this lean. Mint: the stick a tap will send, and a stick sliding off. Red: the stick a jam hit, and "Jammed". Violet: the downhill edge. Faint: the empty cells' dots. On the grey die these read as brightness, with the blink.
+- **Label.** The success screen says "Sugar Rush" and "Tip, then tap"; the menu status reads "Rush". The 96×96 setup icon is a bent stick with an arrowhead.
 
 **Tips**
 

@@ -8,7 +8,7 @@ import kotlin.test.assertNull
 class PhoneCodecTest {
     @Test
     fun variants() {
-        assertEquals(listOf("Dice", "PassThePot", "HotPotato", "PigToss"), ModeId.entries.map { it.variant })
+        assertEquals(listOf("Dice", "PassThePot", "HotPotato", "PigToss", "SugarRush"), ModeId.entries.map { it.variant })
         assertEquals("D100", DieKind.D100.variant)
         assertEquals(DieKind.PASS_THE_POT, DieKind.fromVariant("PassThePot"))
     }
@@ -28,7 +28,7 @@ class PhoneCodecTest {
         )
         assertEquals(
             DieMessage.Inventory(Inventory(ModeId.entries.toSet(), setOf(ModeId.DICE, ModeId.HOT_POTATO), ModeId.DICE)),
-            PhoneCodec.decode("""{"Inventory":{"licensed":15,"enabled":5,"active":"Dice"}}"""),
+            PhoneCodec.decode("""{"Inventory":{"licensed":31,"enabled":5,"active":"Dice"}}"""),
         )
     }
 

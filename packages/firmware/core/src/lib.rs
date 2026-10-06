@@ -31,6 +31,7 @@ pub mod pigfx;
 pub mod pigs;
 pub mod potato;
 pub mod roll;
+pub mod rush;
 pub mod screens;
 pub mod screens64;
 pub mod session;
@@ -188,6 +189,15 @@ where
     /// The screens are dark after sitting idle. The die still rolls if it is
     /// thrown: only the display sleeps (unlike Power off, which boots on wake).
     asleep: bool,
+    /// Sugar Rush reads each screen's touch on its own, so a hand gripping
+    /// the sides doesn't hide a tap on the top: when each face's touch
+    /// began.
+    rush_touch: [Option<u64>; smokebomb_hal::FACE_COUNT],
+    /// The stick that was blinking when a finger landed on the top screen:
+    /// the one its tap slides, whatever the lean does as the finger lifts.
+    rush_latch: Option<u8>,
+    /// The die was shaken or knocked while a screen was touched: not a tap.
+    rush_jolted: bool,
 }
 
 impl<P: Platform> Firmware<P>
@@ -272,6 +282,9 @@ where
             addr_of_mut!((*p).reduced_motion).write(false);
             addr_of_mut!((*p).last_activity).write(0);
             addr_of_mut!((*p).asleep).write(false);
+            addr_of_mut!((*p).rush_touch).write([None; smokebomb_hal::FACE_COUNT]);
+            addr_of_mut!((*p).rush_latch).write(None);
+            addr_of_mut!((*p).rush_jolted).write(false);
         }
         #[allow(unused_variables)]
         fn _fields<P: Platform>(f: Firmware<P>)
@@ -318,6 +331,9 @@ where
                 reduced_motion,
                 last_activity,
                 asleep,
+                rush_touch,
+                rush_latch,
+                rush_jolted,
             } = f;
         }
         // SAFETY: every field was written above.
@@ -418,6 +434,40 @@ where
         if self.settings.play() == PlayMode::PigToss && !self.sessions.live(ModeId::PigToss) {
             self.sessions.start_pigs(self.settings.players);
         }
+        // Sugar Rush keeps its puzzle, unless the board size changed: then
+        // the same level starts on a new board.
+        let cells = self.settings.grid.cells();
+        if self.settings.play() == PlayMode::SugarRush
+            && (!self.sessions.live(ModeId::SugarRush) || self.sessions.rush.n() != cells)
+        {
+            let level = if self.sessions.live(ModeId::SugarRush) {
+                self.sessions.rush.level
+            } else {
+                1
+            };
+            let seed = self.hw.rng.next_u32().unwrap_or(1);
+            self.sessions.start_rush(cells, level, seed);
+        }
+    }
+
+    /// Sugar Rush's puzzle (its session).
+    pub fn rush(&self) -> &rush::Rush {
+        &self.sessions.rush
+    }
+
+    /// Sugar Rush is the mode in use.
+    fn rush_on(&self) -> bool {
+        self.settings.play() == PlayMode::SugarRush
+    }
+
+    /// The puzzle is on the screens and takes the touches: Sugar Rush, at
+    /// rest (not in the menu, the Nest, off, asleep or booting).
+    fn rush_playing(&self) -> bool {
+        self.rush_on()
+            && self.menu.is_none()
+            && matches!(self.sm.mode(), Mode::Idle)
+            && !self.asleep
+            && !self.ui.booting()
     }
 
     /// The Pig Toss game: scores, whose turn and the last throw.
@@ -525,9 +575,9 @@ where
         let before = *self.sm.mode();
         let input = !events.is_empty();
         let _ = events.push(Event::Tick);
-        let game = !self.settings.play().rolls();
+        let potato = self.settings.play() == PlayMode::HotPotato;
         for event in events {
-            if game && !matches!(self.sm.mode(), Mode::Menu | Mode::Nest | Mode::Off) {
+            if potato && !matches!(self.sm.mode(), Mode::Menu | Mode::Nest | Mode::Off) {
                 match event {
                     Event::Motion(Motion::Shaking) if self.potato.is_idle() => self.light_potato(now)?,
                     Event::Tap => {
@@ -575,6 +625,7 @@ where
         for cmd in self.potato.tick(now) {
             self.run_potato(cmd)?;
         }
+        self.tick_rush(now)?;
         if self.potato.is_lit() {
             let heat = self.potato.heat(now);
             if let Some(smoke) = self.fx.smoke() {
@@ -723,6 +774,150 @@ where
         Ok(())
     }
 
+    /// Sugar Rush's touches, one screen at a time. Holding the die puts
+    /// fingers on its sides and the bottom, and those stay down: a screen
+    /// counts only from when its own touch starts. A short touch is a tap
+    /// on that screen; holding the top screen opens the menu. Nothing
+    /// counts while the die is shaken or knocked.
+    fn rush_touches(&mut self, mask: u8, now: u64, events: &mut Vec<Event, 8>) -> HalResult<bool> {
+        if mask != 0 && self.motion.agitated() {
+            self.rush_jolted = true;
+        }
+        let mut started = false;
+        for face in Face::ALL {
+            let i = face.index();
+            let on = mask & (1 << i) != 0;
+            match (on, self.rush_touch[i]) {
+                (true, None) => {
+                    started = true;
+                    self.nest.touch(now);
+                    if face != self.up_face {
+                        self.rush_touch[i] = Some(now);
+                    } else if let Some(since) = self.touch_since {
+                        // Still down from the hold that closed the menu:
+                        // it's spent, not a new tap or hold.
+                        self.rush_touch[i] = Some(since);
+                    } else {
+                        self.rush_touch[i] = Some(now);
+                        self.rush_latch = self.sessions.rush.selected();
+                        self.touch_since = Some(now);
+                        self.touch_face = face;
+                        self.menu_hold_fired = false;
+                    }
+                }
+                (true, Some(since)) => {
+                    let top = self.touch_since == Some(since) && self.touch_face == face;
+                    if top && !self.menu_hold_fired && now.saturating_sub(since) > MENU_HOLD_MS {
+                        self.menu_hold_fired = true;
+                        let _ = events.push(Event::LongPress);
+                    }
+                }
+                (false, Some(since)) => {
+                    self.rush_touch[i] = None;
+                    let top = self.touch_since == Some(since) && self.touch_face == face;
+                    let spent = top && self.menu_hold_fired;
+                    if top {
+                        self.touch_since = None;
+                    }
+                    if !spent && !self.rush_jolted && now.saturating_sub(since) <= TAP_MAX_MS {
+                        self.rush_tap(face, top, now)?;
+                    }
+                }
+                (false, None) => {}
+            }
+        }
+        if mask == 0 {
+            self.rush_jolted = false;
+        }
+        Ok(started)
+    }
+
+    /// A tap in Sugar Rush. On the top screen it slides the stick that was
+    /// blinking when the finger landed; on another screen it blinks the
+    /// next one. Either skips the level number or "Clear!".
+    fn rush_tap(&mut self, face: Face, top: bool, now: u64) -> HalResult<()> {
+        use rush::{Phase, Tap};
+        self.last_activity = now;
+        let rush = &mut self.sessions.rush;
+        let tap = if top
+            || matches!(
+                rush.phase,
+                Phase::Ready | Phase::Intro { .. } | Phase::Cleared { .. }
+            ) {
+            rush.slide(self.rush_latch.take(), now)
+        } else {
+            let _ = face;
+            rush.next_pick()
+        };
+        let effect = match tap {
+            Tap::Nothing => None,
+            Tap::Picked => Some(smokebomb_hal::HapticEffect::MenuTip),
+            Tap::Slid | Tap::Skipped => Some(smokebomb_hal::HapticEffect::Tick),
+            Tap::Jammed { last: false } => Some(smokebomb_hal::HapticEffect::Buzz),
+            Tap::Jammed { last: true } => Some(smokebomb_hal::HapticEffect::Dud),
+        };
+        if let (Some(effect), true) = (effect, self.settings.haptics_on()) {
+            self.hw.haptics.play(effect)?;
+        }
+        Ok(())
+    }
+
+    /// Each tick in Sugar Rush: read the lean, and move the puzzle on.
+    fn tick_rush(&mut self, now: u64) -> HalResult<()> {
+        if !self.rush_playing() {
+            return Ok(());
+        }
+        let downhill = self.rush_downhill();
+        if self.sessions.rush.aim(self.up_face, downhill) && self.settings.haptics_on() {
+            self.hw.haptics.play(smokebomb_hal::HapticEffect::MenuTip)?;
+        }
+        match self.sessions.rush.tick(now) {
+            rush::Tick::Cleared if self.settings.haptics_on() => {
+                self.hw
+                    .haptics
+                    .play(smokebomb_hal::HapticEffect::MaxCelebration)?;
+            }
+            rush::Tick::NextLevel => {
+                let seed = self.hw.rng.next_u32()?;
+                self.sessions.rush.next_level(seed);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Which way the die leans along its top face, from gravity: the
+    /// direction a marble on the top screen would roll, snapped to one of
+    /// the screen's four edges. A lean must pass [`RUSH_LEAN_ON`] (about
+    /// 15°), clearly toward one edge, to count, and lasts until it drops
+    /// under [`RUSH_LEAN_OFF`], so it doesn't flicker at the threshold.
+    fn rush_downhill(&self) -> Option<rush::V> {
+        let up = self.up?;
+        let mag = libm::sqrtf(up.iter().map(|c| c * c).sum());
+        if mag < 1.0 {
+            return None;
+        }
+        let (x, y, _) = rush::basis(self.up_face);
+        let along = |d: rush::V| -> f32 {
+            // Downhill is against the up direction's lean.
+            -(0..3).map(|i| d[i] as f32 * up[i]).sum::<f32>() / mag
+        };
+        if let Some(d) = self.sessions.rush.downhill() {
+            let on_top = [x, y].iter().any(|a| *a == d || a.map(|c| -c) == d);
+            if on_top && along(d) > RUSH_LEAN_OFF {
+                return Some(d);
+            }
+        }
+        let (tx, ty) = (along(x), along(y));
+        let (ax, ay) = (libm::fabsf(tx), libm::fabsf(ty));
+        let (big, small) = if ax > ay { (ax, ay) } else { (ay, ax) };
+        if big < RUSH_LEAN_ON || big < small * 1.4 {
+            return None;
+        }
+        let pick = |a: rush::V, t: f32| if t > 0.0 { a } else { a.map(|c| -c) };
+        Some(if ax > ay { pick(x, tx) } else { pick(y, ty) })
+    }
+
     /// Seconds since the winning throw's score gave way to the win screen,
     /// once it has.
     fn pig_win_t(&self, now: u64) -> Option<f32> {
@@ -769,6 +964,8 @@ where
             || self.touch_since.is_some()
             || !matches!(mode, Mode::Idle)
             || !self.potato.is_idle()
+            || (self.rush_playing()
+                && (self.rush_touch.iter().any(Option::is_some) || self.sessions.rush.busy()))
             || self.ui.booting();
         if busy {
             self.last_activity = now;
@@ -943,6 +1140,10 @@ where
     /// Returns true when a touch starts.
     fn poll_touch(&mut self, now: u64, events: &mut Vec<Event, 8>) -> HalResult<bool> {
         let mask = self.hw.touch.read()?;
+        if self.rush_playing() {
+            return self.rush_touches(mask, now, events);
+        }
+        self.rush_touch = [None; smokebomb_hal::FACE_COUNT];
         // Grip rejection: touches while the die is moving are ignored. In
         // the menu the die is in the hand anyway; only a tip in progress
         // blocks a hold.
@@ -1252,6 +1453,9 @@ where
         let hold = self.hold_progress(now).map(|p| (self.touch_face, p));
         let asleep = self.asleep;
         let nest_faces = self.nest_faces(now, &mode, battery);
+        // Sugar Rush: the puzzle takes the screens while the die is at rest.
+        let rush_view = self.rush_on() && self.menu.is_none() && matches!(mode, Mode::Idle);
+        let rush_top = self.up_face;
         let Self {
             frames,
             layer,
@@ -1298,7 +1502,16 @@ where
             // A round of Hot Potato takes the faces, except the one facing
             // down (H2).
             let potato_face = potato_view.filter(|_| face != up.opposite());
-            let content = if potato_face.is_some() || locked.is_some() || win_up {
+            // The puzzle shows where the die would show its label (the
+            // saved screen and the boot still come first), and never on the
+            // face-down screen.
+            let rush_face = rush_view
+                && face != up.opposite()
+                && matches!(
+                    content,
+                    FaceContent::Wake { .. } | FaceContent::Blank | FaceContent::Result { .. }
+                );
+            let content = if potato_face.is_some() || locked.is_some() || win_up || rush_face {
                 FaceContent::Blank
             } else {
                 content
@@ -1411,6 +1624,19 @@ where
                 Some(PotatoView::Boom(t)) => TargetOf::<P>::draw_boom(&mut c, t),
                 None => {}
             }
+            if rush_face {
+                if let Some((banner, t)) = sessions.rush.banner(now) {
+                    TargetOf::<P>::draw_rush_banner(&mut c, banner, t);
+                } else {
+                    // The board is fixed to the die like print, so it's
+                    // drawn on the face's own axes, not turned for reading.
+                    let base = c.painter.xf;
+                    c.painter.xf = Transform::quarter_on::<TargetOf<P>>(orientation::Quarter::R0).in_pixels();
+                    let look = rush::Look { top: rush_top, now };
+                    rush::draw_face(c.painter, &sessions.rush, face, look);
+                    c.painter.xf = base;
+                }
+            }
         }
 
         // Smoke over everything, wrapping round the edges (SIM_SPEC D1).
@@ -1464,6 +1690,11 @@ where
         self.sync.bytes
     }
 }
+
+/// Sugar Rush: how far the die must lean (the sine of the angle) for the
+/// lean to count, and how far back it must come to stop counting.
+const RUSH_LEAN_ON: f32 = 0.26;
+const RUSH_LEAN_OFF: f32 = 0.17;
 
 /// How much of a full cloud a lit fuse's smoke may reach, at the start and
 /// at full heat: enough to build, little enough to read "PASS IT" through.

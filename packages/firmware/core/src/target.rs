@@ -135,6 +135,11 @@ pub trait DisplayTarget: Target {
         screens::draw_boot(c, index, top, t);
     }
 
+    /// Sugar Rush between levels.
+    fn draw_rush_banner<A: AssetStore>(c: &mut Ctx<A, Self>, banner: crate::rush::Banner, t: f32) {
+        screens::draw_rush_banner(c, banner, t);
+    }
+
     fn draw_wake_label<A: AssetStore>(
         c: &mut Ctx<A, Self>,
         setup: Setup,
@@ -240,6 +245,10 @@ impl DisplayTarget for Rgb64 {
 
     fn draw_boot<A: AssetStore>(c: &mut Ctx<A, Self>, index: usize, top: bool, t: f32) {
         screens64::draw_boot(c, index, top, t);
+    }
+
+    fn draw_rush_banner<A: AssetStore>(c: &mut Ctx<A, Self>, banner: crate::rush::Banner, t: f32) {
+        screens64::draw_rush_banner(c, banner, t);
     }
 
     fn pig_tint() -> Color {

@@ -1185,6 +1185,33 @@ pub fn draw_boom<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, t: f32) {
     }
 }
 
+// ---------- Sugar Rush (X3) ----------
+
+/// Sugar Rush between levels: the level about to start, "Clear!", or
+/// "Jammed" before the board starts again. `t` seconds in.
+pub fn draw_rush_banner<A: AssetStore, T: Target>(c: &mut Ctx<A, T>, banner: crate::rush::Banner, t: f32) {
+    use crate::rush::Banner;
+    use core::fmt::Write as _;
+    let a = (t / 0.15).min(1.0);
+    let mut line: heapless::String<16> = heapless::String::new();
+    match banner {
+        Banner::Level(n) => {
+            c.text("Level", 0.0, -34.0, 20, Style::new(FG, 0.7 * a, 0.0));
+            let _ = write!(line, "{n}");
+            c.text(&line, 0.0, 14.0, 64, Style::new(FG, a, 14.0));
+        }
+        Banner::Cleared(n) => {
+            c.text("Clear!", 0.0, -6.0, 40, Style::new(FG, a, 14.0));
+            let _ = write!(line, "Level {n} done");
+            c.text(&line, 0.0, 38.0, 14, Style::new(FG, 0.7 * a, 0.0));
+        }
+        Banner::Jammed => {
+            c.text("Jammed", 0.0, -6.0, 40, Style::new(FG, a, 14.0));
+            c.text("Starting again", 0.0, 38.0, 14, Style::new(FG, 0.7 * a, 0.0));
+        }
+    }
+}
+
 // ---------- menu (C3, C4) ----------
 
 /// How far menu content slides during a tip, canvas units.

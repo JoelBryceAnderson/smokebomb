@@ -363,14 +363,14 @@ fn the_app_connects_sets_the_die_up_and_hears_its_rolls() {
     );
     assert_eq!(
         greeting[1],
-        r#"{"Inventory":{"licensed":15,"enabled":15,"active":"Dice"}}"#
+        r#"{"Inventory":{"licensed":31,"enabled":31,"active":"Dice"}}"#
     );
 
     // Settings from the app, each answered with the inventory.
     assert!(die.phone_send(r#"{"SetEnabledModes":4}"#));
     assert_eq!(
         drain(&mut die),
-        [r#"{"Inventory":{"licensed":15,"enabled":5,"active":"Dice"}}"#],
+        [r#"{"Inventory":{"licensed":31,"enabled":5,"active":"Dice"}}"#],
         "Dice stays on"
     );
     assert!(die.phone_send(r#"{"SetDie":{"kind":"D6","count":2}}"#));

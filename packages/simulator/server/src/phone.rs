@@ -216,7 +216,7 @@ mod tests {
         );
         assert_eq!(
             *rx.try_recv().unwrap(),
-            r#"{"Inventory":{"licensed":15,"enabled":15,"active":"Dice"}}"#
+            r#"{"Inventory":{"licensed":31,"enabled":31,"active":"Dice"}}"#
         );
 
         handle(
@@ -227,7 +227,7 @@ mod tests {
         );
         assert_eq!(
             *rx.try_recv().unwrap(),
-            r#"{"Inventory":{"licensed":15,"enabled":5,"active":"Dice"}}"#,
+            r#"{"Inventory":{"licensed":31,"enabled":5,"active":"Dice"}}"#,
             "Dice stays on"
         );
         assert_eq!(fw.settings().modes(), ModeSet::DICE.with(ModeId::HotPotato));
