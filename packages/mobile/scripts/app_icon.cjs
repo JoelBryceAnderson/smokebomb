@@ -10,7 +10,8 @@
 //   npm i -g playwright   (or use any install that `require` can find)
 //   node packages/mobile/scripts/app_icon.cjs
 // He's drawn mid-jump with a fist up; ICON_POSE=stand draws the earlier
-// standing thumbs-up instead.
+// standing thumbs-up instead. ICON_STYLE=burst swaps the box for a pink sheet
+// he bursts through, with no ribbon or lettering.
 
 const fs = require("fs");
 const path = require("path");
@@ -34,6 +35,7 @@ const C = {
   trim: "#7C2147",
   lettering: "#FFFFFF",
   ink: "#1A1410",
+  shard: "#EA6A98",
   sugar: "#FFFDF5",
   sugarTop: "#FFFFFF",
   sugarSide: "#E8DFC9",
@@ -47,21 +49,24 @@ const C = {
 
 // `border` draws the box's solid border over the ageing (which would
 // muddy it) but under the grain, so it shares the paper's texture.
-function paper(border = false) {
-  const rays = [];
+// The sunburst: alternating rays from (cx, cy) across the whole canvas.
+function rays(cx = 512, cy = 470) {
+  const d = [];
   const n = 28;
-  const [cx, cy] = [512, 470];
   for (let i = 0; i < n; i += 2) {
     const a0 = (i / n) * Math.PI * 2;
     const a1 = ((i + 1) / n) * Math.PI * 2;
-    const r = 900;
-    rays.push(
-      `M${cx},${cy} L${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)} L${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)} Z`,
-    );
+    const r = 1400;
+    d.push(`M${cx},${cy} L${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)} L${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)} Z`);
   }
   return `
-    <rect width="1024" height="1024" fill="${C.paper}"/>
-    <path d="${rays.join(" ")}" fill="${C.ray}"/>
+    <rect x="-1024" y="-1024" width="3072" height="3072" fill="${C.paper}"/>
+    <path d="${d.join(" ")}" fill="${C.ray}"/>`;
+}
+
+function paper(border = false) {
+  return `
+    ${rays()}
     <rect width="1024" height="1024" fill="url(#age)"/>
     ${border ? frame() : ""}
     <rect width="1024" height="1024" filter="url(#grain)" opacity="0.35"/>`;
@@ -116,6 +121,8 @@ const FACE_X = 490;
 
 // "stand" (thumbs up, on the ribbon) or "jump" (mid-air, fist up).
 let POSE = process.env.ICON_POSE || "jump";
+// "box" (the candy box with the ribbon) or "burst" (bursting through a sheet).
+let STYLE = process.env.ICON_STYLE || "box";
 
 function standLegs() {
   return `
@@ -138,7 +145,7 @@ function jumpLegs() {
       </g>
       <g transform="rotate(24 ${FACE_X - 74} 690)">${boot(FACE_X - 74, 690, 1)}</g>
       <g transform="rotate(-24 ${FACE_X + 74} 690)">${boot(FACE_X + 74, 690, -1)}</g>
-      <g stroke="${C.ink}" stroke-width="9" stroke-linecap="round" fill="none">
+      <g stroke="${C.ink}" stroke-width="9" stroke-linecap="round" fill="none" display="${STYLE === "burst" ? "none" : "inline"}">
         <path d="M${FACE_X - 34},752 Q${FACE_X - 28},772 ${FACE_X - 34},790"/>
         <path d="M${FACE_X},758 L${FACE_X},796"/>
         <path d="M${FACE_X + 34},752 Q${FACE_X + 28},772 ${FACE_X + 34},790"/>
@@ -336,6 +343,68 @@ function banner() {
     </text>`;
 }
 
+// --- Burst style -----------------------------------------------------------
+
+// The hole he bursts through: a jagged star of alternating long and short
+// points around (cx, cy), irregular like torn paper.
+const HOLE = { cx: 512, cy: 512, points: 14, outer: 420, inner: 320 };
+
+function holePoints() {
+  const { cx, cy, points, outer, inner } = HOLE;
+  let seed = 5;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const pts = [];
+  for (let i = 0; i < points * 2; i++) {
+    const a = (i / (points * 2)) * Math.PI * 2 + (rnd() - 0.5) * 0.12;
+    const r = (i % 2 ? inner : outer) * (0.9 + rnd() * 0.18);
+    pts.push([cx + r * Math.sin(a), cy - r * Math.cos(a) * 0.96]);
+  }
+  return pts;
+}
+
+// The pink sheet with the hole torn in it: a paper-white torn rim, an ink
+// outline, a shadow falling into the hole and a few cracks running out from
+// the deepest tears.
+function sheet() {
+  const pts = holePoints();
+  const hole = "M" + pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" L") + " Z";
+  const cracks = pts
+    .filter((_, i) => i % 2 === 0 && i % 6 !== 0)
+    .map(([x, y]) => {
+      const [dx, dy] = [x - HOLE.cx, y - HOLE.cy];
+      const l = Math.hypot(dx, dy);
+      const [ux, uy] = [dx / l, dy / l];
+      // A short zig-zag running outward from the tip.
+      const at = (t, w) => `${(x + ux * t - uy * w).toFixed(1)},${(y + uy * t + ux * w).toFixed(1)}`;
+      return `M${at(8, 0)} L${at(20, 7)} L${at(30, -5)} L${at(42, 4)}`;
+    })
+    .join(" ");
+  return `
+    <path d="${hole}" fill="none" stroke="${C.trim}" stroke-width="34" opacity="0.1" transform="translate(8,12)"/>
+    <path d="M-1024,-1024 H2048 V2048 H-1024 Z ${hole}" fill="${C.border}" fill-rule="evenodd"/>
+    <path d="${hole}" fill="none" stroke="${C.paper}" stroke-width="22" stroke-linejoin="round"/>
+    <path d="${hole}" fill="none" stroke="${C.ink}" stroke-width="9" stroke-linejoin="round"/>
+    <path d="${cracks}" fill="none" stroke="${C.ink}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`;
+}
+
+// Scraps of the sheet flying off around him.
+function shards() {
+  const shard = (x, y, r, rot) => `
+    <g transform="translate(${x},${y}) rotate(${rot}) scale(${r / 40})">
+      <path class="solid-w" d="M-42,-8 L-12,-38 L2,-20 L38,-32 L22,4 L34,26 L-20,32 Z" fill="${C.shard}"
+        stroke="${C.ink}" stroke-width="7" stroke-linejoin="round"/>
+      <path class="cut" d="M-20,32 L34,26 L22,4" fill="none" stroke="${C.paper}" stroke-width="7" stroke-linejoin="round" transform="translate(0,-6)"/>
+    </g>`;
+  return [
+    shard(136, 214, 40, -20),
+    shard(92, 560, 30, 30),
+    shard(930, 520, 36, 15),
+    shard(860, 900, 30, -35),
+    shard(170, 880, 34, 50),
+    shard(600, 64, 24, 70),
+  ].join("");
+}
+
 // --- Variants --------------------------------------------------------------
 
 function defs() {
@@ -361,9 +430,11 @@ const CUBE_X = 524;
 // he's smaller and higher, so the fist clears the border and there's air
 // between his boots and the ribbon.
 const MASCOT = { cy: 494, stand: { y: 404, scale: 1.08 }, jump: { y: 388, scale: 0.95 } };
+// Bursting, there's no ribbon below him, so he's bigger and centred on the hole.
+const MASCOT_BURST = { y: 500, scale: 0.98 };
 
 function placedMascot() {
-  const { y, scale: k } = MASCOT[POSE];
+  const { y, scale: k } = STYLE === "burst" ? MASCOT_BURST : MASCOT[POSE];
   return `<g transform="translate(${512 - CUBE_X * k},${y - MASCOT.cy * k}) scale(${k})">${mascot()}</g>`;
 }
 
@@ -373,6 +444,7 @@ function placedMascot() {
 let ANDROID_FIT = { tx: 0, ty: 0, s: 1 };
 
 function svg(variant) {
+  if (STYLE === "burst") return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">${defs()}${burstBody(variant)}</svg>`;
   let body;
   if (variant === "full") {
     body = paper(true) + placedMascot() + banner();
@@ -393,6 +465,20 @@ function svg(variant) {
     }
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">${defs()}${body}</svg>`;
+}
+
+function burstBody(variant) {
+  const grain = `<rect width="1024" height="1024" filter="url(#grain)" opacity="0.3"/>`;
+  const front = placedMascot() + shards();
+  if (variant === "full") return rays(HOLE.cx, HOLE.cy) + sheet() + front + grain;
+  if (variant === "android-art") return `<g id="art">${front}</g>`;
+  if (variant === "mono-art") return `<g id="art">${placedMascot()}</g>`;
+  const { tx, ty, s } = ANDROID_FIT[variant === "android-bg" ? "android-fg" : variant];
+  const fit = (inner) => `<g transform="translate(${tx},${ty}) scale(${s})">${inner}</g>`;
+  // The background layer scales the hole with the mascot so they still line up.
+  if (variant === "android-bg") return rays(tx + HOLE.cx * s, ty + HOLE.cy * s) + fit(sheet()) + grain;
+  if (variant === "android-fg") return fit(front);
+  return `<mask id="mono" class="mono">${fit(placedMascot())}</mask><rect width="1024" height="1024" fill="#fff" mask="url(#mono)"/>`;
 }
 
 // Monochrome (Android 13 themed icons) uses only alpha: line art, with the
@@ -529,7 +615,7 @@ const ADAPTIVE = `<?xml version="1.0" encoding="utf-8"?>
 </adaptive-icon>
 `;
 
-module.exports = { svg, CSS, setPose: (p) => (POSE = p) };
+module.exports = { svg, CSS, setPose: (p) => (POSE = p), setStyle: (v) => (STYLE = v) };
 
 if (require.main === module) {
   main().catch((e) => {
