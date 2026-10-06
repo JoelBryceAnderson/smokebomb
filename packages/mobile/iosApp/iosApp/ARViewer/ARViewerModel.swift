@@ -38,6 +38,23 @@ final class ARViewerModel {
     /// Whether this device can do AR at all.
     let arSupported: Bool
     private static let augmentedKey = "simulator.augmented"
+
+    /// Pick the die up with your hand: pinch it, move, open to let go or
+    /// throw. AR only, and only with LiDAR (it needs the scene depth).
+    /// Remembered.
+    var handTracking: Bool {
+        didSet {
+            UserDefaults.standard.set(handTracking, forKey: Self.handTrackingKey)
+            scene?.setHandTracking(handTracking)
+        }
+    }
+    /// Whether this device has what hand tracking needs: LiDAR.
+    let handTrackingSupported: Bool
+    /// Whether the hand tracking switch does anything right now.
+    var canHandTrack: Bool { handTrackingSupported && augmented }
+    private static let handTrackingKey = "simulator.handTracking"
+    /// Held in a tracked hand.
+    var isHandHeld = false
     let models: [SugarcubeModel]
     private(set) var selected: SugarcubeModel?
     /// The die to go back to when x-ray is switched off.
@@ -88,6 +105,9 @@ final class ARViewerModel {
         let saved = UserDefaults.standard.object(forKey: Self.augmentedKey) as? Bool
         arSupported = supported
         augmented = supported && (saved ?? false)
+        let lidar = supported && HandTracker.isSupported
+        handTrackingSupported = lidar
+        handTracking = lidar && UserDefaults.standard.bool(forKey: Self.handTrackingKey)
     }
 
     // MARK: Availability
@@ -131,8 +151,10 @@ final class ARViewerModel {
     var hint: String? {
         if isCoaching { return nil }
         if augmented, !isPlaced { return planeFound ? "Tap the table to place the die" : "Move your device slowly to find the table" }
+        if isHandHeld { return "Open your fingers to let go, or throw it" }
         if isHeld { return "Menu: tip it with the turn pad · touch the front face" }
         if isLidOff { return "Drag the lid or the cup to turn it" }
+        if augmented, handTracking, isPlaced, !isRolling { return "Pinch the die to pick it up" }
         return nil
     }
 
@@ -261,7 +283,7 @@ final class ARViewerModel {
     // MARK: Rolling
 
     var canThrow: Bool {
-        isPlaced && !isRolling && !isHeld && !isLoading && !isLidOff && (selected?.isThrowable ?? false)
+        isPlaced && !isRolling && !isHeld && !isHandHeld && !isLoading && !isLidOff && (selected?.isThrowable ?? false)
     }
 
     // MARK: Lid
@@ -275,7 +297,7 @@ final class ARViewerModel {
     }
 
     /// The Lid button works while the die is down and still.
-    var canToggleLid: Bool { canTakeLidOff && isPlaced && !isRolling && !isHeld && !isLoading }
+    var canToggleLid: Bool { canTakeLidOff && isPlaced && !isRolling && !isHeld && !isHandHeld && !isLoading }
 
     func toggleLid() {
         guard canToggleLid else { return }
@@ -288,7 +310,7 @@ final class ARViewerModel {
     }
 
     /// The turn pad works once the die is down and not mid-throw.
-    var canTurn: Bool { isPlaced && !isRolling && !isLoading }
+    var canTurn: Bool { isPlaced && !isRolling && !isHandHeld && !isLoading }
 
     /// A quarter turn about one of the viewer's axes (+1 or −1): a menu tip
     /// while the die is held, or turning it over on the table.

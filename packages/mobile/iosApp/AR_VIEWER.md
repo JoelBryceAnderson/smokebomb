@@ -485,6 +485,26 @@ Die tab ── DieLinks ── ArDieLink ──► DiePort ──► ARDiePort �
 | Drag elsewhere, or twist | Turn it |
 | Pinch | Scale, only when **True size** is unlocked; tap the % to return to 100% |
 | Turn pad ▲ ▼ ◀ ▶ ⟲ ⟳ (menu open) | The menu's tips: quarter turns about your right, vertical and line of sight |
+| Pinch the die with your hand (**Hand tracking** on) | Pick it up; move to carry or shake it, open your fingers to drop or throw it |
+
+### Hand tracking (prototype, LiDAR only)
+
+With AR on, an iPad or iPhone with LiDAR shows a **Hand tracking** switch
+(hidden elsewhere: it needs LiDAR's scene depth). `HandTracker` runs Vision's
+hand-pose request on the camera image, one frame at a time off the main
+thread, and lifts the thumb and index tips into the world with the depth
+map. People occlusion is turned on with it, so your hand hides the die
+when it's in front.
+
+- Thumb and index closer than `handPinchClose` within reach of the die
+  picks it up; apart past `handPinchOpen` lets go.
+- Held, the die follows the pinch (eased by `handFollowRate`) and the
+  firmware reads its motion uncapped, so lifting and shaking it count.
+- Let go, it leaves at the hand's speed over the last `handThrowWindow`
+  (capped by `handMaxThrowSpeed`) and lands as a roll, inside the usual
+  corral. If the hand is lost for `handLostAfter`, the die is dropped.
+
+The constants are in `DiePhysics` and untuned.
 
 ## Tests
 

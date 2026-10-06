@@ -37,6 +37,30 @@ enum DiePhysics {
     /// How quickly a dragged die catches up with the finger, per second.
     static let dragFollowRate: Float = 18
 
+    // Hand tracking (LiDAR only): pinch the die to pick it up, open to let go.
+    /// Thumb and index tips closer than this, in metres, are a pinch…
+    static let handPinchClose: Float = 0.035
+    /// …and it lets go once they're further apart than this.
+    static let handPinchOpen: Float = 0.055
+    /// A pinch picks the die up this far beyond its corners, in metres.
+    static let handGrabReach: Float = 0.03
+    /// How quickly a held die catches up with the hand, per second: smooths
+    /// the tracking's jitter without lagging a throw much.
+    static let handFollowRate: Float = 25
+    /// With no hand seen for this long, a held die is dropped.
+    static let handLostAfter: TimeInterval = 0.35
+    /// A release's speed is the hand's over this last stretch, in seconds…
+    static let handThrowWindow: TimeInterval = 0.12
+    /// …at most this fast, in m/s.
+    static let handMaxThrowSpeed: Float = 2.0
+    /// Tumble per m/s of release speed, in rad/s, and at most.
+    static let handSpinPerSpeed: Float = 18
+    static let handMaxSpin: Float = 30
+    /// Vision's fingertips below this confidence are ignored.
+    static let handMinConfidence: Float = 0.3
+    /// Depth-map pixels either side of a fingertip to look at for its depth.
+    static let handDepthWindow = 2
+
     // Held for the menu: lifted off the table with the menu's face toward you.
     /// How high the die's bottom floats above the table, in metres.
     static let heldHeight: Float = 0.08

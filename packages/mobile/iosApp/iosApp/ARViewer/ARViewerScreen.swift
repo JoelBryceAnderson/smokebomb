@@ -286,6 +286,9 @@ private struct SidePanel: View {
                 if model.canRunFirmware {
                     Toggle("Live screens", isOn: $model.liveScreens)
                 }
+                if model.canHandTrack {
+                    Toggle("Hand tracking", isOn: $model.handTracking)
+                }
                 if model.canToggleXray {
                     Toggle("X-ray", isOn: Binding(get: { model.isXray }, set: { _ in model.toggleXray() }))
                 }
@@ -413,6 +416,14 @@ private struct ViewButtons: View {
             .toggleStyle(.button)
             .buttonStyle(.bordered)
             .tint(model.augmented ? .accentColor : .primary)
+        }
+        if model.canHandTrack {
+            Toggle(isOn: $model.handTracking) {
+                Label("Hand", systemImage: "hand.pinch")
+            }
+            .toggleStyle(.button)
+            .buttonStyle(.bordered)
+            .tint(model.handTracking ? .accentColor : .primary)
         }
         if model.canTakeLidOff {
             Button { model.toggleLid() } label: {

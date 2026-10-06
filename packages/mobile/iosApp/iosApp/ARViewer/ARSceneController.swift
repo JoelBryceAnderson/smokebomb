@@ -137,6 +137,20 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var lastPanX: CGFloat = 0
     private var pinchStartScale: Float = 1
 
+    // Hand tracking (AR with LiDAR): pinch the die to pick it up.
+    private let handTracker = HandTracker()
+    private var handTracking = false
+    /// The hand's thumb and index tips as last seen, in the anchor's space, and when.
+    private var hand: (thumb: SIMD3<Float>, index: SIMD3<Float>, seen: TimeInterval)?
+    private var pinching = false
+    /// Held in a pinch: where the die's centre sits from the pinch (eased to
+    /// nothing, so it settles between the fingers), and where it has been.
+    private struct HandGrab {
+        var offset: SIMD3<Float>
+        var path: [(time: TimeInterval, centre: SIMD3<Float>)]
+    }
+    private var handGrab: HandGrab?
+
     init(model: ARViewerModel, augmented: Bool) {
         self.model = model
         self.augmented = augmented
@@ -180,6 +194,12 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             buildStudio()
             return
         }
+        handTracking = model.handTracking && HandTracker.isSupported
+        arView.session.run(sessionConfiguration(), options: [.resetTracking, .removeExistingAnchors])
+        model.sceneDidStart()
+    }
+
+    private func sessionConfiguration() -> ARWorldTrackingConfiguration {
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal]
         config.environmentTexturing = .automatic
@@ -187,11 +207,32 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             config.sceneReconstruction = .mesh
             arView.environment.sceneUnderstanding.options.formUnion([.collision, .physics])
         }
-        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
-        model.sceneDidStart()
+        if handTracking {
+            // LiDAR depth places the fingertips; people occlusion puts your
+            // hand in front of the die when it's nearer.
+            config.frameSemantics.insert(.sceneDepth)
+            if ARWorldTrackingConfiguration.supportsFrameSemantics([.sceneDepth, .personSegmentationWithDepth]) {
+                config.frameSemantics.insert(.personSegmentationWithDepth)
+            }
+        }
+        return config
+    }
+
+    /// Hand tracking on or off: the session picks up (or drops) the depth it
+    /// needs, keeping the die where it is.
+    func setHandTracking(_ on: Bool) {
+        let wanted = augmented && on && HandTracker.isSupported
+        guard wanted != handTracking else { return }
+        handTracking = wanted
+        if !wanted { dropHand() }
+        if updates != nil { arView.session.run(sessionConfiguration()) }
     }
 
     func stop() {
+        handGrab = nil
+        model.isHandHeld = false
+        hand = nil
+        pinching = false
         loadTask?.cancel()
         dropFirmware()
         updates?.cancel()
@@ -219,6 +260,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         stepLid()
         stepDrag(dt: Float(dt))
+        if handTracking { stepHand(dt: Float(dt)) }
         if firmware != nil { stepFirmware() }
     }
 
@@ -243,7 +285,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     private func install(_ entity: Entity, as next: SugarcubeModel) {
-        if model.isRolling { reset() }
+        if model.isRolling || handGrab != nil { reset() }
         // With the lid off, the new model's lid comes off too, where the old one lay.
         let lidAt = lidSteps.isEmpty ? lid.map { lidPose($0) } : nil
         closeLidNow()
@@ -465,7 +507,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc private func didPan(_ g: UIPanGestureRecognizer) {
-        guard model.isPlaced, !model.isRolling, !held, glide == nil, !lidBusy, let rig, let placement else { return }
+        guard model.isPlaced, !model.isRolling, !held, handGrab == nil, glide == nil, !lidBusy, let rig, let placement else { return }
         let point = g.location(in: arView)
         switch g.state {
         case .began:
@@ -524,7 +566,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc private func didTwist(_ g: UIRotationGestureRecognizer) {
-        guard model.isPlaced, !model.isRolling, !held, glide == nil, !lidBusy else { return }
+        guard model.isPlaced, !model.isRolling, !held, handGrab == nil, glide == nil, !lidBusy else { return }
         if g.state == .began {
             twistOnLid = arView.ray(through: g.location(in: arView)).map { lidIsNearest(origin: $0.origin, direction: $0.direction) } ?? false
         }
@@ -546,7 +588,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 
     /// Spins the die about the table's vertical.
     func turn(by radians: Float) {
-        guard model.isPlaced, !model.isRolling, !held, glide == nil, !lidBusy else { return }
+        guard model.isPlaced, !model.isRolling, !held, handGrab == nil, glide == nil, !lidBusy else { return }
         // About the die's centre, not the model's origin (its lid's centre),
         // which is off to one side whenever the die isn't lid-down.
         setPose(centre: centre, rotation: simd_quatf(angle: radians, axis: [0, 1, 0]) * pivot.orientation)
@@ -558,7 +600,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// Throws the die across the table. `screenDirection` is in view points
     /// (right, down); it's mapped onto the table as seen from the camera.
     func throwDie(screenDirection: CGVector, flickSpeed: CGFloat) {
-        guard model.isPlaced, !model.isRolling, !held, glide == nil, lid == nil, !lidOpening,
+        guard model.isPlaced, !model.isRolling, !held, handGrab == nil, glide == nil, lid == nil, !lidOpening,
               let rig, rig.model.isThrowable, let placement else { return }
         if model.explode > 0 { model.explode = 0 }
         dragTarget = nil
@@ -645,6 +687,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         closeLidNow()
         held = false
         model.isHeld = false
+        handGrab = nil
+        model.isHandHeld = false
         hideMenuPanel()
         dragTarget = nil
         removeCorral()
@@ -721,8 +765,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         let pose = DiePose(position: pivot.position(relativeTo: nil), orientation: pivot.orientation(relativeTo: nil))
         var seq = frameSeq
         // Slid or turned on the table, a finger's jitter mustn't read as a
-        // shake; a throw reads everything.
-        let cap: Float? = model.isRolling ? nil : DiePhysics.handlingMaxLinearMg
+        // shake; a throw, or the die in your hand, reads everything.
+        let cap: Float? = model.isRolling || handGrab != nil ? nil : DiePhysics.handlingMaxLinearMg
         for tickPose in ticks.advance(to: time, pose: pose) {
             seq = firmware.tick(imu.reading(at: tickPose, maxLinearMg: cap), touchMask: touchMask)
         }
@@ -738,7 +782,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         // The menu opened: pick the die up with its front toward you. Closed:
         // set it back down.
         let front = firmware.menuFront
-        if let front, !held, !model.isRolling, glide == nil, lid == nil, !lidOpening {
+        if let front, !held, handGrab == nil, !model.isRolling, glide == nil, lid == nil, !lidOpening {
             pickUp(showing: front)
         } else if front == nil, held, glide == nil {
             putDown()
@@ -870,7 +914,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// in the hand alike, it turns about the die's own axis nearest that one,
     /// so it ends square.
     func tip(_ axis: TurnAxis, _ direction: Int) {
-        guard model.isPlaced, !model.isRolling, glide == nil, !lidBusy, let cam = cameraInAnchor else { return }
+        guard model.isPlaced, !model.isRolling, handGrab == nil, glide == nil, !lidBusy, let cam = cameraInAnchor else { return }
         dragTarget = nil
         let c = centre
         var toward = cam.position - c
@@ -900,6 +944,101 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         // Smoothstep peaks at 6·d/T²; keep that under the limit.
         let duration = max(0.3, TimeInterval(sqrt(6 * distance / DiePhysics.lockedReturnAcceleration)))
         glide(to: target, rotation: pivot.orientation, duration: duration, easeOut: false)
+    }
+
+    // MARK: Hand tracking
+
+    /// Sends this frame to be looked at, drops a die whose hand has gone, and
+    /// moves a held die with the pinch.
+    private func stepHand(dt: Float) {
+        if let frame = arView.session.currentFrame {
+            handTracker.submit(frame) { [weak self] reading in self?.handSeen(reading) }
+        }
+        if let h = hand, time - h.seen > DiePhysics.handLostAfter {
+            hand = nil
+            pinching = false
+            if handGrab != nil { letGo(throwing: false) }
+        }
+        guard var grab = handGrab, let h = hand else { return }
+        grab.offset *= exp(-DiePhysics.handFollowRate / 5 * dt)
+        var target = (h.thumb + h.index) / 2 + grab.offset
+        target.y = max(target.y, halfHeight)
+        let c = centre
+        setPose(centre: c + (target - c) * (1 - exp(-DiePhysics.handFollowRate * dt)), rotation: pivot.orientation)
+        grab.path.append((time, centre))
+        grab.path.removeAll { time - $0.time > DiePhysics.handThrowWindow * 2 }
+        handGrab = grab
+    }
+
+    /// A hand from the tracker (nil: none in that frame, so the last one
+    /// stands until it goes stale). Closing a pinch on the die picks it up;
+    /// opening it lets go.
+    private func handSeen(_ reading: HandTracker.Reading?) {
+        guard handTracking, let placement, let reading else { return }
+        let thumb = placement.convert(position: reading.thumb, from: nil)
+        let index = placement.convert(position: reading.index, from: nil)
+        hand = (thumb, index, time)
+        let was = pinching
+        pinching = reading.gap < (was ? DiePhysics.handPinchOpen : DiePhysics.handPinchClose)
+        if pinching, !was {
+            pinchBegan(at: (thumb + index) / 2)
+        } else if !pinching, was, handGrab != nil {
+            letGo(throwing: true)
+        }
+    }
+
+    private func pinchBegan(at point: SIMD3<Float>) {
+        guard handGrab == nil, model.isPlaced, !model.isRolling, !held, windup == nil, glide == nil,
+              lid == nil, !lidBusy, let rig, rig.model.isThrowable else { return }
+        let reach = simd_length(rig.model.bounds * pivot.scale) / 2 + DiePhysics.handGrabReach
+        let c = centre
+        guard simd_distance(point, c) < reach else { return }
+        if model.explode > 0 { model.explode = 0 }
+        dragTarget = nil
+        restTransform = pivot.transform
+        touchMask = 0
+        handGrab = HandGrab(offset: c - point, path: [(time, c)])
+        model.isHandHeld = true
+        lightHaptic.impactOccurred()
+    }
+
+    /// Lets the held die go: thrown at the hand's speed, or (`throwing`
+    /// false, the hand lost) just dropped. Either way it lands as a roll.
+    private func letGo(throwing: Bool) {
+        guard let grab = handGrab else { return }
+        handGrab = nil
+        model.isHandHeld = false
+
+        var velocity = SIMD3<Float>.zero
+        if throwing, let last = grab.path.last,
+           let first = grab.path.first(where: { last.time - $0.time <= DiePhysics.handThrowWindow }),
+           last.time - first.time > 1e-3 {
+            velocity = (last.centre - first.centre) / Float(last.time - first.time)
+            let speed = simd_length(velocity)
+            if speed > DiePhysics.handMaxThrowSpeed { velocity *= DiePhysics.handMaxThrowSpeed / speed }
+        }
+        // Tumbling the way it's thrown, more the harder; a little either way.
+        let speed = simd_length(velocity)
+        var axis = simd_cross([0, 1, 0], velocity)
+        if simd_length(axis) < 1e-4 { axis = SIMD3(1, 0, Float.random(in: -1...1)) }
+        let wobble = SIMD3<Float>(Float.random(in: -0.3...0.3), Float.random(in: -0.5...0.5), Float.random(in: -0.3...0.3))
+        axis = simd_normalize(simd_normalize(axis) + wobble)
+        let spin = axis * min(2 + speed * DiePhysics.handSpinPerSpeed, DiePhysics.handMaxSpin)
+
+        let c = centre
+        if let radius = DiePhysics.corralRadius { buildCorral(around: SIMD3(c.x, 0, c.z), radius: radius) }
+        setBodyMode(.dynamic)
+        pivot.components.set(PhysicsMotionComponent(linearVelocity: velocity, angularVelocity: spin))
+        settle.reset()
+        lastPose = nil
+        model.rollDidStart()
+    }
+
+    /// Hand tracking off: a held die is dropped and the hand forgotten.
+    private func dropHand() {
+        if handGrab != nil { letGo(throwing: false) }
+        hand = nil
+        pinching = false
     }
 
     // MARK: Corral
@@ -990,7 +1129,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     /// Takes the lid off (the die turns lid-up, the lid lifts off and lies
     /// inside-up beside it) or puts it back on.
     func setLidOff(_ off: Bool) {
-        guard model.isPlaced, !model.isRolling, !held, windup == nil, glide == nil, !lidBusy else { return }
+        guard model.isPlaced, !model.isRolling, !held, handGrab == nil, windup == nil, glide == nil, !lidBusy else { return }
         if off {
             guard lid == nil else { return }
             dragTarget = nil
