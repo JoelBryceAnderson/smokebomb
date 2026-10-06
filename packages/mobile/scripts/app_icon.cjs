@@ -361,45 +361,50 @@ function holePoints() {
 }
 
 // The pink sheet with the hole torn in it: a paper-white torn rim, an ink
-// outline, a shadow falling into the hole and a few cracks running out from
-// the deepest tears.
+// outline and a shadow falling into the hole.
 function sheet() {
   const pts = holePoints();
   const hole = "M" + pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" L") + " Z";
-  const cracks = pts
-    .filter((_, i) => i % 2 === 0 && i % 6 !== 0)
-    .map(([x, y]) => {
-      const [dx, dy] = [x - HOLE.cx, y - HOLE.cy];
-      const l = Math.hypot(dx, dy);
-      const [ux, uy] = [dx / l, dy / l];
-      // A short zig-zag running outward from the tip.
-      const at = (t, w) => `${(x + ux * t - uy * w).toFixed(1)},${(y + uy * t + ux * w).toFixed(1)}`;
-      return `M${at(8, 0)} L${at(20, 7)} L${at(30, -5)} L${at(42, 4)}`;
-    })
-    .join(" ");
   return `
     <path d="${hole}" fill="none" stroke="${C.trim}" stroke-width="34" opacity="0.1" transform="translate(8,12)"/>
     <path d="M-1024,-1024 H2048 V2048 H-1024 Z ${hole}" fill="${C.border}" fill-rule="evenodd"/>
     <path d="${hole}" fill="none" stroke="${C.paper}" stroke-width="22" stroke-linejoin="round"/>
-    <path d="${hole}" fill="none" stroke="${C.ink}" stroke-width="9" stroke-linejoin="round"/>
-    <path d="${cracks}" fill="none" stroke="${C.ink}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`;
+    <path d="${hole}" fill="none" stroke="${C.ink}" stroke-width="9" stroke-linejoin="round"/>`;
 }
 
-// Scraps of the sheet flying off around him.
+// Scraps of the sheet flying off around him. Each is its own jagged shape:
+// 5 to 7 corners at uneven angles and depths, some stretched into slivers,
+// with the paper-white torn edge along a couple of its sides.
 function shards() {
-  const shard = (x, y, r, rot) => `
-    <g transform="translate(${x},${y}) rotate(${rot}) scale(${r / 40})">
-      <path class="solid-w" d="M-42,-8 L-12,-38 L2,-20 L38,-32 L22,4 L34,26 L-20,32 Z" fill="${C.shard}"
-        stroke="${C.ink}" stroke-width="7" stroke-linejoin="round"/>
-      <path class="cut" d="M-20,32 L34,26 L22,4" fill="none" stroke="${C.paper}" stroke-width="7" stroke-linejoin="round" transform="translate(0,-6)"/>
+  let seed = 23;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const shard = (x, y, r, rot) => {
+    const n = 5 + Math.floor(rnd() * 3);
+    const stretch = 0.55 + rnd() * 0.6;
+    const pts = [];
+    for (let k = 0; k < n; k++) {
+      const a = ((k + (rnd() - 0.5) * 0.7) / n) * Math.PI * 2;
+      // Every other corner may cut in deep, so the outline goes concave.
+      const d = r * (k % 2 ? 0.3 + rnd() * 0.45 : 0.75 + rnd() * 0.35);
+      pts.push([d * Math.cos(a), d * Math.sin(a) * stretch]);
+    }
+    const poly = pts.map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" L");
+    // The torn edge: three corners in a row, pulled a little toward the middle.
+    const k0 = Math.floor(rnd() * n);
+    const torn = [0, 1, 2].map((d) => pts[(k0 + d) % n].map((v) => (v * 0.74).toFixed(1)).join(",")).join(" L");
+    return `
+    <g transform="translate(${x},${y}) rotate(${rot})">
+      <path class="solid-w" d="M${poly} Z" fill="${C.shard}" stroke="${C.ink}" stroke-width="7" stroke-linejoin="round"/>
+      <path class="cut" d="M${torn}" fill="none" stroke="${C.paper}" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
     </g>`;
+  };
   return [
-    shard(136, 214, 40, -20),
-    shard(92, 560, 30, 30),
-    shard(930, 520, 36, 15),
-    shard(860, 900, 30, -35),
-    shard(170, 880, 34, 50),
-    shard(600, 64, 24, 70),
+    shard(134, 214, 58, -20),
+    shard(86, 566, 40, 30),
+    shard(934, 544, 50, 15),
+    shard(862, 892, 44, -35),
+    shard(168, 872, 50, 50),
+    shard(604, 64, 36, 70),
   ].join("");
 }
 
