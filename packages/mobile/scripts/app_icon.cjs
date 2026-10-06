@@ -345,7 +345,7 @@ function banner() {
 
 // The hole he bursts through: a jagged star of alternating long and short
 // points around (cx, cy), irregular like torn paper.
-const HOLE = { cx: 512, cy: 512, points: 14, outer: 420, inner: 320 };
+const HOLE = { cx: 512, cy: 512, points: 9, outer: 440, inner: 300 };
 
 function holePoints() {
   const { cx, cy, points, outer, inner } = HOLE;
