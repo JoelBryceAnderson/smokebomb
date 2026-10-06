@@ -212,9 +212,11 @@ function hipGlove(x, y) {
     </g>`;
 }
 
+// A four-point sparkle, outlined in ink like the rest of the line art.
 function sparkle(x, y, r, fill) {
-  const w = r * 0.28;
-  return `<path class="solid" d="M${x},${y - r} Q${x + w},${y - w} ${x + r},${y} Q${x + w},${y + w} ${x},${y + r} Q${x - w},${y + w} ${x - r},${y} Q${x - w},${y - w} ${x},${y - r} Z" fill="${fill}"/>`;
+  const w = r * 0.32;
+  const ink = Math.max(4, r * 0.2).toFixed(1);
+  return `<path class="solid" d="M${x},${y - r} Q${x + w},${y - w} ${x + r},${y} Q${x + w},${y + w} ${x},${y + r} Q${x - w},${y + w} ${x - r},${y} Q${x - w},${y - w} ${x},${y - r} Z" fill="${fill}" stroke="${C.ink}" stroke-width="${ink}" stroke-linejoin="round"/>`;
 }
 
 // A closed path through `pts` ([x, y, radius]) with each corner rounded.
@@ -286,9 +288,9 @@ function mascot() {
       <path class="cut" d="M455,560 Q492,548 530,560 Q494,590 455,560 Z" fill="${C.tongue}"/>
       <path d="M408,506 Q418,500 426,510 M558,510 Q566,500 576,506" stroke="${C.ink}" stroke-width="8" stroke-linecap="round" fill="none"/>
       <!-- shine marks -->
-      ${sparkle(248, 330, 30, C.gold)}
-      ${sparkle(290, 268, 16, C.gold)}
-      ${sparkle(770, 560, 22, C.gold)}
+      ${sparkle(248, 330, 34, C.gold)}
+      ${sparkle(290, 268, 20, C.gold)}
+      ${sparkle(770, 560, 26, C.gold)}
     </g>`;
 }
 
