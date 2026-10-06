@@ -788,6 +788,13 @@ where
         if mask != 0 && self.motion.agitated() {
             self.rush_jolted = true;
         }
+        // A touch carried over from the menu (the hold that saved it, on the
+        // menu's screen) ends when that finger lifts, whichever screen it
+        // was: left standing, it would make every top tap look like it.
+        let carried = self.touch_face.index();
+        if self.touch_since.is_some() && mask & (1 << carried) == 0 && self.rush_touch[carried].is_none() {
+            self.touch_since = None;
+        }
         let mut started = false;
         for face in Face::ALL {
             let i = face.index();

@@ -162,6 +162,33 @@ fn lean_then_settle_then_tap() {
     assert_eq!(run.fw.rush().board.left(), before - 1);
 }
 
+/// Saving the menu ends with a finger on the menu's (front) screen, not
+/// the top. Letting go of it must leave taps on the top working.
+#[test]
+fn taps_work_after_saving_the_menu() {
+    let mut run = start::<Rgb64>();
+    advance(&mut run, 1.6);
+    hold_die(&mut run, lean(Face::PosY, None, 0.0));
+    advance(&mut run, 0.4);
+    // Open the menu from the top, then save it from a side (the front).
+    run.sim.lock().touch_mask = 1 << Face::PosY.index();
+    advance(&mut run, 1.0);
+    run.sim.lock().touch_mask = 0;
+    advance(&mut run, 0.5);
+    assert_eq!(*run.fw.mode(), Mode::Menu);
+    run.sim.lock().touch_mask = 1 << Face::PosZ.index();
+    advance(&mut run, 1.0);
+    assert_eq!(*run.fw.mode(), Mode::Idle, "saved");
+    advance(&mut run, 0.3);
+    run.sim.lock().touch_mask = 0;
+    advance(&mut run, 3.0);
+    let k = free_stick(&run, Face::PosZ);
+    let top = aim(&mut run, k, 0);
+    let before = run.fw.rush().board.left();
+    tap_face(&mut run, top, 0);
+    assert_eq!(run.fw.rush().board.left(), before - 1, "the tap on top slid it");
+}
+
 #[test]
 fn a_grip_on_the_sides_doesnt_hide_a_tap_on_top() {
     let mut run = start::<Rgb64>();
