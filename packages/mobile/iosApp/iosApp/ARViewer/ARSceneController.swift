@@ -136,6 +136,8 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var lastPanY: CGFloat = 0
     private var lastPanX: CGFloat = 0
     private var pinchStartScale: Float = 1
+    /// A two-finger lean under way: where the die rested before it.
+    private var leanFrom: (centre: SIMD3<Float>, rotation: simd_quatf)?
 
     init(model: ARViewerModel, augmented: Bool) {
         self.model = model
@@ -441,8 +443,11 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         pan.maximumNumberOfTouches = 1
         let twist = UIRotationGestureRecognizer(target: self, action: #selector(didTwist(_:)))
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(didPinch(_:)))
+        let lean = UIPanGestureRecognizer(target: self, action: #selector(didLean(_:)))
+        lean.minimumNumberOfTouches = 2
+        lean.maximumNumberOfTouches = 2
         let touch = TouchTracker { [weak self] point in self?.touchChanged(at: point) }
-        for recognizer in [tap, pan, twist, pinch, touch] as [UIGestureRecognizer] {
+        for recognizer in [tap, pan, twist, pinch, lean, touch] as [UIGestureRecognizer] {
             recognizer.delegate = self
             arView.addGestureRecognizer(recognizer)
         }
@@ -520,6 +525,50 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         default:
             panMode = nil
             panOnLid = false
+        }
+    }
+
+    /// Two fingers dragged across the view lean the die toward the drag, up
+    /// to `DiePhysics.leanMaxAngle`, tipping on its bottom edge like a die
+    /// tilted in the hand, so its IMU reads a lean (Sugar Rush aims with
+    /// one). The lean is square to the die's side nearest the drag, and the
+    /// die settles back flat when the fingers lift.
+    @objc private func didLean(_ g: UIPanGestureRecognizer) {
+        switch g.state {
+        case .began:
+            guard model.isPlaced, !model.isRolling, !held, glide == nil, !lidBusy, lid == nil else { return }
+            dragTarget = nil
+            leanFrom = (centre, pivot.orientation)
+        case .changed:
+            guard let from = leanFrom else { return }
+            guard !held, !model.isRolling, let cam = cameraInAnchor else {
+                leanFrom = nil
+                return
+            }
+            let t = g.translation(in: arView)
+            // Right on screen is right on the table; up on screen is away.
+            let drag = flatten(cam.right) * Float(t.x) - flatten(from.centre - cam.position) * Float(t.y)
+            let length = simd_length(drag)
+            let sides = DieFace.allCases.map { from.rotation.act($0.normal) }.filter { abs($0.y) < 0.5 }
+            guard length > 1, let nearest = sides.max(by: { simd_dot($0, drag) < simd_dot($1, drag) }) else {
+                setPose(centre: from.centre, rotation: from.rotation)
+                return
+            }
+            let side = flatten(nearest)
+            let up = SIMD3<Float>(0, 1, 0)
+            let angle = min(length * DiePhysics.leanPerPoint, DiePhysics.leanMaxAngle)
+            let q = simd_quatf(angle: angle, axis: simd_normalize(simd_cross(up, side)))
+            // About the bottom edge on that side, which stays on the table.
+            let edge = from.centre + side * halfHeight - up * halfHeight
+            setPose(centre: edge + q.act(from.centre - edge), rotation: q * from.rotation)
+        case .ended, .cancelled, .failed:
+            guard let from = leanFrom else { return }
+            leanFrom = nil
+            if !held, !model.isRolling {
+                glide(to: from.centre, rotation: from.rotation, duration: DiePhysics.leanSettleTime, easeOut: true)
+            }
+        default:
+            break
         }
     }
 
@@ -1262,8 +1311,21 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
 /// Watches one finger without claiming it: reports where it went down and
 /// when it lifts. It never recognises, so taps, drags and pinches still work;
 /// when one of those takes over, UIKit resets this and the touch ends.
+///
+/// A finger is reported a moment after it lands (`settle`): a second finger
+/// that soon makes it a two-finger gesture (a lean, pinch or twist), and the
+/// first is never reported, so the firmware doesn't take it for a tap.
 private final class TouchTracker: UIGestureRecognizer {
+    static let settle: TimeInterval = 0.1
+    /// How long a tap shorter than `settle` is held down for, so the
+    /// firmware's ticks see it.
+    static let shortTap: TimeInterval = 0.05
+
     private let changed: (CGPoint?) -> Void
+    private var pending: (point: CGPoint, work: DispatchWorkItem)?
+    /// A short tap is being played out: don't let the reset that follows
+    /// its end lift it early.
+    private var playingTap = false
 
     init(changed: @escaping (CGPoint?) -> Void) {
         self.changed = changed
@@ -1275,23 +1337,48 @@ private final class TouchTracker: UIGestureRecognizer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         if let view, let touch = touches.first, (event.allTouches?.count ?? 1) == 1 {
-            changed(touch.location(in: view))
+            let point = touch.location(in: view)
+            let work = DispatchWorkItem { [weak self] in
+                self?.pending = nil
+                self?.changed(point)
+            }
+            pending?.work.cancel()
+            pending = (point, work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.settle, execute: work)
         } else {
-            changed(nil)
+            lift()
         }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        changed(nil)
+        if let quick = pending {
+            // Lifted before it was reported: a quick tap. Press and release.
+            quick.work.cancel()
+            pending = nil
+            playingTap = true
+            changed(quick.point)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.shortTap) { [weak self] in
+                self?.playingTap = false
+                self?.changed(nil)
+            }
+        } else {
+            changed(nil)
+        }
         state = .failed
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        changed(nil)
+        lift()
         state = .failed
     }
 
     override func reset() {
+        if !playingTap { lift() }
+    }
+
+    private func lift() {
+        pending?.work.cancel()
+        pending = nil
         changed(nil)
     }
 }
