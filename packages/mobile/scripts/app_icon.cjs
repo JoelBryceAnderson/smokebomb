@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 // Draws the Sugarcube app icon and writes every iOS and Android size.
 //
-// The icon is an old candy-coloured sugar box: a white panel with a yellow
-// sunburst, a pink border and a ribbon with "Sugarcube" in Pacifico (the face the die writes
-// its name in). Above it jumps the mascot, a rubber-hose sugar cube with a
-// fist in the air.
+// The icon is the mascot, a rubber-hose sugar cube, jumping fist-first
+// through a jagged hole torn in a pink sheet, with the yellow and white
+// pinwheel showing behind and scraps of the sheet flying off.
 //
 // The art is SVG, rendered by Chromium through Playwright:
 //   npm i -g playwright   (or use any install that `require` can find)
 //   node packages/mobile/scripts/app_icon.cjs
-// He's drawn mid-jump with a fist up; ICON_POSE=stand draws the earlier
-// standing thumbs-up instead.
+// ICON_STYLE=box draws the earlier candy box instead: a pink border, the
+// pinwheel and a ribbon with "Sugarcube" in Pacifico (the face the die writes
+// its name in), with him jumping above it. In the box, ICON_POSE=stand has
+// him standing with a thumbs up.
 
 const fs = require("fs");
 const path = require("path");
@@ -34,6 +35,7 @@ const C = {
   trim: "#7C2147",
   lettering: "#FFFFFF",
   ink: "#1A1410",
+  shard: "#EA6A98",
   sugar: "#FFFDF5",
   sugarTop: "#FFFFFF",
   sugarSide: "#E8DFC9",
@@ -47,21 +49,24 @@ const C = {
 
 // `border` draws the box's solid border over the ageing (which would
 // muddy it) but under the grain, so it shares the paper's texture.
-function paper(border = false) {
-  const rays = [];
+// The sunburst: alternating rays from (cx, cy) across the whole canvas.
+function rays(cx = 512, cy = 470) {
+  const d = [];
   const n = 28;
-  const [cx, cy] = [512, 470];
   for (let i = 0; i < n; i += 2) {
     const a0 = (i / n) * Math.PI * 2;
     const a1 = ((i + 1) / n) * Math.PI * 2;
-    const r = 900;
-    rays.push(
-      `M${cx},${cy} L${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)} L${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)} Z`,
-    );
+    const r = 1400;
+    d.push(`M${cx},${cy} L${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)} L${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)} Z`);
   }
   return `
-    <rect width="1024" height="1024" fill="${C.paper}"/>
-    <path d="${rays.join(" ")}" fill="${C.ray}"/>
+    <rect x="-1024" y="-1024" width="3072" height="3072" fill="${C.paper}"/>
+    <path d="${d.join(" ")}" fill="${C.ray}"/>`;
+}
+
+function paper(border = false) {
+  return `
+    ${rays()}
     <rect width="1024" height="1024" fill="url(#age)"/>
     ${border ? frame() : ""}
     <rect width="1024" height="1024" filter="url(#grain)" opacity="0.35"/>`;
@@ -116,6 +121,8 @@ const FACE_X = 490;
 
 // "stand" (thumbs up, on the ribbon) or "jump" (mid-air, fist up).
 let POSE = process.env.ICON_POSE || "jump";
+// "box" (the candy box with the ribbon) or "burst" (bursting through a sheet).
+let STYLE = process.env.ICON_STYLE || "burst";
 
 function standLegs() {
   return `
@@ -138,7 +145,7 @@ function jumpLegs() {
       </g>
       <g transform="rotate(24 ${FACE_X - 74} 690)">${boot(FACE_X - 74, 690, 1)}</g>
       <g transform="rotate(-24 ${FACE_X + 74} 690)">${boot(FACE_X + 74, 690, -1)}</g>
-      <g stroke="${C.ink}" stroke-width="9" stroke-linecap="round" fill="none">
+      <g stroke="${C.ink}" stroke-width="9" stroke-linecap="round" fill="none" display="${STYLE === "burst" ? "none" : "inline"}">
         <path d="M${FACE_X - 34},752 Q${FACE_X - 28},772 ${FACE_X - 34},790"/>
         <path d="M${FACE_X},758 L${FACE_X},796"/>
         <path d="M${FACE_X + 34},752 Q${FACE_X + 28},772 ${FACE_X + 34},790"/>
@@ -170,20 +177,18 @@ function jumpArms() {
 
 function fist(x, y, tilt = 0) {
   // A raised cartoon fist seen from the front, wrist at the bottom: four
-  // knuckle bumps across the top, the thumb folded across the fingers, and
-  // a flared cuff.
+  // knuckle bumps across the top with creases between the fingers, and a
+  // flared cuff. No thumb: every version of one read as a mouth or a bar.
   const hand = `M-50,26 C-62,0 -58,-38 -40,-50 C-32,-64 -14,-66 -8,-54
     C0,-68 18,-68 22,-54 C30,-66 48,-64 50,-48 C62,-44 64,-20 56,-6
     C62,14 56,32 42,40 C20,50 -32,48 -50,26 Z`;
-  const thumb = "M-52,-4 C-32,-18 8,-20 28,-8 C36,-2 32,12 22,12 C2,10 -30,12 -48,20 Z";
   const cuff = "M-36,38 C-44,54 -48,64 -50,76 C-20,88 24,88 50,74 C46,62 40,50 36,38 Z";
   return `
-    <g transform="translate(${x},${y}) rotate(${tilt}) scale(0.82)" stroke="${C.ink}" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
+    <g transform="translate(${x},${y}) rotate(${tilt}) scale(0.82)" stroke="${C.ink}" stroke-width="12" stroke-linejoin="round" stroke-linecap="round">
       <path class="solid-w" d="${cuff}" fill="${C.sugarTop}"/>
       <path d="M-46,64 C-14,76 22,76 46,62" fill="none" stroke-width="9"/>
       <path class="solid-w" d="${hand}" fill="${C.sugarTop}"/>
-      <path d="M-8,-54 C-10,-46 -10,-38 -8,-30 M22,-54 C22,-46 22,-38 23,-30 M50,-48 C48,-40 48,-32 49,-26" fill="none" stroke-width="7"/>
-      <path class="solid-w" d="${thumb}" fill="${C.sugarTop}"/>
+      <path d="M-8,-54 C-10,-46 -10,-38 -8,-30 M22,-54 C22,-46 22,-38 23,-30 M50,-48 C48,-40 48,-32 49,-26" fill="none" stroke-width="6"/>
     </g>`;
 }
 
@@ -207,9 +212,11 @@ function hipGlove(x, y) {
     </g>`;
 }
 
+// A four-point sparkle, outlined in ink like the rest of the line art.
 function sparkle(x, y, r, fill) {
-  const w = r * 0.28;
-  return `<path class="solid" d="M${x},${y - r} Q${x + w},${y - w} ${x + r},${y} Q${x + w},${y + w} ${x},${y + r} Q${x - w},${y + w} ${x - r},${y} Q${x - w},${y - w} ${x},${y - r} Z" fill="${fill}"/>`;
+  const w = r * 0.32;
+  const ink = Math.max(4, r * 0.2).toFixed(1);
+  return `<path class="solid" d="M${x},${y - r} Q${x + w},${y - w} ${x + r},${y} Q${x + w},${y + w} ${x},${y + r} Q${x - w},${y + w} ${x - r},${y} Q${x - w},${y - w} ${x},${y - r} Z" fill="${fill}" stroke="${C.ink}" stroke-width="${ink}" stroke-linejoin="round"/>`;
 }
 
 // A closed path through `pts` ([x, y, radius]) with each corner rounded.
@@ -281,9 +288,9 @@ function mascot() {
       <path class="cut" d="M455,560 Q492,548 530,560 Q494,590 455,560 Z" fill="${C.tongue}"/>
       <path d="M408,506 Q418,500 426,510 M558,510 Q566,500 576,506" stroke="${C.ink}" stroke-width="8" stroke-linecap="round" fill="none"/>
       <!-- shine marks -->
-      ${sparkle(248, 330, 30, C.gold)}
-      ${sparkle(290, 268, 16, C.gold)}
-      ${sparkle(770, 560, 22, C.gold)}
+      ${sparkle(248, 330, 34, C.gold)}
+      ${sparkle(290, 268, 20, C.gold)}
+      ${sparkle(770, 560, 26, C.gold)}
     </g>`;
 }
 
@@ -336,6 +343,73 @@ function banner() {
     </text>`;
 }
 
+// --- Burst style -----------------------------------------------------------
+
+// The hole he bursts through: a jagged star of alternating long and short
+// points around (cx, cy), irregular like torn paper.
+const HOLE = { cx: 512, cy: 512, points: 9, outer: 440, inner: 300 };
+
+function holePoints() {
+  const { cx, cy, points, outer, inner } = HOLE;
+  let seed = 5;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const pts = [];
+  for (let i = 0; i < points * 2; i++) {
+    const a = (i / (points * 2)) * Math.PI * 2 + (rnd() - 0.5) * 0.12;
+    const r = (i % 2 ? inner : outer) * (0.9 + rnd() * 0.18);
+    pts.push([cx + r * Math.sin(a), cy - r * Math.cos(a) * 0.96]);
+  }
+  return pts;
+}
+
+// The pink sheet with the hole torn in it: a paper-white torn rim, an ink
+// outline and a shadow falling into the hole.
+function sheet() {
+  const pts = holePoints();
+  const hole = "M" + pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" L") + " Z";
+  return `
+    <path d="${hole}" fill="none" stroke="${C.trim}" stroke-width="34" opacity="0.1" transform="translate(8,12)"/>
+    <path d="M-1024,-1024 H2048 V2048 H-1024 Z ${hole}" fill="${C.border}" fill-rule="evenodd"/>
+    <path d="${hole}" fill="none" stroke="${C.paper}" stroke-width="22" stroke-linejoin="round"/>
+    <path d="${hole}" fill="none" stroke="${C.ink}" stroke-width="9" stroke-linejoin="round"/>`;
+}
+
+// Scraps of the sheet flying off around him. Each is its own jagged shape:
+// 5 to 7 corners at uneven angles and depths, some stretched into slivers,
+// with the paper-white torn edge along a couple of its sides.
+function shards() {
+  let seed = 23;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const shard = (x, y, r, rot) => {
+    const n = 5 + Math.floor(rnd() * 3);
+    const stretch = 0.55 + rnd() * 0.6;
+    const pts = [];
+    for (let k = 0; k < n; k++) {
+      const a = ((k + (rnd() - 0.5) * 0.7) / n) * Math.PI * 2;
+      // Every other corner may cut in deep, so the outline goes concave.
+      const d = r * (k % 2 ? 0.3 + rnd() * 0.45 : 0.75 + rnd() * 0.35);
+      pts.push([d * Math.cos(a), d * Math.sin(a) * stretch]);
+    }
+    const poly = pts.map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" L");
+    // The torn edge: three corners in a row, pulled a little toward the middle.
+    const k0 = Math.floor(rnd() * n);
+    const torn = [0, 1, 2].map((d) => pts[(k0 + d) % n].map((v) => (v * 0.74).toFixed(1)).join(",")).join(" L");
+    return `
+    <g transform="translate(${x},${y}) rotate(${rot})">
+      <path class="solid-w" d="M${poly} Z" fill="${C.shard}" stroke="${C.ink}" stroke-width="7" stroke-linejoin="round"/>
+      <path class="cut" d="M${torn}" fill="none" stroke="${C.paper}" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+    </g>`;
+  };
+  return [
+    shard(134, 214, 58, -20),
+    shard(86, 566, 40, 30),
+    shard(934, 544, 50, 15),
+    shard(862, 892, 44, -35),
+    shard(168, 872, 50, 50),
+    shard(604, 64, 36, 70),
+  ].join("");
+}
+
 // --- Variants --------------------------------------------------------------
 
 function defs() {
@@ -361,9 +435,11 @@ const CUBE_X = 524;
 // he's smaller and higher, so the fist clears the border and there's air
 // between his boots and the ribbon.
 const MASCOT = { cy: 494, stand: { y: 404, scale: 1.08 }, jump: { y: 388, scale: 0.95 } };
+// Bursting, there's no ribbon below him, so he's bigger and centred on the hole.
+const MASCOT_BURST = { y: 500, scale: 0.98 };
 
 function placedMascot() {
-  const { y, scale: k } = MASCOT[POSE];
+  const { y, scale: k } = STYLE === "burst" ? MASCOT_BURST : MASCOT[POSE];
   return `<g transform="translate(${512 - CUBE_X * k},${y - MASCOT.cy * k}) scale(${k})">${mascot()}</g>`;
 }
 
@@ -373,6 +449,7 @@ function placedMascot() {
 let ANDROID_FIT = { tx: 0, ty: 0, s: 1 };
 
 function svg(variant) {
+  if (STYLE === "burst") return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">${defs()}${burstBody(variant)}</svg>`;
   let body;
   if (variant === "full") {
     body = paper(true) + placedMascot() + banner();
@@ -393,6 +470,20 @@ function svg(variant) {
     }
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">${defs()}${body}</svg>`;
+}
+
+function burstBody(variant) {
+  const grain = `<rect width="1024" height="1024" filter="url(#grain)" opacity="0.3"/>`;
+  const front = placedMascot() + shards();
+  if (variant === "full") return rays(HOLE.cx, HOLE.cy) + sheet() + front + grain;
+  if (variant === "android-art") return `<g id="art">${front}</g>`;
+  if (variant === "mono-art") return `<g id="art">${placedMascot()}</g>`;
+  const { tx, ty, s } = ANDROID_FIT[variant === "android-bg" ? "android-fg" : variant];
+  const fit = (inner) => `<g transform="translate(${tx},${ty}) scale(${s})">${inner}</g>`;
+  // The background layer scales the hole with the mascot so they still line up.
+  if (variant === "android-bg") return rays(tx + HOLE.cx * s, ty + HOLE.cy * s) + fit(sheet()) + grain;
+  if (variant === "android-fg") return fit(front);
+  return `<mask id="mono" class="mono">${fit(placedMascot())}</mask><rect width="1024" height="1024" fill="#fff" mask="url(#mono)"/>`;
 }
 
 // Monochrome (Android 13 themed icons) uses only alpha: line art, with the
@@ -529,7 +620,7 @@ const ADAPTIVE = `<?xml version="1.0" encoding="utf-8"?>
 </adaptive-icon>
 `;
 
-module.exports = { svg, CSS, setPose: (p) => (POSE = p) };
+module.exports = { svg, CSS, setPose: (p) => (POSE = p), setStyle: (v) => (STYLE = v) };
 
 if (require.main === module) {
   main().catch((e) => {

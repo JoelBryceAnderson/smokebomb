@@ -1,7 +1,7 @@
 # Sugarcube
 
 <p align="center">
-  <img src="packages/mobile/iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="The Sugarcube app icon: a cartoon sugar cube jumping with a fist in the air above a pink ribbon reading Sugarcube" width="200">
+  <img src="packages/mobile/iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="The Sugarcube app icon: a cartoon sugar cube jumping fist-first through a jagged hole torn in a pink background, with a yellow pinwheel behind" width="200">
 </p>
 
 Sugarcube is a smart die with six 96×96 OLED faces. Throw it and a storm of sugar
