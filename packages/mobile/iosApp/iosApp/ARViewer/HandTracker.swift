@@ -104,21 +104,35 @@ final class HandTracker: @unchecked Sendable {
     /// The palm's axes, from the wrist and the index, middle and little
     /// knuckles: broad, flat and seldom hidden by a pinch, so their depths
     /// hold up better than the fingertips'.
+    ///
+    /// Scene depth is smoothed across a hand, so a palm tipped toward or
+    /// away from the camera reads flatter than it is: the joints' depths
+    /// are spread about their mean by `handDepthGain` to make up for it.
+    /// Turns across the view come from the image alone and need no help.
     private static func palm(of hand: VNHumanHandPoseObservation, depth map: CVPixelBuffer, camera: Camera) -> Palm? {
-        func point(_ joint: VNHumanHandPoseObservation.JointName) -> SIMD3<Float>? {
+        func point(_ joint: VNHumanHandPoseObservation.JointName) -> (uv: SIMD2<Float>, depth: Float)? {
             guard let p = try? hand.recognizedPoint(joint), p.confidence > DiePhysics.handPalmMinConfidence else { return nil }
             let uv = SIMD2(Float(p.location.x), 1 - Float(p.location.y))
             guard let d = depth(at: uv, in: map) else { return nil }
-            return unproject(uv, depth: d, camera: camera)
+            return (uv, d)
         }
         guard let wrist = point(.wrist), let index = point(.indexMCP),
               let middle = point(.middleMCP), let little = point(.littleMCP)
         else { return nil }
-        let forward = middle - wrist
-        let normal = simd_cross(forward, little - index)
+        let joints = [wrist, index, middle, little]
+        let mean = joints.reduce(0) { $0 + $1.depth } / Float(joints.count)
+        let placed = joints.map { j in
+            cameraPoint(j.uv, depth: mean + (j.depth - mean) * DiePhysics.handDepthGain, camera: camera)
+        }
+        let forward = placed[2] - placed[0]
+        let normal = simd_cross(forward, placed[3] - placed[1])
         // Too foreshortened to tell which way it's turned.
         guard simd_length(forward) > 0.03, simd_length(normal) > 1e-4 else { return nil }
-        return Palm(forward: simd_normalize(forward), normal: simd_normalize(normal))
+        let toWorld = simd_float3x3(columns: (
+            SIMD3(camera.transform.columns.0.x, camera.transform.columns.0.y, camera.transform.columns.0.z),
+            SIMD3(camera.transform.columns.1.x, camera.transform.columns.1.y, camera.transform.columns.1.z),
+            SIMD3(camera.transform.columns.2.x, camera.transform.columns.2.y, camera.transform.columns.2.z)))
+        return Palm(forward: simd_normalize(toWorld * forward), normal: simd_normalize(toWorld * normal))
     }
 
     /// The depth at a point of the image (0…1, from the top left), in metres.
@@ -146,12 +160,17 @@ final class HandTracker: @unchecked Sendable {
 
     /// A point of the image (0…1, from the top left) at `depth` metres, in world space.
     private static func unproject(_ uv: SIMD2<Float>, depth: Float, camera: Camera) -> SIMD3<Float> {
+        let local = cameraPoint(uv, depth: depth, camera: camera)
+        let world = camera.transform * SIMD4(local, 1)
+        return SIMD3(world.x, world.y, world.z)
+    }
+
+    /// The same, in the camera's space: x right, y up, looking down −z.
+    private static func cameraPoint(_ uv: SIMD2<Float>, depth: Float, camera: Camera) -> SIMD3<Float> {
         let pixel = uv * camera.resolution
         let k = camera.intrinsics
         let fx = k[0][0], fy = k[1][1], cx = k[2][0], cy = k[2][1]
-        // ARKit's camera space: x right, y up, looking down −z; the image's y runs down.
-        let local = SIMD4<Float>((pixel.x - cx) / fx * depth, -(pixel.y - cy) / fy * depth, -depth, 1)
-        let world = camera.transform * local
-        return SIMD3(world.x, world.y, world.z)
+        // The image's y runs down.
+        return SIMD3((pixel.x - cx) / fx * depth, -(pixel.y - cy) / fy * depth, -depth)
     }
 }

@@ -985,7 +985,12 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
                 grab.dieTurn = rotation
             }
             if let start = grab.handTurn {
-                let target = turn * start.inverse * grab.dieTurn
+                var delta = turn * start.inverse
+                if delta.real < 0 { delta = simd_quatf(vector: -delta.vector) }
+                if DiePhysics.handTurnGain != 1, delta.angle > 1e-4 {
+                    delta = simd_quatf(angle: delta.angle * DiePhysics.handTurnGain, axis: delta.axis)
+                }
+                let target = delta * grab.dieTurn
                 rotation = simd_slerp(rotation, target, 1 - exp(-DiePhysics.handTurnFollowRate * dt))
             }
         }
@@ -1010,7 +1015,7 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             return simd_quatf(simd_float3x3(columns: (simd_cross(y, z), y, z)))
         }
         hand = (pinch ?? hand?.pinch, turn ?? hand?.turn, time)
-        defer { showHandDebug(gap: reading.gap) }
+        defer { showHandDebug(gap: reading.gap, palmSeen: turn != nil) }
         guard let gap = reading.gap, let pinch else { return }
         if !pinching {
             if gap < DiePhysics.handPinchClose {
@@ -1032,10 +1037,25 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     /// Debug builds: what the tracker sees, to tune the pinch by.
-    private func showHandDebug(gap: Float?) {
+    /// Held, it also shows how far the hand has turned since the grab: if
+    /// the die turns less than that, the follow rate or gain is off; if the
+    /// hand's turn reads low, the tracking is.
+    private func showHandDebug(gap: Float?, palmSeen: Bool) {
         #if DEBUG
-        let seen = gap.map { String(format: "gap %.1f cm", $0 * 100) } ?? "tips hidden"
-        model.handDebug = "Hand: \(seen)\(pinching ? " · pinched" : "")\(handGrab != nil ? " · holding" : "")"
+        var text = "Hand: " + (gap.map { String(format: "gap %.1f cm", $0 * 100) } ?? "tips hidden")
+        if pinching { text += " · pinched" }
+        if let grab = handGrab {
+            if !palmSeen {
+                text += " · palm hidden"
+            } else if let start = grab.handTurn, let turn = hand?.turn {
+                var delta = turn * start.inverse
+                if delta.real < 0 { delta = simd_quatf(vector: -delta.vector) }
+                var die = pivot.orientation * grab.dieTurn.inverse
+                if die.real < 0 { die = simd_quatf(vector: -die.vector) }
+                text += String(format: " · hand %.0f° die %.0f°", delta.angle * 180 / .pi, die.angle * 180 / .pi)
+            }
+        }
+        model.handDebug = text
         #endif
     }
 

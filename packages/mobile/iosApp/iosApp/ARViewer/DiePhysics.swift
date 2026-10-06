@@ -63,10 +63,15 @@ enum DiePhysics {
     /// Vision's fingertips below this confidence are ignored.
     static let handMinConfidence: Float = 0.15
     /// …and the wrist and knuckles, for which way the hand is turned.
-    static let handPalmMinConfidence: Float = 0.3
+    static let handPalmMinConfidence: Float = 0.15
+    /// Scene depth flattens a hand: how much to stretch the palm's depths
+    /// back out, so tipping it toward or away from you turns the die as far.
+    static let handDepthGain: Float = 1.8
+    /// How far the die turns for each degree the hand turns.
+    static let handTurnGain: Float = 1.0
     /// How quickly a held die turns to follow the hand, per second: lower
     /// is steadier, higher keeps up with a quick twist.
-    static let handTurnFollowRate: Float = 12
+    static let handTurnFollowRate: Float = 15
     /// Depth-map pixels either side of a fingertip to look at for its depth.
     static let handDepthWindow = 2
 

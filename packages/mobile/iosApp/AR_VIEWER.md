@@ -508,7 +508,11 @@ when it's in front.
   firmware reads its motion uncapped, so lifting and shaking it count.
 - It also turns with the hand: the palm's axes (wrist to middle knuckle,
   and across the knuckles) give the hand's turn, and the die turns by as
-  much as the hand has since the grab, eased by `handTurnFollowRate`.
+  much as the hand has since the grab (times `handTurnGain`), eased by
+  `handTurnFollowRate`. Scene depth flattens a hand, so tipping it toward
+  or away from the camera reads short; the palm's depths are stretched by
+  `handDepthGain` to make up for it. Debug builds show the hand's turn
+  since the grab beside the die's ("hand 40° die 38°"), or "palm hidden".
   With the wrist or knuckles hidden it holds its last turn. A twist of the
   wrist at release carries on as spin.
 - Let go, it leaves at the hand's speed over the last `handThrowWindow`
