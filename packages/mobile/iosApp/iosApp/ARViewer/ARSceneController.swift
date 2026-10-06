@@ -146,6 +146,10 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
     private var pinching = false
     /// Since when a held pinch has looked open.
     private var openSince: TimeInterval?
+    /// When the hand's turn was last read, and how many readings in a row
+    /// have jumped too far from it.
+    private var turnSeen: TimeInterval = 0
+    private var turnJumps = 0
     /// Held in a pinch: where the die's centre sits from the pinch (eased to
     /// nothing, so it settles between the fingers), how the hand and die
     /// were turned when the hand's turn was first known (the die turns as
@@ -1018,8 +1022,9 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
             z = simd_normalize(z - y * simd_dot(z, y))
             return simd_quatf(simd_float3x3(columns: (simd_cross(y, z), y, z)))
         }
-        hand = (pinch ?? hand?.pinch, turn ?? hand?.turn, time)
-        defer { showHandDebug(gap: reading.gap, palmSeen: turn != nil) }
+        let accepted = turn.flatMap { acceptTurn($0) }
+        hand = (pinch ?? hand?.pinch, accepted ?? hand?.turn, time)
+        defer { showHandDebug(gap: reading.gap, palmSeen: accepted != nil) }
         guard let gap = reading.gap, let pinch else { return }
         let fast = handGrab.map { isFast($0, at: nil) } ?? false
         if !pinching {
@@ -1041,6 +1046,35 @@ final class ARSceneController: NSObject, UIGestureRecognizerDelegate {
         } else {
             openSince = nil
         }
+    }
+
+    /// Screens a newly read hand turn: nil to ignore it. A big jump from the
+    /// last is a misread (a swapped knuckle, a blurred frame) unless it
+    /// persists; a turn that persists, or follows a while unread, is taken
+    /// without turning a held die, so the die never spins to catch up.
+    private func acceptTurn(_ turn: simd_quatf) -> simd_quatf? {
+        defer { turnSeen = time }
+        guard let old = hand?.turn else { return turn }
+        let stale = time - turnSeen > DiePhysics.handTurnStale
+        if !stale, Self.angle(between: turn, old) > DiePhysics.handTurnMaxJump {
+            turnJumps += 1
+            guard turnJumps >= DiePhysics.handTurnJumpFrames else { return nil }
+        } else if !stale {
+            turnJumps = 0
+            return turn
+        }
+        turnJumps = 0
+        // Rebase: the die stays turned as it is, and turns from here on.
+        if var grab = handGrab, let start = grab.handTurn {
+            grab.handTurn = start * old.inverse * turn
+            handGrab = grab
+        }
+        return turn
+    }
+
+    /// The angle between two turns, the short way round.
+    private static func angle(between a: simd_quatf, _ b: simd_quatf) -> Float {
+        2 * acos(min(1, abs((a * b.inverse).real)))
     }
 
     /// Debug builds: what the tracker sees, to tune the pinch by.

@@ -125,7 +125,12 @@ final class HandTracker: @unchecked Sendable {
             cameraPoint(j.uv, depth: mean + (j.depth - mean) * DiePhysics.handDepthGain, camera: camera)
         }
         let forward = placed[2] - placed[0]
-        let normal = simd_cross(forward, placed[3] - placed[1])
+        // Vision sometimes takes the back of the hand for the palm of the
+        // other one, swapping the index and little knuckles: that flips the
+        // normal, and its call on which hand it is flips with it. Keyed to
+        // that call, the normal stays put.
+        let sign: Float = hand.chirality == .left ? -1 : 1
+        let normal = simd_cross(forward, placed[3] - placed[1]) * sign
         // Too foreshortened to tell which way it's turned.
         guard simd_length(forward) > 0.03, simd_length(normal) > 1e-4 else { return nil }
         let toWorld = simd_float3x3(columns: (

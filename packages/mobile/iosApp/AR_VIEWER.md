@@ -515,6 +515,13 @@ when it's in front.
   since the grab beside the die's ("hand 40° die 38°"), or "palm hidden".
   With the wrist or knuckles hidden it holds its last turn. A twist of the
   wrist at release carries on as spin.
+- Hand turns are screened: Vision sometimes swaps the index and little
+  knuckles (taking the back of one hand for the palm of the other), which
+  flips the palm; the normal is signed by Vision's left/right call, which
+  flips with it. A reading that jumps more than `handTurnMaxJump` from the
+  last is ignored unless it holds for `handTurnJumpFrames` readings; then,
+  or after `handTurnStale` with no reading, the new turn is taken without
+  turning the die (it turns from there on), so it never spins to catch up.
 - Let go, it leaves at the hand's speed over the `handThrowWindow` before
   the pinch opened (capped by `handMaxThrowSpeed`) and lands as a roll,
   inside the usual corral.

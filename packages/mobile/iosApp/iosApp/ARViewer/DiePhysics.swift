@@ -75,6 +75,15 @@ enum DiePhysics {
     /// Scene depth flattens a hand: how much to stretch the palm's depths
     /// back out, so tipping it toward or away from you turns the die as far.
     static let handDepthGain: Float = 1.8
+    /// A hand that seems to turn further than this (radians) since the last
+    /// frame is a misread and ignored, unless it keeps reading that way for
+    /// `handTurnJumpFrames` frames: then it's taken as the hand's new turn,
+    /// without turning the die.
+    static let handTurnMaxJump: Float = 0.6
+    static let handTurnJumpFrames = 4
+    /// With no turn read for this long, the next one is taken afresh the
+    /// same way, without turning the die.
+    static let handTurnStale: TimeInterval = 0.3
     /// How far the die turns for each degree the hand turns.
     static let handTurnGain: Float = 1.0
     /// How quickly a held die turns to follow the hand, per second: lower
