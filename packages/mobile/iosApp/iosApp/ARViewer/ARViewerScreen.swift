@@ -330,7 +330,7 @@ private struct ControlPad: View {
                 VStack(spacing: 6) {
                     Image(systemName: "hand.draw")
                         .font(.title2)
-                    Text(model.isPlaced ? "Drag to turn the die\nFlick to throw it" : "Place the die first")
+                    Text(model.isPlaced ? "Drag to turn the die\nFlick to throw it\nTwo fingers on the die's view tilt it" : "Place the die first")
                         .font(.footnote)
                         .multilineTextAlignment(.center)
                 }
