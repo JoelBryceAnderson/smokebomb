@@ -1,5 +1,13 @@
 # Rust
 /target/
+experiments/**/target/
+
+# Game Boy ROMs and battery saves: never in the repo (experiments/gbc-cube
+# loads the user's own dump from a path)
+*.gb
+*.gbc
+*.sav
+*.sav.tmp
 
 # Node / Nx
 node_modules/

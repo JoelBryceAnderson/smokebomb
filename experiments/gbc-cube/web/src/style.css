@@ -1,0 +1,41 @@
+:root {
+  --bg: #16161a;
+  --panel: #1f1f25;
+  --text: #e8e8ee;
+  --dim: #9a9aa6;
+  --accent: #f5c451;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+#app { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
+#stage { position: relative; min-width: 0; }
+#three { width: 100%; height: 100%; display: block; }
+#hint { position: absolute; left: 12px; right: 12px; bottom: 10px; color: var(--dim); font-size: 12px; }
+#side { background: var(--panel); padding: 12px 14px; overflow-y: auto; }
+h1 { font-size: 15px; margin: 0 0 10px; }
+h1 span { color: var(--dim); font-weight: normal; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+figure { margin: 0; }
+figcaption { color: var(--dim); font-size: 11px; }
+canvas#lcd, canvas#pred { width: 160px; height: 144px; image-rendering: pixelated; background: #000; }
+.controls { display: grid; gap: 6px; margin: 10px 0; }
+.controls label { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 6px; color: var(--dim); }
+.controls label.check { display: flex; }
+select, input[type=range] { width: 100%; }
+select { background: #2a2a31; color: var(--text); border: 1px solid #3a3a44; border-radius: 4px; padding: 3px; }
+.buttons { display: flex; flex-wrap: wrap; gap: 4px; }
+button { background: #2a2a31; color: var(--text); border: 1px solid #3a3a44; border-radius: 4px; padding: 4px 8px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+#pad { width: 96px; height: 96px; border-radius: 50%; background: #2a2a31; border: 1px solid #3a3a44;
+  position: relative; touch-action: none; justify-self: start; }
+#knob { position: absolute; width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+  left: 37px; top: 37px; pointer-events: none; }
+#status { background: #141418; padding: 8px; border-radius: 4px; font-size: 11px; white-space: pre-wrap; min-height: 9em; }
+#faces { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+#faces canvas { width: 100%; image-rendering: pixelated; }
+#faces div { color: var(--dim); font-size: 10px; text-align: center; }
+@media (max-width: 800px) {
+  #app { grid-template-columns: 1fr; grid-template-rows: 60vh auto; height: auto; }
+}

@@ -1,0 +1,27 @@
+[package]
+name = "gbc-cube-sim"
+description = "Runs a GBC ROM (or the demo cart) on the simulated 30 mm cube: web UI, benchmark, screenshots"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "gbc-cube"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+gbc-cube-core.workspace = true
+gbc-cube-demo.workspace = true
+gbc-cube-emu.workspace = true
+png.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smokebomb-hal.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

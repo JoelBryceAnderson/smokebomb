@@ -1,0 +1,9 @@
+gbc-cube: Pokémon Crystal (or the demo cart) on the simulated 30 mm cube
+
+  gbc-cube serve  [--rom PATH | --demo] [--port 3100]   web simulator
+  gbc-cube bench  [--rom PATH | --demo] [--frames N] [--json OUT]
+  gbc-cube shots  [--rom PATH | --demo] [--out DIR]     PNGs of the cube net
+  gbc-cube snapshot --out DIR                           demo RAM for m33bench/
+
+The ROM comes from --rom or GBC_CUBE_ROM; without either the demo cart runs.
+Battery saves go next to the ROM (game.gbc -> game.sav).

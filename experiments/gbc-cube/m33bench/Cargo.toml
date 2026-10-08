@@ -1,0 +1,30 @@
+# Bare-metal Cortex-M33 benchmark: walnut-cgb and the cube renderer built for
+# thumbv8m.main-none-eabihf (the nRF54L15's core) and run on QEMU's mps2-an505
+# board with `-icount shift=0`, so virtual time counts executed instructions.
+# Its own workspace: it only builds for the Arm target.
+[workspace]
+
+[package]
+name = "gbc-cube-m33bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+gbc-cube-core = { path = "../core" }
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+opt-level = 2
+debug = true
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 2
+panic = "abort"

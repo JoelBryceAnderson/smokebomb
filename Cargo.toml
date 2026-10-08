@@ -13,6 +13,8 @@ members = [
     "packages/simulator/server",
     "packages/server",
 ]
+# Side experiments have their own workspaces and never build with the product.
+exclude = ["experiments"]
 # `cargo run --features=simulator` from the repo root launches the simulator.
 # The backend server is left out so `cargo run` has exactly one binary to
 # pick; build it with `-p smokebomb-server` or `--workspace`.

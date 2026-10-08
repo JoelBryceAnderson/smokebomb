@@ -147,3 +147,4 @@ Findings, contact sheets and the full list of what's stubbed:
 - [Simulator spec](docs/SIM_SPEC.md): how the die looks and behaves, which began as a 1:1 copy of the interactive mockup
 - [Store](docs/STORE.md): selling modes and themes, licenses, choosing a die's modes from the app
 - [30 mm die](docs/30mm/README.md): the 64×64 colour proof of concept, its contact sheets and findings
+- [GBC cube](experiments/gbc-cube/README.md): a side experiment, not a feature. Pokémon Crystal wrapped round the 30 mm die, in its own workspace that the product never builds.

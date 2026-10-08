@@ -1,0 +1,11 @@
+[build]
+target = "thumbv8m.main-none-eabihf"
+
+[target.thumbv8m.main-none-eabihf]
+rustflags = ["-C", "link-arg=-Tlink.x"]
+# Cortex-M33 board; one virtual nanosecond per executed instruction.
+runner = "qemu-system-arm -M mps2-an505 -nographic -semihosting-config enable=on,target=native -icount shift=0 -kernel"
+
+[env]
+CC_thumbv8m_main_none_eabihf = "clang"
+AR_thumbv8m_main_none_eabihf = "llvm-ar"

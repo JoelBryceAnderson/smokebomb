@@ -1,0 +1,15 @@
+[package]
+name = "gbc-cube-emu"
+description = "walnut-cgb (Game Boy Color emulator, MIT) behind a small safe Rust interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+links = "walnut_cgb"
+
+[dependencies]
+gbc-cube-core.workspace = true
+
+[build-dependencies]
+cc.workspace = true

@@ -1,0 +1,20 @@
+{
+  "name": "gbc-cube-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Browser view for the GBC-on-a-cube experiment (not part of the product workspace)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12"
+  }
+}

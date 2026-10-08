@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GBC Cube</title>
+  </head>
+  <body>
+    <div id="app">
+      <section id="stage">
+        <canvas id="three"></canvas>
+        <div id="hint">
+          <b>Tilt</b> WASD (or drag the pad) &middot; <b>Roll</b> Shift+WASD &middot; <b>Tap</b> click a face
+          (hold for Start) &middot; <b>Shake</b> Space &middot; <b>Joypad</b> arrows, Z/X, Enter, Backspace
+          &middot; drag the background to look around
+        </div>
+      </section>
+      <aside id="side">
+        <h1>GBC on a cube <span id="title"></span></h1>
+        <div class="row">
+          <figure>
+            <canvas id="lcd" width="160" height="144"></canvas>
+            <figcaption>Emulator frame</figcaption>
+          </figure>
+          <figure id="predfig" hidden>
+            <canvas id="pred" width="160" height="144"></canvas>
+            <figcaption>World renderer (<span id="mismatch">-</span>)</figcaption>
+          </figure>
+        </div>
+        <div class="controls">
+          <label>Wrap
+            <select id="wrap">
+              <option value="world">Phase 3: world from RAM</option>
+              <option value="frame">Phase 2: frame only</option>
+            </select>
+          </label>
+          <label>Text, menus, battles
+            <select id="ui">
+              <option value="front">C: text on the front face</option>
+              <option value="pan">A: pan to the active part</option>
+              <option value="spread">B: fixed spread</option>
+            </select>
+          </label>
+          <label>Fog <input id="fog" type="range" min="0" max="40" value="16" /></label>
+          <label>Tilt deadzone <input id="deadzone" type="range" min="3" max="30" value="12" /></label>
+          <label>Walk up to <input id="walk_max_deg" type="range" min="20" max="54" value="40" /></label>
+          <label>Hold to walk ms <input id="walk_hold_ms" type="range" min="0" max="400" step="20" value="120" /></label>
+          <label>Roll at <input id="switch_deg" type="range" min="46" max="80" value="55" /></label>
+          <label>Long press ms <input id="long_press_ms" type="range" min="300" max="1500" step="50" value="650" /></label>
+          <label class="check"><input id="debug" type="checkbox" /> Compare renderer with next frame</label>
+          <div class="buttons">
+            <button data-roll="n">Roll N</button><button data-roll="w">Roll W</button>
+            <button data-roll="e">Roll E</button><button data-roll="s">Roll S</button>
+            <button id="shake">Shake</button><button id="reset">Reset</button>
+          </div>
+          <div id="pad"><div id="knob"></div></div>
+        </div>
+        <pre id="status">connecting...</pre>
+        <div id="faces"></div>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+[package]
+name = "gbc-cube-core"
+description = "Hardware-agnostic (no_std) logic for the GBC-on-a-cube experiment: cube net, Crystal world renderer, screen fallbacks, controls"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+libm = "0.2"
+smokebomb-hal.workspace = true
+smokebomb-core.workspace = true
