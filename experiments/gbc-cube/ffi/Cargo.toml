@@ -1,0 +1,20 @@
+[package]
+name = "gbc-cube-ffi"
+description = "C ABI for the GBC cube in the iOS app's Simulator tab; also carries the die firmware's ABI so the app links one Rust library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+gbc-cube-core.workspace = true
+gbc-cube-demo.workspace = true
+gbc-cube-emu.workspace = true
+smokebomb-hal.workspace = true
+# Re-exported whole: two Rust static libraries can't be linked into one app
+# (both carry the standard library), so this one stands in for it.
+smokebomb-ffi = { path = "../../../packages/firmware/ffi" }

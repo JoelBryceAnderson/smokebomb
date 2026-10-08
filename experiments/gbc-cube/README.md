@@ -50,6 +50,31 @@ ends with a 24-byte footer holding the clock and the time it was written.
 On the next start the clock moves on by the time that passed. Other
 emulators ignore the extra bytes.
 
+### On the phone: the app's Simulator tab
+
+The iOS app's Simulator tab can run a game on its die instead of the die
+firmware. It's off by default, and builds without it (CI, release) don't
+include any of it.
+
+1. In `packages/mobile/iosApp/Local.xcconfig` (git-ignored; copy
+   `Local.xcconfig.example`), add `SUGARCUBE_GBC_CUBE = YES`.
+2. `cd packages/mobile/iosApp && xcodegen generate`, then build and run as
+   usual. `scripts/build_firmware.sh` then builds `ffi/` here
+   (`libgbc_cube_ffi.a`). It carries the die firmware too, so the app still
+   links one Rust library.
+3. In the Simulator tab, on the 30 mm die, tap **Game Boy** (top right) →
+   **Load ROM…** and pick your ROM in Files (Downloads works).
+   - The app copies it to its Documents/ROMs folder and keeps the `.sav`
+     next to it there.
+   - **Demo cart** needs no ROM. **Die firmware** goes back to normal.
+4. Play:
+   - The on-screen joypad presses buttons.
+   - Tapping the up face is A, a side face is B, and holding the up face is
+     Start.
+   - Throwing the die lands it on a new face, and the map rolls with it.
+   - The tab can't tip the die (drag spins it), so walking is on the D-pad
+     rather than by tilt.
+
 Other commands:
 
 ```sh

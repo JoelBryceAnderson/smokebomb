@@ -3,3 +3,6 @@
 DEVELOPMENT_TEAM = ABCDE12345
 // If com.smokebomb.app is taken on your team, use your own:
 // SUGARCUBE_BUNDLE_ID = com.yourname.sugarcube
+// The GBC cube experiment: load a Game Boy Color ROM onto the Simulator
+// tab's die (experiments/gbc-cube/README.md). Needs Rust, like the firmware.
+// SUGARCUBE_GBC_CUBE = YES

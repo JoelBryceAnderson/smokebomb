@@ -7,7 +7,7 @@
 # geometry matches the firmware's, but the dependency only points this way.
 [workspace]
 resolver = "2"
-members = ["core", "emu", "demo", "sim"]
+members = ["core", "emu", "demo", "sim", "ffi"]
 
 [workspace.package]
 version = "0.0.0"

@@ -28,6 +28,19 @@ if command -v rustup >/dev/null && ! rustup target list --installed | grep -qx "
   rustup target add "$TARGET"
 fi
 
+# With the GBC cube experiment on (SUGARCUBE_GBC_CUBE = YES in
+# Local.xcconfig, which Xcode exports here), build its library instead: it
+# carries the firmware core as well, and the app links only one of them.
+if [ "${SUGARCUBE_GBC_CUBE:-NO}" = YES ]; then
+  WORKSPACE="$REPO/experiments/gbc-cube"
+  CRATE=gbc-cube-ffi
+  LIB=libgbc_cube_ffi.a
+else
+  WORKSPACE="$REPO"
+  CRATE=smokebomb-ffi
+  LIB=libsmokebomb_ffi.a
+fi
+
 # A clean environment: Xcode exports its iOS SDK settings (SDKROOT and the
 # like), and the host-side build scripts would try to link against them.
 env -i \
@@ -35,8 +48,8 @@ env -i \
   DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" \
   IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-18.0}" \
   CARGO_TERM_COLOR=never \
-  cargo build --manifest-path "$REPO/Cargo.toml" -p smokebomb-ffi --release --target "$TARGET"
+  cargo build --manifest-path "$WORKSPACE/Cargo.toml" -p "$CRATE" --release --target "$TARGET"
 
 mkdir -p "$OUT"
-cp "$REPO/target/$TARGET/release/libsmokebomb_ffi.a" "$OUT/"
-echo "firmware core: $OUT/libsmokebomb_ffi.a"
+cp "$WORKSPACE/target/$TARGET/release/$LIB" "$OUT/"
+echo "firmware core: $OUT/$LIB"

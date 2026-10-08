@@ -1,0 +1,4 @@
+module GbcCube {
+    header "gbc_cube_ffi.h"
+    export *
+}

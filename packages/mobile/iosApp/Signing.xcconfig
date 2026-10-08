@@ -5,4 +5,13 @@
 //
 // Without it the app still builds for the Simulator.
 SUGARCUBE_BUNDLE_ID = com.smokebomb.app
+// The GBC cube experiment (experiments/gbc-cube): a Game Boy game on the
+// Simulator tab's die. Off unless Local.xcconfig sets it to YES.
+SUGARCUBE_GBC_CUBE = NO
 #include? "Local.xcconfig"
+
+SUGARCUBE_GBC_FLAG_YES = GBC_CUBE
+SUGARCUBE_GBC_FLAG = $(SUGARCUBE_GBC_FLAG_$(SUGARCUBE_GBC_CUBE))
+SUGARCUBE_FIRMWARE_LIB_NO = -lsmokebomb_ffi
+SUGARCUBE_FIRMWARE_LIB_YES = -lgbc_cube_ffi
+SUGARCUBE_FIRMWARE_LIB = $(SUGARCUBE_FIRMWARE_LIB_$(SUGARCUBE_GBC_CUBE))
