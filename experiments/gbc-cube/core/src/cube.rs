@@ -11,6 +11,7 @@ use crate::fallback::{self, Fallback, UiStyle};
 use crate::geom::{Heading, Layout, Role};
 use crate::mem::GbMem;
 use crate::orient::{UpConfig, UpTracker};
+use crate::screens;
 use crate::view::View;
 use crate::{FaceBuf, LCD_H, LCD_W};
 
@@ -79,6 +80,10 @@ pub enum Drawn {
     Spread,
     /// Phase 4 C: world (or battle crops) plus the front panel.
     Front,
+    /// C: the naming screen's keyboard and name.
+    Naming,
+    /// C: a still screen folded round the cube, its box on the front.
+    Still,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -104,9 +109,9 @@ impl Report {
     /// of those, its first frame is a frame old.
     pub fn needs_frame(&self) -> bool {
         match self.drawn {
-            Drawn::World => false,
+            Drawn::World | Drawn::Naming => false,
             Drawn::Front => self.scene == Scene::Battle,
-            Drawn::Frame | Drawn::Pan | Drawn::Spread => true,
+            Drawn::Frame | Drawn::Pan | Drawn::Spread | Drawn::Still => true,
         }
     }
 }
@@ -122,7 +127,18 @@ pub struct Cube {
     fallback: Fallback,
     last_world: Option<Camera>,
     last_ms: Option<u32>,
+    /// The scene last drawn, and how many frames in a row RAM has said
+    /// it's no longer the map (see [`HOLD_FRAMES`]).
+    scene: Scene,
+    other_run: u8,
 }
+
+/// Frames the map must be gone before the cube stops drawing it. Walking
+/// across a map connection or a step can leave Crystal's RAM between two
+/// states for a frame (new blocks, old anchor), which reads as "not the
+/// map"; without this the faces flash to the fallback for that frame.
+/// Genuinely leaving the map (the bag, a warp's fade) waits 100 ms.
+pub const HOLD_FRAMES: u8 = 6;
 
 impl Cube {
     pub fn new(cfg: Config) -> Self {
@@ -136,6 +152,8 @@ impl Cube {
             fallback: Fallback::new(),
             last_world: None,
             last_ms: None,
+            scene: Scene::Other,
+            other_run: 0,
         }
     }
 
@@ -189,6 +207,30 @@ impl Cube {
         };
         self.fallback.observe(f.mem, f.crystal.then_some(&info), f.frame);
 
+        // Hold the map through a frame or two of RAM that doesn't look like
+        // it (see `HOLD_FRAMES`).
+        self.other_run = if info.scene == Scene::Other {
+            self.other_run.saturating_add(1)
+        } else {
+            0
+        };
+        let on_map = matches!(self.scene, Scene::Overworld | Scene::OverworldUi);
+        if on_map && info.scene == Scene::Other && self.other_run < HOLD_FRAMES {
+            // The canvas still holds the last map drawn.
+            self.view.drape_onto(&layout, faces, 1 << bottom);
+            faces[bottom].fill(0);
+            return Report {
+                scene: self.scene,
+                drawn: Drawn::World,
+                camera: cam,
+                screen_on_canvas: self.last_world.map(|c| c.screen_on_canvas()),
+                info,
+                heading,
+                reused: true,
+            };
+        }
+        self.scene = info.scene;
+
         let mut report = Report {
             scene: info.scene,
             drawn: Drawn::World,
@@ -230,6 +272,12 @@ impl Cube {
             }
         }
 
+        let c_scene = info.scene == Scene::Other && f.crystal && self.cfg.ui == UiStyle::Front;
+        let naming = if c_scene {
+            screens::Naming::read(f.mem)
+        } else {
+            None
+        };
         match info.scene {
             Scene::Overworld if world_ready => {
                 self.view.drape_onto(&layout, faces, 1 << bottom);
@@ -258,6 +306,27 @@ impl Cube {
                 self.view.compute_light(fog);
                 self.view.drape_onto(&layout, faces, 1 << bottom);
                 report.drawn = Drawn::Frame;
+            }
+            Scene::Other if naming.is_some() => {
+                if let Some(n) = naming {
+                    n.draw(f.mem, &layout, faces);
+                }
+                report.drawn = Drawn::Naming;
+            }
+            Scene::Other
+                if c_scene
+                    && screens::still(
+                        f.mem,
+                        f.frame,
+                        f.palette,
+                        &mut self.view,
+                        &layout,
+                        faces,
+                        &self.fallback,
+                        fog,
+                    ) =>
+            {
+                report.drawn = Drawn::Still;
             }
             _ => {
                 let info_ref = f.crystal.then_some(&info);

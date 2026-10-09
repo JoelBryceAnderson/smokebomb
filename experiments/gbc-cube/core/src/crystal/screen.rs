@@ -61,6 +61,8 @@ impl ScreenInfo {
 /// Up to this many tiles may disagree with the map and it's still the map
 /// (a sprite-ish BG effect, a tile the game is redrawing).
 const STRAY_LIMIT: u16 = 12;
+/// At least this many tiles must be the map for it to be the map.
+const MIN_MAP_TILES: u16 = 40;
 
 /// A `wTilemap` tile.
 pub fn tilemap<M: GbMem + ?Sized>(m: &M, x: usize, y: usize) -> u8 {
@@ -110,7 +112,11 @@ pub fn classify<M: GbMem + ?Sized>(
     }
     info.scene = if m.byte(syms::W_BATTLE_MODE) != 0 {
         Scene::Battle
-    } else if info.stray_tiles > STRAY_LIMIT {
+    } else if info.stray_tiles > STRAY_LIMIT
+        || ((COLS * ROWS) as u16 - info.ui_tiles - info.stray_tiles) < MIN_MAP_TILES
+    {
+        // Lots that isn't the map, or barely any map left showing (a screen
+        // built only of font tiles, like the naming screen).
         Scene::Other
     } else if info.ui_tiles > 0 {
         Scene::OverworldUi

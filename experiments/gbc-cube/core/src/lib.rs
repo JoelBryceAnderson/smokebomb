@@ -12,6 +12,8 @@
 //! * [`crystal`]: Pokémon Crystal's overworld redrawn from game RAM (Phase 3),
 //!   and what the screen is showing (overworld, a text box, a battle).
 //! * [`fallback`]: layouts for screens that don't wrap (Phase 4).
+//! * [`screens`]: Crystal's naming screen and still scenes (the new-game
+//!   speech, the title), laid out for the cube.
 //! * [`controls`]: tilt, taps, long press and shake to joypad (Phase 5).
 //! * [`cube`]: puts it together, once per frame.
 
@@ -30,6 +32,7 @@ pub mod geom;
 pub mod mem;
 pub mod orient;
 pub mod ppu;
+pub mod screens;
 pub mod view;
 
 /// The Game Boy screen.

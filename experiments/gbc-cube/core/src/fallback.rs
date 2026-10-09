@@ -66,6 +66,11 @@ impl Fallback {
         }
     }
 
+    /// Newest tile that changed to text, (x, y) in tiles.
+    pub(crate) fn last_typed(&self) -> Option<(usize, usize)> {
+        self.last_typed
+    }
+
     pub fn focus(&self) -> (i32, i32) {
         (self.focus.0 / 16, self.focus.1 / 16)
     }
@@ -242,19 +247,19 @@ pub fn battle_crops(
 /// A run of tiles to draw: the tile ID and the `wTilemap` position it came
 /// from (for its attributes).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Glyph {
-    tile: u8,
-    x: u8,
-    y: u8,
+pub(crate) struct Glyph {
+    pub tile: u8,
+    pub x: u8,
+    pub y: u8,
 }
 
-const LINE: usize = FACE / 8;
+pub(crate) const LINE: usize = FACE / 8;
 
 /// Up to 16 lines of 8 glyphs.
-struct Lines {
-    g: [[Option<Glyph>; LINE]; 16],
-    n: usize,
-    cursor_line: Option<usize>,
+pub(crate) struct Lines {
+    pub g: [[Option<Glyph>; LINE]; 16],
+    pub n: usize,
+    pub cursor_line: Option<usize>,
 }
 
 impl Lines {
@@ -281,13 +286,13 @@ impl Lines {
 }
 
 /// The ▶ cursor, among the UI tiles if `mask` is given.
-fn find_cursor<M: GbMem + ?Sized>(m: &M, mask: Option<&ScreenInfo>) -> Option<(usize, usize)> {
+pub(crate) fn find_cursor<M: GbMem + ?Sized>(m: &M, mask: Option<&ScreenInfo>) -> Option<(usize, usize)> {
     (0..ROWS)
         .flat_map(|y| (0..COLS).map(move |x| (x, y)))
         .find(|&(x, y)| mask.is_none_or(|i| i.is_ui(x, y)) && tilemap(m, x, y) == charmap::CURSOR)
 }
 
-type Rect = (usize, usize, usize, usize);
+pub(crate) type Rect = (usize, usize, usize, usize);
 
 /// Crystal's framed boxes on screen: from each ┌, right to the first ┐ and
 /// down to the first └ (a box drawn over another, like the battle menu over
@@ -320,7 +325,7 @@ fn contains(r: Rect, p: (usize, usize)) -> bool {
 /// The region C shows: the smallest box holding the cursor, else the
 /// smallest holding the newest text, else the biggest box; without boxes,
 /// the connected UI tiles the same way.
-fn pick_region<M: GbMem + ?Sized>(
+pub(crate) fn pick_region<M: GbMem + ?Sized>(
     m: &M,
     mask: Option<&ScreenInfo>,
     typed: Option<(usize, usize)>,
@@ -415,7 +420,7 @@ fn is_frame(t: u8) -> bool {
 }
 
 /// Lay out the region's text in lines of at most 8 glyphs.
-fn reflow<M: GbMem + ?Sized>(m: &M, r: (usize, usize, usize, usize)) -> Lines {
+pub(crate) fn reflow<M: GbMem + ?Sized>(m: &M, r: (usize, usize, usize, usize)) -> Lines {
     let (mut x0, mut y0, mut x1, mut y1) = r;
     // Inside the frame, if it has one.
     if is_frame(tilemap(m, x0, y0)) && x1 > x0 + 1 && y1 > y0 + 1 {
@@ -460,7 +465,9 @@ fn reflow<M: GbMem + ?Sized>(m: &M, r: (usize, usize, usize, usize)) -> Lines {
             if g.tile == charmap::CURSOR || g.tile == charmap::CURSOR_HOLLOW {
                 return true;
             }
-            if blank(&g) {
+            // The ▼ "press A" prompt sits apart at the end of text; it
+            // doesn't make the text a menu.
+            if blank(&g) || g.tile == charmap::PROMPT {
                 gap += 1;
             } else {
                 if seen && gap >= 2 {
@@ -701,6 +708,7 @@ mod tests {
                     .map(|g| match g.tile {
                         charmap::SPACE => ' ',
                         charmap::CURSOR => '>',
+                        charmap::PROMPT => 'v',
                         t if (0x80..0x80 + 26).contains(&t) => (b'A' + t - 0x80) as char,
                         _ => '?',
                     })
@@ -714,6 +722,7 @@ mod tests {
             .map(|b| match b {
                 b' ' => charmap::SPACE,
                 b'>' => charmap::CURSOR,
+                b'v' => charmap::PROMPT,
                 b'[' => 0x79,
                 b']' => 0x7B,
                 b'|' => 0x7C,
@@ -751,6 +760,19 @@ mod tests {
         // Words split across the box's lines stay split (the game hyphenates
         // with spaces, not us); everything fits 8 wide.
         assert_eq!(text(&lines), ["HELLO", "THERE", "WELCO ME", "TO THE", "WORLD"]);
+    }
+
+    #[test]
+    fn the_prompt_doesnt_make_text_a_menu() {
+        let mut r = ram();
+        put(&mut r, 0, 12, &enc("[------------------]"));
+        put(&mut r, 0, 13, &enc("|                  |"));
+        put(&mut r, 0, 14, &enc("| HELLO THERE      |"));
+        put(&mut r, 0, 15, &enc("|                  |"));
+        put(&mut r, 0, 16, &enc("| WELCOME TO THE  v|"));
+        put(&mut r, 0, 17, &enc("{------------------}"));
+        let lines = reflow(&r, (0, 12, 19, 17));
+        assert_eq!(text(&lines), ["HELLO", "THERE", "WELCOME", "TO THE v"]);
     }
 
     #[test]

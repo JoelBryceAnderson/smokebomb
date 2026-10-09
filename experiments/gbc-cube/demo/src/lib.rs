@@ -256,6 +256,8 @@ enum AfterText {
     Close,
     BattleMenu,
     EndBattle,
+    /// The professor's speech ends in the naming screen.
+    Naming,
 }
 
 #[derive(Clone, Debug)]
@@ -264,9 +266,27 @@ enum Mode {
     Text(TextBox),
     Menu(usize),
     Battle { cursor: usize, text: Option<TextBox> },
+    Naming(Naming),
 }
 
-const MENU_ITEMS: [&str; 7] = ["MONDEX", "PARTY", "PACK", "CUBE", "SAVE", "OPTION", "EXIT"];
+/// The naming screen's state: the cursor's key (column 0–8, row 0–4, row 4
+/// being UPPER/DEL/END) and the name so far.
+#[derive(Clone, Debug, Default)]
+struct Naming {
+    col: u8,
+    row: u8,
+    name: String,
+}
+
+const MENU_ITEMS: [&str; 7] = ["MONDEX", "PARTY", "PACK", "CUBE", "INTRO", "OPTION", "EXIT"];
+/// Crystal's upper-case keyboard (`NameInputUpper`), less the symbols the
+/// demo's font lacks, and its bottom row.
+const KEYBOARD: [&str; 4] = ["ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ ", "-?!/.,   "];
+const KEYBOARD_CMDS: &str = "UPPER  DEL   END ";
+const NAME_LEN: usize = 7;
+/// Where the naming screen's cursor's sprite animation struct is.
+const CURSOR_STRUCT: u16 = 0xC314;
+const SPEECH: &str = "HELLO THERE! WELCOME TO THE WORLD OF THE CUBE! THIS IS A BLOB. IT LIVES ON THE DIE WITH YOU. NOW, WHAT IS YOUR NAME?";
 const BATTLE_ITEMS: [&str; 4] = ["FIGHT", "MON", "PACK", "RUN"];
 
 /// The game.
@@ -286,6 +306,7 @@ pub struct Demo {
     anchor_tile: (i32, i32),
     /// The last VBlank wrote animated tile graphics.
     animated: bool,
+    name: String,
 }
 
 impl Default for Demo {
@@ -376,6 +397,7 @@ impl Demo {
             pal_queue: Vec::new(),
             anchor_tile: (0, 0),
             animated: false,
+            name: String::new(),
         }
     }
 
@@ -409,6 +431,12 @@ impl Demo {
         }
         let o = bg_tile_vram(0x7F, false);
         m.vram[o..o + 16].fill(0);
+        // The naming screen's border, ■ ($60): a light dotted fill.
+        let border: Tile = [
+            "11111111", "12121212", "11111111", "21212121", "11111111", "12121212", "11111111", "21212121",
+        ];
+        let o = bg_tile_vram(0x60, false);
+        m.vram[o..o + 16].copy_from_slice(&encode(&border));
         for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?.,':/->v".chars() {
             let g = art::glyph(c);
             let o = bg_tile_vram(char_tile(c), false);
@@ -472,6 +500,20 @@ impl Demo {
 
     pub fn in_battle(&self) -> bool {
         matches!(self.mode, Mode::Battle { .. })
+    }
+
+    /// A screen that isn't the map: a battle, the intro, the naming screen.
+    fn full_screen(&self) -> bool {
+        match &self.mode {
+            Mode::Battle { .. } | Mode::Naming(_) => true,
+            Mode::Text(tb) => tb.then == AfterText::Naming,
+            _ => false,
+        }
+    }
+
+    /// The player's name, once the intro has asked for it.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// The last [`Demo::step`]'s VBlank changed tile graphics (the water and
@@ -757,6 +799,118 @@ impl Demo {
         }
     }
 
+    /// The professor's scene, Crystal-style: a blank screen with a picture
+    /// in the middle (7×7 tiles at (6, 4) in Crystal; the blob is 6×6) and
+    /// the speech in the text box.
+    fn draw_intro(&mut self, emu: &mut Emulator) {
+        self.set_battle_palettes(true);
+        for sy in 0..18 {
+            for sx in 0..20 {
+                self.put_screen_tile(emu, sx, sy, 0x7F, 0x07);
+            }
+        }
+        for ty in 0..6 {
+            for tx in 0..6 {
+                self.put_screen_tile(emu, 7 + tx, 4 + ty, 0x20 + (ty * 6 + tx) as u8, 0x04);
+            }
+        }
+    }
+
+    /// Crystal's naming screen (`NamingScreen_InitText` and friends): ■
+    /// all round, the prompt at (5, 2), the name at (5, 6), the keys every
+    /// other tile from (2, 8), UPPER/DEL/END on row 16. The cursor is a
+    /// sprite in the real game; here only its struct is written.
+    fn draw_naming(&mut self, emu: &mut Emulator, n: &Naming) {
+        let pal = 0x07;
+        for sy in 0..18 {
+            for sx in 0..20 {
+                let inside = (1..19).contains(&sx) && ((1..7).contains(&sy) || (8..17).contains(&sy));
+                self.put_screen_tile(emu, sx, sy, if inside { 0x7F } else { 0x60 }, pal);
+            }
+        }
+        let text_at = |d: &mut Demo, emu: &mut Emulator, x: i32, y: i32, s: &str| {
+            for (i, c) in s.chars().enumerate() {
+                d.put_screen_tile(emu, x + i as i32, y, char_tile(c), pal);
+            }
+        };
+        text_at(self, emu, 5, 2, "YOUR NAME?");
+        for i in 0..NAME_LEN {
+            let c = n.name.chars().nth(i).unwrap_or('-');
+            self.put_screen_tile(emu, 5 + i as i32, 6, char_tile(c), pal);
+        }
+        for (r, keys) in KEYBOARD.iter().enumerate() {
+            for (k, c) in keys.chars().enumerate() {
+                self.put_screen_tile(emu, 2 + 2 * k as i32, 8 + 2 * r as i32, char_tile(c), pal);
+            }
+        }
+        text_at(self, emu, 2, 16, KEYBOARD_CMDS);
+        // The RAM the cube reads (see `gbc_cube_core::screens::Naming`).
+        let s = Sym::new(0, CURSOR_STRUCT);
+        self.wram16(emu, syms::W_NAMING_SCREEN_CURSOR_OBJECT_POINTER, CURSOR_STRUCT);
+        self.wram(emu, s.offset(12), n.col);
+        self.wram(emu, s.offset(13), n.row);
+        self.wram16(
+            emu,
+            syms::W_NAMING_SCREEN_STRING_ENTRY_COORD,
+            syms::W_TILEMAP.addr + 6 * 20 + 5,
+        );
+        self.wram(emu, syms::W_NAMING_SCREEN_MAX_NAME_LENGTH, NAME_LEN as u8);
+        self.wram(emu, syms::W_NAMING_SCREEN_CUR_NAME_LENGTH, n.name.len() as u8);
+    }
+
+    /// One frame of the naming screen (`NamingScreenJoypadLoop`).
+    fn naming(&mut self, emu: &mut Emulator, mut n: Naming, pressed: Buttons) -> Mode {
+        let cmd = n.row == 4;
+        if pressed.contains(Buttons::UP) {
+            n.row = (n.row + 4) % 5;
+        }
+        if pressed.contains(Buttons::DOWN) {
+            n.row = (n.row + 1) % 5;
+        }
+        // On the bottom row the cursor jumps between the three commands.
+        let step = if cmd { 3 } else { 1 };
+        if pressed.contains(Buttons::RIGHT) {
+            n.col = (n.col / step * step + step) % 9;
+        }
+        if pressed.contains(Buttons::LEFT) {
+            n.col = (n.col / step * step + 9 - step) % 9;
+        }
+        if pressed.contains(Buttons::START) {
+            // To END.
+            n.row = 4;
+            n.col = 6;
+        }
+        let mut done = false;
+        if pressed.contains(Buttons::B) {
+            n.name.pop();
+        }
+        if pressed.contains(Buttons::A) {
+            if n.row == 4 {
+                match n.col / 3 {
+                    1 => {
+                        n.name.pop();
+                    }
+                    2 => done = true,
+                    _ => {}
+                }
+            } else if n.name.len() < NAME_LEN {
+                let c = KEYBOARD[n.row as usize].as_bytes()[n.col as usize] as char;
+                if c != ' ' {
+                    n.name.push(c);
+                }
+            }
+        }
+        if done {
+            self.name = if n.name.is_empty() { "CUBE".into() } else { n.name };
+            self.redraw_map(emu);
+            let tb = TextBox::new(&format!("NICE TO MEET YOU, {}!", self.name), AfterText::Close);
+            self.draw_text_box(emu, &tb);
+            return Mode::Text(tb);
+        }
+        self.draw_naming(emu, &n);
+        Mode::Naming(n)
+    }
+
     fn set_battle_palettes(&mut self, on: bool) {
         // In battle, the monsters' palettes get a white background.
         let white = art::bgr(248, 248, 248);
@@ -806,6 +960,11 @@ impl Demo {
                         tb.shown = 0;
                         self.draw_text_box(emu, &tb);
                         Mode::Text(tb)
+                    } else if tb.then == AfterText::Naming {
+                        self.set_battle_palettes(false);
+                        let n = Naming::default();
+                        self.draw_naming(emu, &n);
+                        Mode::Naming(n)
                     } else {
                         self.redraw_map(emu);
                         Mode::Walk
@@ -828,6 +987,11 @@ impl Demo {
                 {
                     self.redraw_map(emu);
                     Mode::Walk
+                } else if pressed.contains(Buttons::A) && MENU_ITEMS[c] == "INTRO" {
+                    self.draw_intro(emu);
+                    let tb = TextBox::new(SPEECH, AfterText::Naming);
+                    self.draw_text_box(emu, &tb);
+                    Mode::Text(tb)
                 } else if pressed.contains(Buttons::A) {
                     self.redraw_map(emu);
                     let tb = TextBox::new(
@@ -909,6 +1073,7 @@ impl Demo {
                     Mode::Battle { cursor, text }
                 }
             },
+            Mode::Naming(n) => self.naming(emu, n, pressed),
         };
 
         self.write_objects(emu);
@@ -1037,7 +1202,7 @@ impl Demo {
         let (ax, ay) = (atx * 8, aty * 8);
         let scx = (bg_col * 8 + cam.0 - ax).rem_euclid(256) as u8;
         let scy = (bg_row * 8 + cam.1 - ay).rem_euclid(256) as u8;
-        let battle = self.in_battle();
+        let battle = self.full_screen();
         // A battle screen sits still at the anchor.
         self.wram(emu, syms::H_SCX, if battle { (bg_col * 8) as u8 } else { scx });
         self.wram(emu, syms::H_SCY, if battle { (bg_row * 8) as u8 } else { scy });

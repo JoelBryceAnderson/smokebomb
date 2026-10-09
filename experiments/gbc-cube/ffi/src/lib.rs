@@ -152,6 +152,8 @@ impl GcCube {
             gbc_cube_core::cube::Drawn::Pan => "A: pan",
             gbc_cube_core::cube::Drawn::Spread => "B: spread",
             gbc_cube_core::cube::Drawn::Front => "C: front face",
+            gbc_cube_core::cube::Drawn::Naming => "C: keyboard",
+            gbc_cube_core::cube::Drawn::Still => "C: still",
         };
         format!("{:?}, {drawn}, up {up}", r.scene)
     }

@@ -319,9 +319,48 @@ from the game's own font.
   visible while they talk.
 - It's also the cheapest on the die: the overworld text panel comes from
   RAM and VRAM, so the emulator needn't draw its frame at all.
-- Its weak spot is that the re-flow is heuristic. Full-screen menus (bag,
-  party, Pokédex, Pokégear) are classified as "other" and get A.
+- Its weak spot is that the re-flow is heuristic. Full-screen screens
+  are classified as "other". The ones with a framed box go to a still
+  layout (below); a full-screen list with a ▶ and no frame (the party) gets
+  A, which follows the cursor.
 - B isn't worth keeping.
+
+#### The intro and the naming screen
+
+Screens that aren't the map get two more C layouts (`core/src/screens.rs`):
+
+- **Stills**: the new-game speech, the main menu, and any other screen with
+  a framed box.
+  - The frame is folded round the cube with the up face centred on the
+    picture: whatever isn't backdrop outside the active box. Oak, the
+    Pokémon and you are 7×7-tile pictures, so they fit a face at 1:1.
+  - The box is blanked out of the fold and its text re-flowed onto the
+    front, as in C.
+  - Screens with no box (the opening movie, the title screen) are folded
+    round the frame's centre and held still. A used to pan after whatever
+    moved, so they swung about.
+- **The naming screen** is recognised from `wTilemap`: ■ (`$60`) all
+  round, "A B C…" or "a b c…" on row 8 (row 6 for a box name).
+  - The prompt and the name so far go on the up face, centred, with the
+    name scrolled to keep the next slot in view (Pokémon nicknames are 10).
+  - The keyboard goes on the front. Crystal spaces its keys every other
+    tile (17 tiles for 9 keys). Here they're packed at a 7 px pitch, which
+    works because the font leaves its right-hand column blank. If any key
+    doesn't, it falls back to 8 keys at 8 px, scrolled with the cursor.
+    UPPER/lower, DEL and END get a line each.
+  - The cursor is a sprite, not a tile, so the key under it comes from its
+    sprite animation struct (`wNamingScreenCursorObjectPointer`: column in
+    Var1, row in Var2). It's drawn inverted.
+  - It's drawn from RAM and VRAM only, so the emulator needn't draw lines.
+
+| | C | A: pan |
+|---|---|---|
+| New-game speech (demo) | ![](docs/net/18-intro-c-still.png) | ![](docs/net/19-intro-a-pan.png) |
+| Naming screen (demo) | ![](docs/net/20-naming-c-keyboard.png) | ![](docs/net/21-naming-a-pan.png) |
+
+Both were built from the pret disassembly (`engine/menus/naming_screen.asm`,
+`engine/menus/intro_menu.asm`) and checked on the demo cart's imitations.
+They haven't been checked against the real ROM.
 
 The browser view of C:
 
@@ -351,7 +390,8 @@ stand-in, with original art:
 - It builds a tiny cartridge in memory: an `ei; halt` loop, plus the
   metatiles, palette map and `Facings` tables in ROM.
 - It then plays the game's part in Rust between frames: walking, NPCs, a
-  text box, a start menu and a battle.
+  text box, a start menu and a battle. INTRO in the start menu plays a
+  professor's speech and then the naming screen.
 - It writes every bit of state at Crystal's addresses and in Crystal's
   formats. The emulator's real PPU draws the frames.
 
@@ -425,6 +465,15 @@ To check against the real game:
     - *Problem:* pushing 140 KB frames at 60 fps to a slow page queued
       seconds of video, and the page's input and status sat behind it.
     - *Fix:* frames are now pulled, one at a time.
-12. **Vendored C.** walnut-cgb's header uses `struct gb_s` in prototypes
+12. **Flashes while walking.**
+    - *Problem:* walking a step or crossing into the next map can leave
+      Crystal's RAM between two states for a frame (new blocks, old
+      anchor). That reads as "not the map", and the faces flashed to the
+      fallback for a frame.
+    - *Fix:* the map is only dropped after 6 frames in a row (100 ms) say
+      it's gone. Until then the last good canvas stays. A screen of
+      nothing but font tiles (the naming screen) also has to have some
+      map showing to count as the map.
+13. **Vendored C.** walnut-cgb's header uses `struct gb_s` in prototypes
     before declaring it. It's fixed with a forward declaration in the shim,
     so the vendored file stays unmodified.

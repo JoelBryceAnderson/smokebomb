@@ -51,6 +51,16 @@ pub const W_X_COORD: Sym = Sym::new(0x01, 0xDCB8);
 pub const W_PARTY_COUNT: Sym = Sym::new(0x01, 0xDCD7);
 pub const W_PARTY_SPECIES: Sym = Sym::new(0x01, 0xDCD8);
 pub const W_WINDOW_STACK_POINTER: Sym = Sym::new(0x00, 0xCF71);
+/// 10 sprite animation structs of 16 bytes (the naming screen's cursor is one).
+pub const W_SPRITE_ANIMATION_STRUCTS: Sym = Sym::new(0x00, 0xC314);
+pub const W_SPRITE_ANIM_DATA_END: Sym = Sym::new(0x00, 0xC3C1);
+/// Naming screen: characters typed so far.
+pub const W_NAMING_SCREEN_CUR_NAME_LENGTH: Sym = Sym::new(0x00, 0xC6D2);
+pub const W_NAMING_SCREEN_MAX_NAME_LENGTH: Sym = Sym::new(0x00, 0xC6D3);
+/// Naming screen: the cursor's sprite animation struct (Var1 column, Var2 row).
+pub const W_NAMING_SCREEN_CURSOR_OBJECT_POINTER: Sym = Sym::new(0x00, 0xC6D5);
+/// Naming screen: the wTilemap address the name is printed at.
+pub const W_NAMING_SCREEN_STRING_ENTRY_COORD: Sym = Sym::new(0x00, 0xC6D8);
 /// The scroll the VBlank handler copies to rSCX for the next frame.
 pub const H_SCX: Sym = Sym::new(0x00, 0xFFCF);
 pub const H_SCY: Sym = Sym::new(0x00, 0xFFD0);

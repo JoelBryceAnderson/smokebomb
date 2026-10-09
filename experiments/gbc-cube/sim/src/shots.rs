@@ -213,5 +213,41 @@ pub fn run(cart: &Cart, out: &Path) -> Result<()> {
     ] {
         sh.shot(name, Wrap::World, ui, 40)?;
     }
+    // Run, back to town, and the demo's intro from the start menu: the
+    // professor's speech, then the naming screen.
+    sh.tap(B::B)?;
+    sh.run(60, B::NONE)?;
+    sh.tap(B::A)?;
+    sh.run(20, B::NONE)?;
+    sh.tap(B::START)?;
+    for _ in 0..4 {
+        sh.tap(B::DOWN)?;
+    }
+    sh.tap(B::A)?;
+    sh.run(80, B::NONE)?;
+    sh.shot("18-intro-c-still", Wrap::World, UiStyle::Front, 1)?;
+    sh.shot("19-intro-a-pan", Wrap::World, UiStyle::Pan, 40)?;
+    for _ in 0..4 {
+        sh.tap(B::A)?;
+        sh.run(80, B::NONE)?;
+    }
+    // Type CUBE.
+    for keys in [
+        &[B::RIGHT, B::RIGHT, B::A][..],
+        &[B::DOWN, B::DOWN, B::A],
+        &[B::UP, B::UP, B::LEFT, B::A],
+        &[B::RIGHT, B::RIGHT, B::RIGHT, B::A],
+    ] {
+        for &k in keys {
+            sh.tap(k)?;
+        }
+    }
+    for (name, ui) in [
+        ("20-naming-c-keyboard", UiStyle::Front),
+        ("21-naming-a-pan", UiStyle::Pan),
+        ("22-naming-b-spread", UiStyle::Spread),
+    ] {
+        sh.shot(name, Wrap::World, ui, 40)?;
+    }
     Ok(())
 }
