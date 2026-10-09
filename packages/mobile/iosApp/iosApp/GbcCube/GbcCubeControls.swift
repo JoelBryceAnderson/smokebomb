@@ -4,9 +4,14 @@ import UniformTypeIdentifiers
 
 /// The Simulator tab with the GBC cube's controls over it: a Game Boy menu
 /// (load a ROM, the demo cart, the die firmware) and, while a game runs, a
-/// joypad. The die itself plays as in the experiment's simulator: tap the
-/// up face for A, a side face for B, hold the up face for Start; throw the
-/// die and the map rolls onto whichever face lands up.
+/// joypad. The die itself plays as in the experiment's simulator:
+/// - lean it with two fingers to walk; a lean stays where it's left, so the
+///   player keeps walking (the viewer leans up to about 26°, inside the
+///   cube's 12–40° walking range);
+/// - drag further and it rolls onto that side, and the map rolls with it;
+/// - tap the up face for A, a side face for B, hold the up face for Start;
+/// - throw it and the map rolls onto whichever face lands up.
+/// The joypad is there for precise steps and for menus.
 struct GbcCubeScreen: View {
     @Bindable var model: ARViewerModel
     @Bindable var session: GbcCubeSession

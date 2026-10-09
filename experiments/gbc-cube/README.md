@@ -68,12 +68,18 @@ include any of it.
      next to it there.
    - **Demo cart** needs no ROM. **Die firmware** goes back to normal.
 4. Play:
-   - The on-screen joypad presses buttons.
-   - Tapping the up face is A, a side face is B, and holding the up face is
-     Start.
-   - Throwing the die lands it on a new face, and the map rolls with it.
-   - The tab can't tip the die (drag spins it), so walking is on the D-pad
-     rather than by tilt.
+   - **Walk** by leaning the die with a two-finger drag. A lean stays where
+     you leave it, so the player keeps walking; drag back to the middle to
+     stop. The lean goes up to about 26°, inside the cube's 12–40° walking
+     range.
+   - **Roll** onto another face by dragging further (about 140 points): the
+     die tips past 40°, where walking stops, rolls over, and the map rolls
+     with it.
+   - Tapping the up face is A (also while it leans), a side face is B, and
+     holding the up face is Start.
+   - Throwing the die lands it on a random face; the map follows.
+   - The on-screen joypad presses buttons directly, for single steps and
+     menus.
 
 Other commands:
 
