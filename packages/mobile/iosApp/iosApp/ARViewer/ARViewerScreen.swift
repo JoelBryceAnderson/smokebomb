@@ -7,6 +7,9 @@ import SwiftUI
 /// next to it, with a control pad for turning and throwing the die.
 struct ARViewerScreen: View {
     @Bindable var model: ARViewerModel
+    /// Shown along the bottom of the view in place of the iPhone controls
+    /// (a game's joypad), clear of the die in the middle.
+    var accessory: AnyView? = nil
     @Environment(\.horizontalSizeClass) private var widthClass
     @Environment(\.scenePhase) private var scenePhase
 
@@ -19,7 +22,11 @@ struct ARViewerScreen: View {
                 HStack(spacing: 0) {
                     stage
                         .overlay(alignment: .bottom) {
-                            if widthClass != .regular { CompactControls(model: model) }
+                            if let accessory {
+                                accessory
+                            } else if widthClass != .regular {
+                                CompactControls(model: model)
+                            }
                         }
                     if widthClass == .regular {
                         Divider()

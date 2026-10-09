@@ -11,21 +11,18 @@ import UniformTypeIdentifiers
 /// - drag further and it rolls onto that side, and the map rolls with it;
 /// - tap the up face for A, a side face for B, hold the up face for Start;
 /// - throw it and the map rolls onto whichever face lands up.
-/// The joypad is there for precise steps and for menus.
+/// The joypad is there for precise steps and for menus. It sits along the
+/// bottom, clear of the die, in place of the viewer's iPhone controls
+/// (switch back to the die firmware for those).
 struct GbcCubeScreen: View {
     @Bindable var model: ARViewerModel
     @Bindable var session: GbcCubeSession
     @State private var picking = false
 
     var body: some View {
-        ARViewerScreen(model: model)
+        ARViewerScreen(model: model, accessory: joypad)
             .overlay(alignment: .topTrailing) {
                 menu.padding(.top, 60).padding(.trailing, 12)
-            }
-            .overlay(alignment: .center) {
-                if session.cartridge != .off {
-                    Joypad(keys: $session.keys).padding(.horizontal, 12)
-                }
             }
             .fileImporter(isPresented: $picking, allowedContentTypes: [.data]) { result in
                 if case .success(let url) = result {
@@ -40,6 +37,15 @@ struct GbcCubeScreen: View {
             } message: {
                 Text(session.error ?? "")
             }
+    }
+
+    private var joypad: AnyView? {
+        guard session.cartridge != .off else { return nil }
+        return AnyView(
+            Joypad(keys: $session.keys)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+        )
     }
 
     private var menu: some View {
