@@ -78,7 +78,7 @@ function frame() {
   return `
     <path d="M0,0 H1024 V1024 H0 Z M60,${60 + 176} A176,176 0 0 1 ${60 + 176},60 H${964 - 176} A176,176 0 0 1 964,${60 + 176}
       V${964 - 176} A176,176 0 0 1 ${964 - 176},964 H${60 + 176} A176,176 0 0 1 60,${964 - 176} Z" fill="${C.border}" fill-rule="evenodd"/>
-    <rect x="78" y="78" width="868" height="868" rx="158" fill="none" stroke="${C.trim}" stroke-width="6"/>`;
+    <rect x="78" y="78" width="868" height="868" rx="158" fill="none" stroke="${C.trim}" stroke-width="14"/>`;
 }
 
 // The thumbs-up glove: where it sits in mascot coordinates, its tilt and
@@ -107,12 +107,12 @@ function glove() {
     M58,52 C44,54 30,50 20,46 M10,-62 C4,-50 -6,-44 -18,-44`;
   const cuff = "M-48,64 C-58,84 -64,100 -66,112 C-30,128 22,126 44,108 C38,96 30,84 26,76 Z";
   return `
-    <g transform="translate(${x},${y}) rotate(${tilt}) scale(${scale})" stroke="${C.ink}" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
+    <g transform="translate(${x},${y}) rotate(${tilt}) scale(${scale})" stroke="${C.ink}" stroke-width="22" stroke-linejoin="round" stroke-linecap="round">
       <path class="solid-w" d="${cuff}" fill="${C.sugarTop}"/>
-      <path d="M-62,100 C-28,114 18,112 40,96" fill="none" stroke-width="9"/>
+      <path d="M-62,100 C-28,114 18,112 40,96" fill="none" stroke-width="18"/>
       <path class="solid-w" d="${hand}" fill="${C.sugarTop}"/>
-      <path d="${creases}" fill="none" stroke-width="9"/>
-      <path d="M-54,-136 L-76,-146 M30,-128 L52,-138" fill="none" stroke-width="11"/>
+      <path d="${creases}" fill="none" stroke-width="18"/>
+      <path d="M-54,-136 L-76,-146 M30,-128 L52,-138" fill="none" stroke-width="18"/>
     </g>`;
 }
 
@@ -127,7 +127,7 @@ let STYLE = process.env.ICON_STYLE || "burst";
 function standLegs() {
   return `
       <!-- legs and boots, mirrored about the front face's centre -->
-      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
+      <g stroke="${C.ink}" stroke-width="26" stroke-linecap="round" fill="none">
         <path d="M${FACE_X - 38},632 Q${FACE_X - 44},672 ${FACE_X - 50},706"/>
         <path d="M${FACE_X + 38},632 Q${FACE_X + 44},672 ${FACE_X + 50},706"/>
       </g>
@@ -139,13 +139,13 @@ function jumpLegs() {
   // Knees tucked: the legs kink out and the boots kick back, toes down,
   // with whoosh lines trailing below.
   return `
-      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <g stroke="${C.ink}" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" fill="none">
         <path d="M${FACE_X - 38},632 Q${FACE_X - 92},650 ${FACE_X - 74},690"/>
         <path d="M${FACE_X + 38},632 Q${FACE_X + 92},650 ${FACE_X + 74},690"/>
       </g>
       <g transform="rotate(24 ${FACE_X - 74} 690)">${boot(FACE_X - 74, 690, 1)}</g>
       <g transform="rotate(-24 ${FACE_X + 74} 690)">${boot(FACE_X + 74, 690, -1)}</g>
-      <g stroke="${C.ink}" stroke-width="9" stroke-linecap="round" fill="none" display="${STYLE === "burst" ? "none" : "inline"}">
+      <g stroke="${C.ink}" stroke-width="18" stroke-linecap="round" fill="none" display="${STYLE === "burst" ? "none" : "inline"}">
         <path d="M${FACE_X - 34},752 Q${FACE_X - 28},772 ${FACE_X - 34},790"/>
         <path d="M${FACE_X},758 L${FACE_X},796"/>
         <path d="M${FACE_X + 34},752 Q${FACE_X + 28},772 ${FACE_X + 34},790"/>
@@ -155,7 +155,7 @@ function jumpLegs() {
 function standArms() {
   return `
       <!-- arm on the hip (left), thumbs-up arm (right) -->
-      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
+      <g stroke="${C.ink}" stroke-width="26" stroke-linecap="round" fill="none">
         <path d="M334,470 C250,462 238,560 300,582"/>
         <path d="M716,450 C790,452 ${CUFF[0]},${CUFF[1] + 30} ${CUFF[0]},${CUFF[1] - 4}"/>
       </g>
@@ -166,29 +166,27 @@ function standArms() {
 function jumpArms() {
   // Right arm punches straight up into a fist; the left swings out low.
   return `
-      <g stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none">
+      <g stroke="${C.ink}" stroke-width="26" stroke-linecap="round" fill="none">
         <path d="M716,446 C788,438 822,390 830,342"/>
         <path d="M334,480 C270,486 236,520 222,566"/>
       </g>
       ${hipGlove(220, 580)}
-      ${fist(836, 278, 14)}
-      <path d="M764,250 L744,238 M790,214 L780,198" stroke="${C.ink}" stroke-width="11" stroke-linecap="round" fill="none"/>`;
+      ${fist(836, 272, 14)}`;
 }
 
 function fist(x, y, tilt = 0) {
   // A raised cartoon fist seen from the front, wrist at the bottom: four
-  // knuckle bumps across the top with creases between the fingers, and a
-  // flared cuff. No thumb: every version of one read as a mouth or a bar.
-  const hand = `M-50,26 C-62,0 -58,-38 -40,-50 C-32,-64 -14,-66 -8,-54
-    C0,-68 18,-68 22,-54 C30,-66 48,-64 50,-48 C62,-44 64,-20 56,-6
+  // knuckle bumps across the top and a flared cuff. No thumb: every version
+  // of one read as a mouth or a bar. No creases between the fingers either:
+  // at launcher size they were hairlines; the bumps carry the fingers.
+  const hand = `M-50,26 C-62,0 -58,-38 -40,-50 C-34,-70 -12,-72 -8,-46
+    C-2,-74 20,-74 22,-46 C30,-72 52,-70 50,-42 C66,-40 66,-20 56,-6
     C62,14 56,32 42,40 C20,50 -32,48 -50,26 Z`;
   const cuff = "M-36,38 C-44,54 -48,64 -50,76 C-20,88 24,88 50,74 C46,62 40,50 36,38 Z";
   return `
-    <g transform="translate(${x},${y}) rotate(${tilt}) scale(0.82)" stroke="${C.ink}" stroke-width="12" stroke-linejoin="round" stroke-linecap="round">
+    <g transform="translate(${x},${y}) rotate(${tilt}) scale(1)" stroke="${C.ink}" stroke-width="20" stroke-linejoin="round" stroke-linecap="round">
       <path class="solid-w" d="${cuff}" fill="${C.sugarTop}"/>
-      <path d="M-46,64 C-14,76 22,76 46,62" fill="none" stroke-width="9"/>
       <path class="solid-w" d="${hand}" fill="${C.sugarTop}"/>
-      <path d="M-8,-54 C-10,-46 -10,-38 -8,-30 M22,-54 C22,-46 22,-38 23,-30 M50,-48 C48,-40 48,-32 49,-26" fill="none" stroke-width="6"/>
     </g>`;
 }
 
@@ -196,26 +194,26 @@ function boot(x, y, side) {
   // A chubby cartoon boot with its ankle at (x, y): a round toe turned
   // outward (side 1 is the left foot), a pink cuff and a shine on the toe.
   return `
-    <g transform="translate(${x},${y}) scale(${side},1)" stroke="${C.ink}" stroke-width="10" stroke-linejoin="round">
+    <g transform="translate(${x},${y}) scale(${side},1)" stroke="${C.ink}" stroke-width="18" stroke-linejoin="round">
       <path class="solid" d="M-18,-6 L18,-6 C20,10 24,22 30,30 C36,40 30,50 16,50 L-46,50
         C-70,50 -76,26 -58,16 C-46,8 -26,10 -20,4 Z" fill="${C.ink}"/>
       <ellipse class="cut" cx="-48" cy="26" rx="12" ry="6" fill="#FFFFFF" opacity="0.55" stroke="none" transform="rotate(-18 -48 26)"/>
-      <rect class="solid-w" x="-27" y="-22" width="54" height="26" rx="13" fill="${C.border}" stroke-width="8"/>
+      <rect class="solid-w" x="-27" y="-22" width="54" height="26" rx="13" fill="${C.border}" stroke-width="16"/>
     </g>`;
 }
 
 function hipGlove(x, y) {
   return `
-    <g transform="translate(${x},${y})" stroke="${C.ink}" stroke-width="12" stroke-linejoin="round">
+    <g transform="translate(${x},${y})" stroke="${C.ink}" stroke-width="22" stroke-linejoin="round">
       <ellipse class="solid-w" cx="0" cy="0" rx="40" ry="34" fill="${C.sugarTop}"/>
-      <path d="M-6,-18 Q8,-4 -6,14" fill="none" stroke-width="7" stroke-linecap="round"/>
+      <path d="M-6,-18 Q8,-4 -6,14" fill="none" stroke-width="16" stroke-linecap="round"/>
     </g>`;
 }
 
 // A four-point sparkle, outlined in ink like the rest of the line art.
 function sparkle(x, y, r, fill) {
-  const w = r * 0.32;
-  const ink = Math.max(4, r * 0.2).toFixed(1);
+  const w = r * 0.34;
+  const ink = Math.max(14, r * 0.3).toFixed(1);
   return `<path class="solid" d="M${x},${y - r} Q${x + w},${y - w} ${x + r},${y} Q${x + w},${y + w} ${x},${y + r} Q${x - w},${y + w} ${x - r},${y} Q${x - w},${y - w} ${x},${y - r} Z" fill="${fill}" stroke="${C.ink}" stroke-width="${ink}" stroke-linejoin="round"/>`;
 }
 
@@ -255,11 +253,11 @@ function mascot() {
   // Granulated sugar: little specks on each face.
   let seed = 11;
   const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 24; i++) {
     const x = 350 + rnd() * 280;
     const y = 350 + rnd() * 270;
     if (Math.hypot(x - 490, y - 490) < 125) continue; // keep the face clean
-    grains.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="7" height="7" transform="rotate(${(rnd() * 90).toFixed(0)} ${x.toFixed(1)} ${y.toFixed(1)})"/>`);
+    grains.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="14" height="14" transform="rotate(${(rnd() * 90).toFixed(0)} ${x.toFixed(1)} ${y.toFixed(1)})"/>`);
   }
   // Pie-cut eyes: black ovals with a wedge of white taken out, the 1930s way.
   const eye = (cx) => `
@@ -275,8 +273,8 @@ function mascot() {
       <path class="solid-w" d="${side}" fill="${C.sugarSide}"/>
       <path class="solid-w" d="${top}" fill="${C.sugarTop}"/>
       <path class="solid-w" d="${front}" fill="${C.sugar}"/>
-      <path d="${edges}" fill="none" stroke="${C.ink}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="${outline}" fill="none" stroke="${C.ink}" stroke-width="14" stroke-linejoin="round"/>
+      <path d="${edges}" fill="none" stroke="${C.ink}" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="${outline}" fill="none" stroke="${C.ink}" stroke-width="26" stroke-linejoin="round"/>
       <g class="grain" fill="${C.sugarSide}">${grains.join("")}</g>
       ${POSE === "jump" ? jumpArms() : standArms()}
       <!-- face -->
@@ -284,13 +282,13 @@ function mascot() {
       ${eye(540)}
       <ellipse class="cheek" cx="398" cy="520" rx="28" ry="17" fill="${C.cheek}"/>
       <ellipse class="cheek" cx="588" cy="520" rx="28" ry="17" fill="${C.cheek}"/>
-      <path class="solid" d="M418,512 Q492,612 566,512 Q492,534 418,512 Z" fill="${C.mouth}" stroke="${C.ink}" stroke-width="10" stroke-linejoin="round"/>
+      <path class="solid" d="M418,512 Q492,612 566,512 Q492,534 418,512 Z" fill="${C.mouth}" stroke="${C.ink}" stroke-width="18" stroke-linejoin="round"/>
       <path class="cut" d="M455,560 Q492,548 530,560 Q494,590 455,560 Z" fill="${C.tongue}"/>
-      <path d="M408,506 Q418,500 426,510 M558,510 Q566,500 576,506" stroke="${C.ink}" stroke-width="8" stroke-linecap="round" fill="none"/>
+      <path d="M408,506 Q418,500 426,510 M558,510 Q566,500 576,506" stroke="${C.ink}" stroke-width="16" stroke-linecap="round" fill="none"/>
       <!-- shine marks -->
-      ${sparkle(248, 330, 34, C.gold)}
-      ${sparkle(290, 268, 20, C.gold)}
-      ${sparkle(770, 560, 26, C.gold)}
+      ${sparkle(244, 334, 46, C.gold)}
+      ${sparkle(292, 250, 30, C.gold)}
+      ${sparkle(776, 566, 36, C.gold)}
     </g>`;
 }
 
@@ -331,14 +329,14 @@ function banner() {
   const dy = ((WORD_INK.top + WORD_INK.bottom) / 2) * fontSize;
   return `
     <defs><path id="ribbon-line" d="M${arc(R, -theta, theta)}"/></defs>
-    <g class="banner" stroke="${C.trim}" stroke-width="10" stroke-linejoin="round">
+    <g class="banner" stroke="${C.trim}" stroke-width="16" stroke-linejoin="round">
       <g transform="translate(${lx},${ly}) rotate(${-deg})">${tailShape}</g>
       <g transform="translate(${2 * cx - lx},${ly}) rotate(${deg}) scale(-1,1)">${tailShape}</g>
       <path class="solid" d="${band}" fill="${C.ribbon}"/>
-      <path d="M${arc(ro - 16, -theta, theta)} M${arc(ri + 16, -theta, theta)}" fill="none" stroke="${C.lettering}" stroke-width="4" opacity="0.7"/>
+      <path d="M${arc(ro - 16, -theta, theta)} M${arc(ri + 16, -theta, theta)}" fill="none" stroke="${C.lettering}" stroke-width="12" opacity="0.7"/>
     </g>
     <text class="word" font-family="Pacifico" font-size="${fontSize.toFixed(1)}" dy="${dy.toFixed(1)}" text-anchor="middle"
-      fill="${C.lettering}" stroke="${C.trim}" stroke-width="7" paint-order="stroke">
+      fill="${C.lettering}" stroke="${C.trim}" stroke-width="14" paint-order="stroke">
       <textPath href="#ribbon-line" startOffset="50%">Sugarcube</textPath>
     </text>`;
 }
@@ -368,10 +366,10 @@ function sheet() {
   const pts = holePoints();
   const hole = "M" + pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" L") + " Z";
   return `
-    <path d="${hole}" fill="none" stroke="${C.trim}" stroke-width="34" opacity="0.1" transform="translate(8,12)"/>
+    <path d="${hole}" fill="none" stroke="${C.trim}" stroke-width="56" opacity="0.1" transform="translate(8,12)"/>
     <path d="M-1024,-1024 H2048 V2048 H-1024 Z ${hole}" fill="${C.border}" fill-rule="evenodd"/>
-    <path d="${hole}" fill="none" stroke="${C.paper}" stroke-width="22" stroke-linejoin="round"/>
-    <path d="${hole}" fill="none" stroke="${C.ink}" stroke-width="9" stroke-linejoin="round"/>`;
+    <path d="${hole}" fill="none" stroke="${C.paper}" stroke-width="54" stroke-linejoin="round"/>
+    <path d="${hole}" fill="none" stroke="${C.ink}" stroke-width="18" stroke-linejoin="round"/>`;
 }
 
 // Scraps of the sheet flying off around him. Each is its own jagged shape:
@@ -396,17 +394,17 @@ function shards() {
     const torn = [0, 1, 2].map((d) => pts[(k0 + d) % n].map((v) => (v * 0.74).toFixed(1)).join(",")).join(" L");
     return `
     <g transform="translate(${x},${y}) rotate(${rot})">
-      <path class="solid-w" d="M${poly} Z" fill="${C.shard}" stroke="${C.ink}" stroke-width="7" stroke-linejoin="round"/>
-      <path class="cut" d="M${torn}" fill="none" stroke="${C.paper}" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+      <path class="solid-w" d="M${poly} Z" fill="${C.shard}" stroke="${C.ink}" stroke-width="16" stroke-linejoin="round"/>
+      <path class="cut" d="M${torn}" fill="none" stroke="${C.paper}" stroke-width="14" stroke-linejoin="round" stroke-linecap="round"/>
     </g>`;
   };
   return [
-    shard(134, 214, 58, -20),
-    shard(86, 566, 40, 30),
-    shard(934, 544, 50, 15),
-    shard(862, 892, 44, -35),
-    shard(168, 872, 50, 50),
-    shard(604, 64, 36, 70),
+    shard(134, 214, 70, -20),
+    shard(86, 566, 54, 30),
+    shard(934, 544, 62, 15),
+    shard(862, 892, 58, -35),
+    shard(168, 872, 62, 50),
+    shard(604, 64, 50, 70),
   ].join("");
 }
 
