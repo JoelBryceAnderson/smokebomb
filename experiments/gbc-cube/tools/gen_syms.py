@@ -51,10 +51,32 @@ WANTED = [
     ("wNamingScreenMaxNameLength", ""),
     ("wNamingScreenCursorObjectPointer", "Naming screen: the cursor's sprite animation struct (Var1 column, Var2 row)."),
     ("wNamingScreenStringEntryCoord", "Naming screen: the wTilemap address the name is printed at."),
+    ("wJumptableIndex", "The running screen's state (the Pokédex's DEXSTATE_*, the naming screen's...)."),
+    ("wMenuDataBank", "The open menu's header bank and items table: which menu it is."),
+    ("wMenuDataPointerTableAddr", ""),
+    ("wMenuCursorY", "The open menu's cursor row, from 1."),
+    ("wMenuItemsList", "The start menu's items: a count, then STARTMENUITEM_* values."),
+    ("wPlayerName", ""),
+    ("wCurPartyMon", "The party member picked (0–5)."),
+    ("wPartyMon1", "Six 48-byte party structs."),
+    ("wPartyMonNicknames", "Six 11-byte names, '@'-terminated."),
+    ("wPokedexCaught", "A bit per species, from 1."),
+    ("wPokedexSeen", ""),
+    ("wPokedexOrder", "Pokédex: the species list in the current order (a union: only meaningful in the Pokédex)."),
+    ("wDexListingScrollOffset", ""),
+    ("wDexListingCursor", ""),
     ("hSCX", "The scroll the VBlank handler copies to rSCX for the next frame."),
     ("hSCY", ""),
     ("hWY", ""),
     ("hROMBank", ""),
+    ("StartMenu.Items", "ROM: the start menu's items table (identifies the start menu)."),
+    ("BaseData", "ROM: 32 bytes per species: dex number, stats, types, ..., pic size at 17."),
+    ("PokemonNames", "ROM: 10 bytes per species."),
+    ("PokemonPicPointers", "ROM: per species, front and back pics as (bank - PICS_FIX, address)."),
+    ("UnownPicPointers", ""),
+    ("FixPicBank.PicsBanks", "ROM: maps a pic pointer's bank byte to the real bank."),
+    ("PokemonPalettes", "ROM: per species from 0, normal and shiny, the 2 middle colours each."),
+    ("TypeNames", "ROM: pointers to type names, by type value."),
     ("Facings", "ROM: pointer table, per FACING_* value, to OAM templates (count, then y, x, attributes, tile)."),
     ("_LoadOverworldAttrmapPals", "ROM: only its bank is used (the palette maps live in that bank)."),
 ]
@@ -96,6 +118,7 @@ def main():
         bank, addr = locs.pop()
         const = name.lstrip("_")
         const = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", "_", const).upper()
+        const = const.replace(".", "_")
         if doc:
             out.append(f"/// {doc}")
         out.append(f"pub const {const}: Sym = Sym::new(0x{bank:02X}, 0x{addr:04X});")

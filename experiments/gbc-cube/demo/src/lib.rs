@@ -23,6 +23,7 @@
 
 pub mod art;
 pub mod map;
+pub mod mons;
 
 use gbc_cube_core::buttons::Buttons;
 use gbc_cube_core::crystal::{obj, syms};
@@ -47,16 +48,16 @@ mod frames {
     pub const LEFT_WALK: u8 = 20;
 }
 
-/// The demo cartridge image: 512 KiB, MBC5 with 8 KiB of battery RAM, CGB.
+/// The demo cartridge image: 2 MiB, MBC5 with 8 KiB of battery RAM, CGB.
 pub fn rom() -> Vec<u8> {
-    let mut rom = vec![0u8; 512 * 1024];
+    let mut rom = vec![0u8; 2 * 1024 * 1024];
     rom[0x40] = 0xD9; // VBlank: reti
     rom[0x100..0x104].copy_from_slice(&[0x00, 0xC3, 0x50, 0x01]); // nop; jp $0150
     let title = b"GBCCUBEDEMO";
     rom[0x134..0x134 + title.len()].copy_from_slice(title);
     rom[0x143] = 0x80; // CGB
     rom[0x147] = 0x1B; // MBC5 + RAM + battery
-    rom[0x148] = 0x04; // 512 KiB
+    rom[0x148] = 0x06; // 2 MiB, Crystal's size: its data banks go up to $48 and past
     rom[0x149] = 0x02; // 8 KiB
                        // ld a, 1; ldh [IE], a; ei; .loop: halt; nop; jr .loop
     rom[0x150..0x159].copy_from_slice(&[0x3E, 0x01, 0xE0, 0xFF, 0xFB, 0x76, 0x00, 0x18, 0xFC]);
@@ -138,6 +139,7 @@ pub fn rom() -> Vec<u8> {
         let t = bank1 + (syms::FACINGS.addr as usize - 0x4000) + 2 * f;
         rom[t..t + 2].copy_from_slice(&ptr.to_le_bytes());
     }
+    mons::write_rom(&mut rom);
     rom
 }
 
@@ -265,8 +267,21 @@ enum Mode {
     Walk,
     Text(TextBox),
     Menu(usize),
-    Battle { cursor: usize, text: Option<TextBox> },
+    Battle {
+        cursor: usize,
+        text: Option<TextBox>,
+    },
     Naming(Naming),
+    /// The party screen: the cursor (party size = CANCEL), and the
+    /// STATS/CANCEL submenu's cursor when it's open.
+    Party {
+        cursor: usize,
+        sub: Option<usize>,
+    },
+    /// The Pokédex list, at an index into [`DEX_ORDER`].
+    Dex {
+        pos: usize,
+    },
 }
 
 /// The naming screen's state: the cursor's key (column 0–8, row 0–4, row 4
@@ -278,7 +293,23 @@ struct Naming {
     name: String,
 }
 
-const MENU_ITEMS: [&str; 7] = ["MONDEX", "PARTY", "PACK", "CUBE", "INTRO", "OPTION", "EXIT"];
+/// The start menu: labels and Crystal's `STARTMENUITEM_*` for each (the
+/// cube picks icons by those). `None` is the player's name, as Crystal's
+/// status item. INTRO stands in for the contest's QUIT.
+const MENU_ITEMS: [(Option<&str>, u8); 7] = [
+    (Some("MONDEX"), 0),
+    (Some("PARTY"), 1),
+    (Some("PACK"), 2),
+    (None, 3),
+    (Some("INTRO"), 8),
+    (Some("OPTION"), 5),
+    (Some("EXIT"), 6),
+];
+/// `StartMenu.Items`'s bank and address, which tell the cube the open
+/// menu is the start menu.
+const START_MENU_BANK: u8 = 0x04;
+/// The Pokédex list's species, in order.
+const DEX_ORDER: [u8; 9] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 /// Crystal's upper-case keyboard (`NameInputUpper`), less the symbols the
 /// demo's font lacks, and its bottom row.
 const KEYBOARD: [&str; 4] = ["ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ ", "-?!/.,   "];
@@ -437,9 +468,17 @@ impl Demo {
         ];
         let o = bg_tile_vram(0x60, false);
         m.vram[o..o + 16].copy_from_slice(&encode(&border));
-        for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?.,':/->v".chars() {
-            let g = art::glyph(c);
-            let o = bg_tile_vram(char_tile(c), false);
+        // The Pokédex's divider tiles: a line.
+        for id in [0x53, 0x54, 0x59, 0x5A, 0x5B] {
+            let o = bg_tile_vram(id, false);
+            m.vram[o..o + 16].copy_from_slice(&encode(&art::FRAME[3]));
+        }
+        mons::write_ram(m.wram);
+        let font = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?.,':/->v"
+            .chars()
+            .map(|c| (char_tile(c), art::glyph(c)));
+        for (code, g) in font.chain(art::LOWER) {
+            let o = bg_tile_vram(code, false);
             for (r, bits) in g.iter().enumerate() {
                 // Dark text (colour 3) on paper (colour 0), one pixel in.
                 m.vram[o + 2 * r] = bits << 2;
@@ -505,7 +544,7 @@ impl Demo {
     /// A screen that isn't the map: a battle, the intro, the naming screen.
     fn full_screen(&self) -> bool {
         match &self.mode {
-            Mode::Battle { .. } | Mode::Naming(_) => true,
+            Mode::Battle { .. } | Mode::Naming(_) | Mode::Party { .. } | Mode::Dex { .. } => true,
             Mode::Text(tb) => tb.then == AfterText::Naming,
             _ => false,
         }
@@ -691,6 +730,148 @@ impl Demo {
         }
         if tb.typed() && (self.frame / 16) % 2 == 0 {
             self.put_screen_tile(emu, 18, 16, char_tile('v'), pal);
+        }
+    }
+
+    fn menu_labels(&self) -> Vec<String> {
+        let name = if self.name.is_empty() { "YOU" } else { &self.name };
+        MENU_ITEMS
+            .iter()
+            .map(|(l, _)| l.unwrap_or(name).to_string())
+            .collect()
+    }
+
+    fn draw_start_menu(&mut self, emu: &mut Emulator, cursor: usize) {
+        let labels = self.menu_labels();
+        let items: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+        self.draw_menu(emu, &items, cursor, 10, 0, 10);
+    }
+
+    /// The open menu, as Crystal's menu code leaves it in RAM: the start
+    /// menu's header and items while it's open, the party screen's cursor.
+    fn write_menu_ram(&mut self, emu: &mut Emulator) {
+        let (bank, addr) = match self.mode {
+            Mode::Menu(c) => {
+                self.wram(emu, syms::W_MENU_ITEMS_LIST, MENU_ITEMS.len() as u8);
+                for (k, (_, id)) in MENU_ITEMS.iter().enumerate() {
+                    self.wram(emu, syms::W_MENU_ITEMS_LIST.offset(1 + k as u16), *id);
+                }
+                self.wram(emu, syms::W_MENU_CURSOR_Y, c as u8 + 1);
+                (START_MENU_BANK, syms::START_MENU_ITEMS.addr)
+            }
+            Mode::Party { cursor, sub } => {
+                self.wram(emu, syms::W_MENU_CURSOR_Y, sub.unwrap_or(cursor) as u8 + 1);
+                self.wram(emu, syms::W_CUR_PARTY_MON, cursor as u8);
+                (0, 0)
+            }
+            Mode::Dex { pos } => {
+                // `DEXSTATE_UPDATE_MAIN_SCR`, the list scrolled to keep
+                // the cursor in its 7 rows.
+                let scroll = pos.saturating_sub(6);
+                self.wram(emu, syms::W_JUMPTABLE_INDEX, 1);
+                self.wram(emu, syms::W_DEX_LISTING_SCROLL_OFFSET, scroll as u8);
+                self.wram(emu, syms::W_DEX_LISTING_CURSOR, (pos - scroll) as u8);
+                for k in 0..16u16 {
+                    let sp = DEX_ORDER.get(k as usize).copied().unwrap_or(0);
+                    self.wram(emu, syms::W_POKEDEX_ORDER.offset(k), sp);
+                }
+                (0, 0)
+            }
+            _ => (0, 0),
+        };
+        self.wram(emu, syms::W_MENU_DATA_BANK, bank);
+        self.wram16(emu, syms::W_MENU_DATA_POINTER_TABLE_ADDR, addr);
+    }
+
+    /// Crystal's party screen (`InitPartyMenuLayout`): ▶ at (0, 1 + 2i),
+    /// nicknames from (3, 1 + 2i), HP from (13, 1 + 2i), level and HP bar
+    /// on the row below, CANCEL after the last, a text box along the
+    /// bottom. With the submenu open, the list's cursor goes (Crystal makes
+    /// it hollow) and a box with STATS and CANCEL opens on the right.
+    fn draw_party(&mut self, emu: &mut Emulator, cursor: usize, sub: Option<usize>) {
+        let pal = 0x07;
+        for sy in 0..18 {
+            for sx in 0..20 {
+                self.put_screen_tile(emu, sx, sy, 0x7F, pal);
+            }
+        }
+        let text_at = |d: &mut Demo, emu: &mut Emulator, x: i32, y: i32, s: &str| {
+            for (i, c) in s.chars().enumerate() {
+                d.put_screen_tile(emu, x + i as i32, y, char_tile(c), pal);
+            }
+        };
+        let n = mons::PARTY.len();
+        for (i, m) in mons::PARTY.iter().enumerate() {
+            let y = 1 + 2 * i as i32;
+            text_at(self, emu, 3, y, m.nickname);
+            if !m.egg {
+                text_at(self, emu, 13, y, &format!("{:>3}/{:>3}", m.hp.0, m.hp.1));
+                text_at(self, emu, 8, y + 1, &format!(":L{}", m.level));
+                for x in 11..18 {
+                    self.put_screen_tile(emu, x, y + 1, 0x50, 0x00);
+                }
+            }
+        }
+        text_at(self, emu, 3, 1 + 2 * n as i32, "CANCEL");
+        if sub.is_none() {
+            self.put_screen_tile(emu, 0, 1 + 2 * cursor as i32, char_tile('>'), pal);
+        }
+        let tb = TextBox {
+            pages: vec![["CHOOSE A MON.".into(), String::new()]],
+            page: 0,
+            shown: 13,
+            then: AfterText::Close,
+        };
+        self.draw_text_box(emu, &tb);
+        if let Some(k) = sub {
+            self.draw_menu(emu, &["STATS", "CANCEL"], k, 11, 7, 9);
+        }
+    }
+
+    /// Crystal's Pokédex list (`Pokedex_DrawMainScreenBG` and
+    /// `Pokedex_PrintListing`): the divider down column 8, SEEN and OWN on
+    /// the left, seven entries on the right. (The real one has the
+    /// selected Pokémon's picture top left; the demo leaves that to the
+    /// cube.)
+    fn draw_dex(&mut self, emu: &mut Emulator, pos: usize) {
+        let pal = 0x07;
+        for sy in 0..18 {
+            for sx in 0..20 {
+                let t = match (sx, sy) {
+                    (8, 0) => 0x59,
+                    (8, 8) => 0x53,
+                    (8, 9) => 0x54,
+                    (8, 16) => 0x5B,
+                    (8, 1..=15) => 0x5A,
+                    _ => 0x7F,
+                };
+                self.put_screen_tile(emu, sx, sy, t, pal);
+            }
+        }
+        let text_at = |d: &mut Demo, emu: &mut Emulator, x: i32, y: i32, s: &str| {
+            for (i, c) in s.chars().enumerate() {
+                d.put_screen_tile(emu, x + i as i32, y, char_tile(c), pal);
+            }
+        };
+        text_at(self, emu, 1, 11, "SEEN");
+        text_at(self, emu, 5, 12, &format!("{:>3}", mons::SEEN.len()));
+        text_at(self, emu, 1, 14, "OWN");
+        text_at(self, emu, 5, 15, &format!("{:>3}", mons::CAUGHT.len()));
+        let scroll = pos.saturating_sub(6);
+        for k in 0..7 {
+            let idx = scroll + k;
+            let Some(&sp) = DEX_ORDER.get(idx) else { break };
+            let y = 2 + 2 * k as i32;
+            if idx == pos {
+                self.put_screen_tile(emu, 10, y, char_tile('>'), pal);
+            }
+            let seen = mons::SEEN.contains(&sp);
+            let name = if seen {
+                mons::SPECIES[sp as usize - 1].name
+            } else {
+                "-----"
+            };
+            text_at(self, emu, 11, y, name);
         }
     }
 
@@ -981,13 +1162,20 @@ impl Demo {
                 if pressed.contains(Buttons::DOWN) {
                     c = (c + 1) % MENU_ITEMS.len();
                 }
+                let item = MENU_ITEMS[c].1;
                 if pressed.contains(Buttons::B)
                     || pressed.contains(Buttons::START)
-                    || (pressed.contains(Buttons::A) && c == 6)
+                    || (pressed.contains(Buttons::A) && item == 6)
                 {
                     self.redraw_map(emu);
                     Mode::Walk
-                } else if pressed.contains(Buttons::A) && MENU_ITEMS[c] == "INTRO" {
+                } else if pressed.contains(Buttons::A) && item == 1 {
+                    self.draw_party(emu, 0, None);
+                    Mode::Party { cursor: 0, sub: None }
+                } else if pressed.contains(Buttons::A) && item == 0 {
+                    self.draw_dex(emu, 0);
+                    Mode::Dex { pos: 0 }
+                } else if pressed.contains(Buttons::A) && item == 8 {
                     self.draw_intro(emu);
                     let tb = TextBox::new(SPEECH, AfterText::Naming);
                     self.draw_text_box(emu, &tb);
@@ -995,14 +1183,66 @@ impl Demo {
                 } else if pressed.contains(Buttons::A) {
                     self.redraw_map(emu);
                     let tb = TextBox::new(
-                        &format!("{} ISN'T PART OF THIS DEMO.", MENU_ITEMS[c]),
+                        &format!("{} ISN'T PART OF THIS DEMO.", self.menu_labels()[c]),
                         AfterText::Close,
                     );
                     self.draw_text_box(emu, &tb);
                     Mode::Text(tb)
                 } else {
-                    self.draw_menu(emu, &MENU_ITEMS, c, 10, 0, 10);
+                    self.draw_start_menu(emu, c);
                     Mode::Menu(c)
+                }
+            }
+            Mode::Party { mut cursor, mut sub } => {
+                let n = mons::PARTY.len();
+                let in_sub = sub.is_some();
+                match sub {
+                    None => {
+                        if pressed.contains(Buttons::UP) && cursor > 0 {
+                            cursor -= 1;
+                        }
+                        if pressed.contains(Buttons::DOWN) && cursor < n {
+                            cursor += 1;
+                        }
+                        if pressed.contains(Buttons::A) && cursor < n {
+                            sub = Some(0);
+                        }
+                    }
+                    Some(k) => {
+                        if pressed.contains(Buttons::UP) || pressed.contains(Buttons::DOWN) {
+                            sub = Some(k ^ 1);
+                        }
+                        if pressed.contains(Buttons::B) || (pressed.contains(Buttons::A) && k == 1) {
+                            sub = None;
+                        }
+                    }
+                }
+                let leave = !in_sub
+                    && (pressed.contains(Buttons::B) || (pressed.contains(Buttons::A) && cursor == n));
+                if leave {
+                    // Back to the start menu, as Crystal does.
+                    self.redraw_map(emu);
+                    self.draw_start_menu(emu, 1);
+                    Mode::Menu(1)
+                } else {
+                    self.draw_party(emu, cursor, sub);
+                    Mode::Party { cursor, sub }
+                }
+            }
+            Mode::Dex { mut pos } => {
+                if pressed.contains(Buttons::UP) && pos > 0 {
+                    pos -= 1;
+                }
+                if pressed.contains(Buttons::DOWN) && pos + 1 < DEX_ORDER.len() {
+                    pos += 1;
+                }
+                if pressed.contains(Buttons::B) {
+                    self.redraw_map(emu);
+                    self.draw_start_menu(emu, 0);
+                    Mode::Menu(0)
+                } else {
+                    self.draw_dex(emu, pos);
+                    Mode::Dex { pos }
                 }
             }
             Mode::Battle { mut cursor, text } => match text {
@@ -1077,6 +1317,7 @@ impl Demo {
         };
 
         self.write_objects(emu);
+        self.write_menu_ram(emu);
         self.wram(emu, syms::W_BATTLE_MODE, u8::from(self.in_battle()));
         // `DelayFrame`: done, waiting for VBlank.
         self.wram(emu, syms::W_V_BLANK_OCCURRED, 1);
@@ -1100,7 +1341,7 @@ impl Demo {
     fn walk(&mut self, emu: &mut Emulator, buttons: Buttons, pressed: Buttons) -> Mode {
         if self.player.moving.is_none() {
             if pressed.contains(Buttons::START) {
-                self.draw_menu(emu, &MENU_ITEMS, 0, 10, 0, 10);
+                self.draw_start_menu(emu, 0);
                 return Mode::Menu(0);
             }
             if pressed.contains(Buttons::SELECT) {

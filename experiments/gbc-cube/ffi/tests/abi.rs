@@ -75,3 +75,39 @@ fn the_die_firmware_abi_is_carried_too() {
     assert!(!die.is_null());
     unsafe { gbc_cube_ffi::smokebomb_ffi::sb_die_free(die) };
 }
+
+#[test]
+fn the_start_menu_party_and_pokedex_are_carousels() {
+    unsafe {
+        let cube = gc_cube_open(std::ptr::null());
+        let level = GcImu {
+            accel_mg: [0, 1000, 0],
+            gyro_mdps: [0; 3],
+        };
+        let run = |keys: u8, n: usize| {
+            for _ in 0..n {
+                gc_cube_tick(cube, level, 0, keys);
+            }
+        };
+        let press = |keys: u8| {
+            run(keys, 4);
+            run(0, 4);
+        };
+        let status = || text(|o, l| gc_cube_status(cube, o, l));
+        run(0, 30);
+        press(0x08); // Start
+        run(0, 20);
+        assert!(status().contains("C: start menu"), "{}", status());
+        press(0x80); // Down to PARTY
+        press(0x01);
+        run(0, 30);
+        assert!(status().contains("C: party"), "{}", status());
+        press(0x02); // B: back to the start menu
+        run(0, 20);
+        press(0x40); // Up to the Pokédex
+        press(0x01);
+        run(0, 30);
+        assert!(status().contains("C: Pokédex"), "{}", status());
+        gc_cube_free(cube);
+    }
+}

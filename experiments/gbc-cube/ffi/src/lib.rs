@@ -154,6 +154,9 @@ impl GcCube {
             gbc_cube_core::cube::Drawn::Front => "C: front face",
             gbc_cube_core::cube::Drawn::Naming => "C: keyboard",
             gbc_cube_core::cube::Drawn::Still => "C: still",
+            gbc_cube_core::cube::Drawn::StartMenu => "C: start menu",
+            gbc_cube_core::cube::Drawn::Party => "C: party",
+            gbc_cube_core::cube::Drawn::Dex => "C: Pokédex",
         };
         format!("{:?}, {drawn}, up {up}", r.scene)
     }

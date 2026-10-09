@@ -10,6 +10,7 @@ use crate::crystal::world::{self, BlockCache, Camera, MapInfo};
 use crate::fallback::{self, Fallback, UiStyle};
 use crate::geom::{Heading, Layout, Role};
 use crate::mem::GbMem;
+use crate::menus::{self, Menus};
 use crate::orient::{UpConfig, UpTracker};
 use crate::screens;
 use crate::view::View;
@@ -84,6 +85,12 @@ pub enum Drawn {
     Naming,
     /// C: a still screen folded round the cube, its box on the front.
     Still,
+    /// C: the start menu as a carousel over the map.
+    StartMenu,
+    /// C: the party as a carousel.
+    Party,
+    /// C: the Pokédex list as a carousel.
+    Dex,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -109,7 +116,7 @@ impl Report {
     /// of those, its first frame is a frame old.
     pub fn needs_frame(&self) -> bool {
         match self.drawn {
-            Drawn::World | Drawn::Naming => false,
+            Drawn::World | Drawn::Naming | Drawn::StartMenu | Drawn::Party | Drawn::Dex => false,
             Drawn::Front => self.scene == Scene::Battle,
             Drawn::Frame | Drawn::Pan | Drawn::Spread | Drawn::Still => true,
         }
@@ -131,6 +138,7 @@ pub struct Cube {
     /// it's no longer the map (see [`HOLD_FRAMES`]).
     scene: Scene,
     other_run: u8,
+    menus: Menus,
 }
 
 /// Frames the map must be gone before the cube stops drawing it. Walking
@@ -154,6 +162,7 @@ impl Cube {
             last_ms: None,
             scene: Scene::Other,
             other_run: 0,
+            menus: Menus::new(),
         }
     }
 
@@ -272,7 +281,16 @@ impl Cube {
             }
         }
 
-        let c_scene = info.scene == Scene::Other && f.crystal && self.cfg.ui == UiStyle::Front;
+        let c_ui = f.crystal && self.cfg.ui == UiStyle::Front;
+        let menu = if c_ui {
+            menus::Screen::read(f.mem, info.scene)
+        } else {
+            None
+        };
+        if menu.is_none() {
+            self.menus.idle();
+        }
+        let c_scene = info.scene == Scene::Other && c_ui && menu.is_none();
         let naming = if c_scene {
             screens::Naming::read(f.mem)
         } else {
@@ -281,6 +299,23 @@ impl Cube {
         match info.scene {
             Scene::Overworld if world_ready => {
                 self.view.drape_onto(&layout, faces, 1 << bottom);
+            }
+            Scene::OverworldUi if world_ready && menu.is_some() => {
+                // The map on the up and back faces, the menu round the sides.
+                self.view.drape_onto(&layout, faces, 1 << bottom);
+                if let Some(screen) = &menu {
+                    self.menus.draw(f.mem, screen, &layout, faces, &self.fallback);
+                }
+                report.drawn = Drawn::StartMenu;
+            }
+            Scene::Other if menu.is_some() => {
+                if let Some(screen) = &menu {
+                    self.menus.draw(f.mem, screen, &layout, faces, &self.fallback);
+                    report.drawn = match screen {
+                        menus::Screen::Dex(_) => Drawn::Dex,
+                        _ => Drawn::Party,
+                    };
+                }
             }
             Scene::OverworldUi if world_ready => {
                 // C: map on five faces, the text on the front.

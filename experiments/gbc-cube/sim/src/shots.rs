@@ -106,14 +106,21 @@ impl Shooter<'_> {
         self.s.cube.cfg.wrap = wrap;
         self.s.cube.cfg.ui = ui;
         let mut img = None;
+        let mut last_drawn = None;
         for _ in 0..settle.max(1) {
             let out = self.s.tick(&self.input)?;
+            last_drawn = Some(out.report.drawn);
             let layout = Layout::new(out.report.heading);
             img = Some(compose(out.faces, &layout, out.frame));
         }
         let path = self.out.join(format!("{name}.png"));
         img.expect("at least one frame").save(&path)?;
-        println!("  {}", path.display());
+        println!(
+            "  {} ({:?}, {:?})",
+            path.display(),
+            self.s.cube.heading().up_face(),
+            last_drawn
+        );
         self.s.cube.cfg = keep;
         Ok(())
     }
@@ -175,8 +182,9 @@ pub fn run(cart: &Cart, out: &Path) -> Result<()> {
     sh.run(16 * 16 + 4, B::LEFT)?;
     sh.run(20, B::NONE)?;
     sh.shot("06-west-edge-world", Wrap::World, UiStyle::Front, 1)?;
-    // Start menu.
+    // Start menu, at PACK (whose A is a text box in the demo).
     sh.tap(B::START)?;
+    sh.tap(B::DOWN)?;
     sh.tap(B::DOWN)?;
     sh.run(10, B::NONE)?;
     for (name, ui) in [
@@ -249,5 +257,47 @@ pub fn run(cart: &Cart, out: &Path) -> Result<()> {
     ] {
         sh.shot(name, Wrap::World, ui, 40)?;
     }
+    // END, then past "NICE TO MEET YOU" to the map.
+    sh.tap(B::START)?;
+    sh.tap(B::A)?;
+    sh.run(80, B::NONE)?;
+    sh.tap(B::A)?;
+    sh.run(20, B::NONE)?;
+    // The start menu as a carousel, and mid-slide to the next item.
+    sh.tap(B::START)?;
+    sh.run(20, B::NONE)?;
+    sh.shot("23-start-menu-carousel", Wrap::World, UiStyle::Front, 1)?;
+    sh.run(4, B::DOWN)?;
+    sh.shot("24-start-menu-sliding", Wrap::World, UiStyle::Front, 1)?;
+    sh.run(20, B::NONE)?;
+    // PARTY: the first member, then EMBER (low HP), its submenu.
+    sh.tap(B::A)?;
+    sh.run(20, B::NONE)?;
+    sh.shot("25-party-carousel", Wrap::World, UiStyle::Front, 1)?;
+    sh.shot("26-party-a-pan", Wrap::World, UiStyle::Pan, 40)?;
+    sh.tap(B::DOWN)?;
+    sh.tap(B::DOWN)?;
+    sh.run(20, B::NONE)?;
+    sh.shot("27-party-low-hp", Wrap::World, UiStyle::Front, 1)?;
+    sh.tap(B::A)?;
+    sh.run(10, B::NONE)?;
+    sh.shot("28-party-submenu", Wrap::World, UiStyle::Front, 1)?;
+    sh.tap(B::B)?;
+    sh.tap(B::B)?;
+    sh.run(20, B::NONE)?;
+    // Back on the start menu at PARTY: up to the Pokédex.
+    sh.tap(B::UP)?;
+    sh.tap(B::A)?;
+    sh.run(20, B::NONE)?;
+    sh.tap(B::DOWN)?;
+    sh.tap(B::DOWN)?;
+    sh.run(20, B::NONE)?;
+    sh.shot("29-dex-carousel", Wrap::World, UiStyle::Front, 1)?;
+    sh.shot("30-dex-a-pan", Wrap::World, UiStyle::Pan, 40)?;
+    for _ in 0..4 {
+        sh.tap(B::DOWN)?;
+    }
+    sh.run(20, B::NONE)?;
+    sh.shot("31-dex-unseen", Wrap::World, UiStyle::Front, 1)?;
     Ok(())
 }

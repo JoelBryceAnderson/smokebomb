@@ -6,6 +6,7 @@
 //! the other. Constants that aren't symbols (struct layouts, charmap codes)
 //! are copied here with the file they come from.
 
+pub mod mons;
 pub mod screen;
 pub mod syms;
 pub mod world;

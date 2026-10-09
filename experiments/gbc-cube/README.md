@@ -319,10 +319,11 @@ from the game's own font.
   visible while they talk.
 - It's also the cheapest on the die: the overworld text panel comes from
   RAM and VRAM, so the emulator needn't draw its frame at all.
-- Its weak spot is that the re-flow is heuristic. Full-screen screens
-  are classified as "other". The ones with a framed box go to a still
-  layout (below); a full-screen list with a ▶ and no frame (the party) gets
-  A, which follows the cursor.
+- Its weak spot is that the re-flow is heuristic. The start menu, the
+  party and the Pokédex get carousels instead (below). Other full-screen
+  screens are classified as "other": the ones with a framed box go to a
+  still layout (below), and the rest (the bag, the Pokégear) get A, which
+  follows the cursor.
 - B isn't worth keeping.
 
 #### The intro and the naming screen
@@ -362,6 +363,71 @@ Both were built from the pret disassembly (`engine/menus/naming_screen.asm`,
 `engine/menus/intro_menu.asm`) and checked on the demo cart's imitations.
 They haven't been checked against the real ROM.
 
+#### The start menu, the party and the Pokédex as carousels
+
+`core/src/menus.rs`, like the die firmware's own menu: the selection on
+the front face, the next one on the east face, the previous one on the
+west. A new selection slides onto the front from the side it was on, over
+8 frames.
+
+The game still runs the menu. The selection is the game's cursor, and
+tilting is the D-pad that moves it. A and B are the game's own, so
+everything works as usual: choosing, the submenus, saving. The cube only
+changes how the menu looks.
+
+- **Start menu:** recognised by the open menu's items table
+  (`wMenuDataPointerTableAddr` is `StartMenu.Items`).
+  - Each item is a card. The icon is the cube's own pixel art, picked by
+    the item's `STARTMENUITEM_*`. The label is copied from the screen, so
+    your name is there for the status item.
+  - The map stays on the up and back faces.
+- **Party:** recognised by the nicknames where the party screen prints them.
+  - The front face shows the selected Pokémon's card: name, level, status,
+    an HP bar coloured like the game's, HP and types.
+  - The up face shows its picture.
+  - The side faces show its neighbours' pictures and names.
+  - The back face lists the whole party, the selection inverted, with an HP
+    colour pip each.
+  - When the game's STATS/SWITCH submenu opens, the submenu takes the front
+    face.
+- **Pokédex list:** recognised by its divider tiles, while it's in
+  `DEXSTATE_MAIN_SCR`. The selected species is `wPokedexOrder` at the
+  scroll offset plus the cursor.
+  - The front face shows the number, the name, owned or seen, and the
+    types.
+  - The up face shows the picture, or a "?" for one not seen yet.
+  - The back face shows the seen and owned counts.
+
+| | Start menu | Party | Pokédex |
+|---|---|---|---|
+| C | ![](docs/net/23-start-menu-carousel.png) | ![](docs/net/27-party-low-hp.png) | ![](docs/net/29-dex-carousel.png) |
+| | ![Sliding to the next item](docs/net/24-start-menu-sliding.png) | ![The submenu on the front](docs/net/28-party-submenu.png) | ![Not seen yet](docs/net/31-dex-unseen.png) |
+| A: pan, for comparison | ![](docs/net/08-menu-a-pan.png) | ![](docs/net/26-party-a-pan.png) | ![](docs/net/30-dex-a-pan.png) |
+
+**Pictures** are the game's own, decompressed from the ROM by
+`crystal/mons.rs`:
+
+- `PokemonPicPointers` gives the bank and address, and `FixPicBank`'s table
+  turns the stored bank into the real one.
+- `BaseData` gives the size (5×5 to 7×7 tiles). The picture is placed in
+  its 7×7 box the way `PadFrontpic` places it.
+- The data is Crystal's LZ variant (`home/decompress.asm`, all seven
+  commands). Only the first frame is decompressed; the animation frames
+  after it are left alone.
+- Colours come from `PokemonPalettes`: white, the two colours, black. Shiny
+  ones use the shiny palette.
+- Unown in the party gets its letter from its DVs.
+
+Four pictures are cached (3 KB), so moving along the list decompresses
+one. Names, types and the rest come from `PokemonNames`, `BaseData`,
+`TypeNames`, the party structs and the Pokédex flags. All of it is drawn
+from RAM, VRAM and ROM, so like the world these screens don't need the
+emulator to draw its frame.
+
+As with the intro, all of this follows the disassembly and is checked on
+the demo cart's imitations (its own creatures, not Pokémon). It hasn't run
+against the real ROM yet.
+
 The browser view of C:
 
 ![The start menu on the front face, the map on top](docs/web/07-start-menu-front-face.png)
@@ -392,6 +458,10 @@ stand-in, with original art:
 - It then plays the game's part in Rust between frames: walking, NPCs, a
   text box, a start menu and a battle. INTRO in the start menu plays a
   professor's speech and then the naming screen.
+- Its start menu's PARTY and MONDEX open a party screen and a Pokédex list
+  laid out like Crystal's. Its six creatures have base data, names, type
+  names, palettes and LZ-compressed pictures at Crystal's ROM addresses,
+  which is why the cart is 2 MiB.
 - It writes every bit of state at Crystal's addresses and in Crystal's
   formats. The emulator's real PPU draws the frames.
 
@@ -474,6 +544,13 @@ To check against the real game:
       it's gone. Until then the last good canvas stays. A screen of
       nothing but font tiles (the naming screen) also has to have some
       map showing to count as the map.
-13. **Vendored C.** walnut-cgb's header uses `struct gb_s` in prototypes
+13. **Knowing which menu is open.**
+    - *Problem:* Crystal has no "current screen" variable. Much of the RAM
+      the menus use is a union that other screens reuse.
+    - *Fix:* each screen is recognised by something only it does: the start
+      menu by its items table, the party screen by the party's nicknames
+      where it prints them, the Pokédex by its divider tiles and jumptable
+      state. Union RAM is believed only when it's in range.
+14. **Vendored C.** walnut-cgb's header uses `struct gb_s` in prototypes
     before declaring it. It's fixed with a forward declaration in the shim,
     so the vendored file stays unmodified.

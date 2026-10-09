@@ -14,6 +14,8 @@
 //! * [`fallback`]: layouts for screens that don't wrap (Phase 4).
 //! * [`screens`]: Crystal's naming screen and still scenes (the new-game
 //!   speech, the title), laid out for the cube.
+//! * [`menus`]: the start menu, the party and the Pokédex as face
+//!   carousels ([`paint`] draws their cards).
 //! * [`controls`]: tilt, taps, long press and shake to joypad (Phase 5).
 //! * [`cube`]: puts it together, once per frame.
 
@@ -30,7 +32,9 @@ pub mod cube;
 pub mod fallback;
 pub mod geom;
 pub mod mem;
+pub mod menus;
 pub mod orient;
+pub mod paint;
 pub mod ppu;
 pub mod screens;
 pub mod view;

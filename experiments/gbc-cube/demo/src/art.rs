@@ -346,6 +346,14 @@ pub fn glyph(c: char) -> [u8; 7] {
 /// Where a character lives in the tile set: Crystal's charmap positions for
 /// the letters, digits, space, frame and cursor, so the cube's text reflow
 /// reads the demo the way it reads the real game.
+/// The two lower-case letters the cube's own labels use ("No.", "Lv"),
+/// with their Crystal charmap codes. (The rest of the demo's text is
+/// capitals, and its `'v'` is ▼.)
+pub const LOWER: [(u8, [u8; 7]); 2] = [
+    (0xAE, [0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E]),
+    (0xB5, [0x00, 0x00, 0x11, 0x11, 0x11, 0x0A, 0x04]),
+];
+
 pub fn char_tile(c: char) -> u8 {
     match c {
         'A'..='Z' => 0x80 + (c as u8 - b'A'),

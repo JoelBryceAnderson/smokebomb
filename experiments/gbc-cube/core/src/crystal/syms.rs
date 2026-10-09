@@ -61,11 +61,49 @@ pub const W_NAMING_SCREEN_MAX_NAME_LENGTH: Sym = Sym::new(0x00, 0xC6D3);
 pub const W_NAMING_SCREEN_CURSOR_OBJECT_POINTER: Sym = Sym::new(0x00, 0xC6D5);
 /// Naming screen: the wTilemap address the name is printed at.
 pub const W_NAMING_SCREEN_STRING_ENTRY_COORD: Sym = Sym::new(0x00, 0xC6D8);
+/// The running screen's state (the Pokédex's DEXSTATE_*, the naming screen's...).
+pub const W_JUMPTABLE_INDEX: Sym = Sym::new(0x00, 0xCF63);
+/// The open menu's header bank and items table: which menu it is.
+pub const W_MENU_DATA_BANK: Sym = Sym::new(0x00, 0xCF8A);
+pub const W_MENU_DATA_POINTER_TABLE_ADDR: Sym = Sym::new(0x00, 0xCF97);
+/// The open menu's cursor row, from 1.
+pub const W_MENU_CURSOR_Y: Sym = Sym::new(0x00, 0xCFA9);
+/// The start menu's items: a count, then STARTMENUITEM_* values.
+pub const W_MENU_ITEMS_LIST: Sym = Sym::new(0x01, 0xD03E);
+pub const W_PLAYER_NAME: Sym = Sym::new(0x01, 0xD47D);
+/// The party member picked (0–5).
+pub const W_CUR_PARTY_MON: Sym = Sym::new(0x01, 0xD109);
+/// Six 48-byte party structs.
+pub const W_PARTY_MON1: Sym = Sym::new(0x01, 0xDCDF);
+/// Six 11-byte names, '@'-terminated.
+pub const W_PARTY_MON_NICKNAMES: Sym = Sym::new(0x01, 0xDE41);
+/// A bit per species, from 1.
+pub const W_POKEDEX_CAUGHT: Sym = Sym::new(0x01, 0xDE99);
+pub const W_POKEDEX_SEEN: Sym = Sym::new(0x01, 0xDEB9);
+/// Pokédex: the species list in the current order (a union: only meaningful in the Pokédex).
+pub const W_POKEDEX_ORDER: Sym = Sym::new(0x00, 0xC6D0);
+pub const W_DEX_LISTING_SCROLL_OFFSET: Sym = Sym::new(0x00, 0xC7D0);
+pub const W_DEX_LISTING_CURSOR: Sym = Sym::new(0x00, 0xC7D1);
 /// The scroll the VBlank handler copies to rSCX for the next frame.
 pub const H_SCX: Sym = Sym::new(0x00, 0xFFCF);
 pub const H_SCY: Sym = Sym::new(0x00, 0xFFD0);
 pub const H_WY: Sym = Sym::new(0x00, 0xFFD2);
 pub const H_ROM_BANK: Sym = Sym::new(0x00, 0xFF9D);
+/// ROM: the start menu's items table (identifies the start menu).
+pub const START_MENU_ITEMS: Sym = Sym::new(0x04, 0x66EB);
+/// ROM: 32 bytes per species: dex number, stats, types, ..., pic size at 17.
+pub const BASE_DATA: Sym = Sym::new(0x14, 0x5424);
+/// ROM: 10 bytes per species.
+pub const POKEMON_NAMES: Sym = Sym::new(0x14, 0x7384);
+/// ROM: per species, front and back pics as (bank - PICS_FIX, address).
+pub const POKEMON_PIC_POINTERS: Sym = Sym::new(0x48, 0x4000);
+pub const UNOWN_PIC_POINTERS: Sym = Sym::new(0x49, 0x4000);
+/// ROM: maps a pic pointer's bank byte to the real bank.
+pub const FIX_PIC_BANK_PICS_BANKS: Sym = Sym::new(0x14, 0x51D4);
+/// ROM: per species from 0, normal and shiny, the 2 middle colours each.
+pub const POKEMON_PALETTES: Sym = Sym::new(0x02, 0x68CE);
+/// ROM: pointers to type names, by type value.
+pub const TYPE_NAMES: Sym = Sym::new(0x14, 0x497B);
 /// ROM: pointer table, per FACING_* value, to OAM templates (count, then y, x, attributes, tile).
 pub const FACINGS: Sym = Sym::new(0x01, 0x4049);
 /// ROM: only its bank is used (the palette maps live in that bank).
